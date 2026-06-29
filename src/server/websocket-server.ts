@@ -1,8 +1,10 @@
 import WebSocket, { WebSocketServer } from "ws";
+import { composeSystemPrompt, listPromptTemplates } from "../prompts/registry.js";
 import { clientRequestSchema } from "../protocol/schema.js";
 import type { AiChatParams, ChatMessage, ClientRequest, ModelProfile } from "../protocol/types.js";
 import { chatWithDeepSeek, streamChatWithDeepSeek } from "../providers/deepseek-client.js";
 import type { DeepSeekChatOptions } from "../providers/deepseek-client.js";
+import { McpHost } from "../mcp/mcp-host.js";
 import { sendJson } from "./send-json.js";
 
 const DEFAULT_HISTORY_BUDGET_TOKENS: number = 12000;
@@ -64,8 +66,7 @@ function trimHistoryByTokenBudget(messages: ChatMessage[], maxTokens: number): C
 	return keptMessages;
 }
 
-function getHistoryBudgetTokens(profile: ModelProfile, params: AiChatParams): number {
-	const systemPrompt: string = params.systemPrompt ?? "";
+function getHistoryBudgetTokens(profile: ModelProfile, params: AiChatParams, systemPrompt: string): number {
 	const requestedOutputTokens: number = params.options?.maxTokens ?? profile.maxOutputTokens;
 	const availableTokens: number = profile.contextWindowTokens
 		- requestedOutputTokens
@@ -101,7 +102,67 @@ function createDeepSeekChatOptions(session: ClientSession, apiKey: string): Deep
 	return options;
 }
 
-async function handleRequest(socket: WebSocket, request: ClientRequest, session: ClientSession): Promise<void> {
+async function createMcpSystemContext(mcpHost: McpHost): Promise<string> {
+	const serverIds: string[] = mcpHost.getConnectedServerIds();
+	if (serverIds.length === 0) {
+		return "\n\n## MCP 工具上下文\n\n当前后端没有连接任何 MCP server。";
+	}
+
+	const sections: string[] = [
+		"## MCP 工具上下文",
+		"当前 TypeScript 后端已经连接以下 MCP server。你不能直接连接 MCP server；所有 MCP 数据都由后端读取后注入到本系统提示词中。回答时可以基于这些已注入的 MCP 上下文说明当前可见能力。"
+	];
+
+	for (const serverId of serverIds) {
+		sections.push(`\n### MCP Server: ${serverId}`);
+
+		try {
+			const toolsResult = await mcpHost.listTools(serverId);
+			const toolLines: string[] = toolsResult.tools.map((tool) => {
+				const description: string = tool.description ?? "";
+				return `- ${tool.name}${description.length > 0 ? `：${description}` : ""}`;
+			});
+			sections.push("可用工具：");
+			sections.push(toolLines.length > 0 ? toolLines.join("\n") : "- （无工具）");
+		} catch (error: unknown) {
+			const message: string = error instanceof Error ? error.message : "unknown error";
+			sections.push(`工具列表读取失败：${message}`);
+		}
+
+		try {
+			const resourcesResult = await mcpHost.listResources(serverId);
+			const resourceLines: string[] = resourcesResult.resources.map((resource) => {
+				const name: string = resource.name ?? resource.uri;
+				return `- ${resource.uri}${name !== resource.uri ? `（${name}）` : ""}`;
+			});
+			sections.push("可用资源：");
+			sections.push(resourceLines.length > 0 ? resourceLines.join("\n") : "- （无资源）");
+		} catch (error: unknown) {
+			const message: string = error instanceof Error ? error.message : "unknown error";
+			sections.push(`资源列表读取失败：${message}`);
+		}
+
+		if (serverId === "godot") {
+			try {
+				const projectResource = await mcpHost.readResource(serverId, "godot://project");
+				const projectContent = projectResource.contents[0];
+				if (projectContent !== undefined && "text" in projectContent) {
+					sections.push("当前 Godot 项目摘要：");
+					sections.push("```json");
+					sections.push(projectContent.text);
+					sections.push("```");
+				}
+			} catch (error: unknown) {
+				const message: string = error instanceof Error ? error.message : "unknown error";
+				sections.push(`Godot 项目摘要读取失败：${message}`);
+			}
+		}
+	}
+
+	return `\n\n${sections.join("\n")}`;
+}
+
+async function handleRequest(socket: WebSocket, request: ClientRequest, session: ClientSession, mcpHost: McpHost): Promise<void> {
 	switch (request.method) {
 		case "ping":
 			sendJson(socket, {
@@ -152,12 +213,22 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 
 			try {
 				const options: DeepSeekChatOptions = createDeepSeekChatOptions(session, apiKey);
-				const historyBudgetTokens: number = getHistoryBudgetTokens(session.modelProfile, request.params);
+				const systemPrompt: string = await composeSystemPrompt(
+					request.params.promptId,
+					request.params.systemPrompt
+				);
+				const mcpSystemContext: string = await createMcpSystemContext(mcpHost);
+				const fullSystemPrompt: string = systemPrompt + mcpSystemContext;
+				const historyBudgetTokens: number = getHistoryBudgetTokens(
+					session.modelProfile,
+					request.params,
+					fullSystemPrompt
+				);
 				const history: ChatMessage[] = trimHistoryByTokenBudget(session.messages, historyBudgetTokens);
 
 				if (request.params.options?.stream === true) {
 					let text: string = "";
-					for await (const delta of streamChatWithDeepSeek(request.params, options, history)) {
+					for await (const delta of streamChatWithDeepSeek(request.params, options, history, fullSystemPrompt)) {
 						text += delta;
 						sendJson(socket, {
 							type: "event",
@@ -177,12 +248,13 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 							context: {
 								historyMessagesUsed: history.length,
 								historyMessagesStored: session.messages.length,
-								historyBudgetTokens
+								historyBudgetTokens,
+								mcpServers: mcpHost.getConnectedServerIds()
 							}
 						}
 					});
 				} else {
-					const text: string = await chatWithDeepSeek(request.params, options, history);
+					const text: string = await chatWithDeepSeek(request.params, options, history, fullSystemPrompt);
 					appendChatTurnToSession(session, history, request.params.message, text);
 
 					sendJson(socket, {
@@ -194,7 +266,8 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 							context: {
 								historyMessagesUsed: history.length,
 								historyMessagesStored: session.messages.length,
-								historyBudgetTokens
+								historyBudgetTokens,
+								mcpServers: mcpHost.getConnectedServerIds()
 							}
 						}
 					});
@@ -212,6 +285,17 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 			}
 			break;
 		}
+
+		case "prompt.list":
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: true,
+				result: {
+					prompts: listPromptTemplates()
+				}
+			});
+			break;
 
 		case "session.reset":
 			session.messages = [];
@@ -241,10 +325,110 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 				}
 			});
 			break;
+
+		case "mcp.listTools": {
+			const serverId: string = request.params?.serverId ?? "godot";
+
+			try {
+				const result = await mcpHost.listTools(serverId);
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: true,
+					result
+				});
+			} catch (error: unknown) {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: {
+						code: "mcp_error",
+						message: error instanceof Error ? error.message : "MCP call failed"
+					}
+				});
+			}
+			break;
+		}
+
+		case "mcp.callTool": {
+			const serverId: string = request.params.serverId ?? "godot";
+
+			try {
+				const result = await mcpHost.callTool(serverId, request.params.name, request.params.args ?? {});
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: true,
+					result
+				});
+			} catch (error: unknown) {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: {
+						code: "mcp_error",
+						message: error instanceof Error ? error.message : "MCP call failed"
+					}
+				});
+			}
+			break;
+		}
+
+		case "mcp.listResources": {
+			const serverId: string = request.params?.serverId ?? "godot";
+
+			try {
+				const result = await mcpHost.listResources(serverId);
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: true,
+					result
+				});
+			} catch (error: unknown) {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: {
+						code: "mcp_error",
+						message: error instanceof Error ? error.message : "MCP call failed"
+					}
+				});
+			}
+			break;
+		}
+
+		case "mcp.readResource": {
+			const serverId: string = request.params.serverId ?? "godot";
+
+			try {
+				const result = await mcpHost.readResource(serverId, request.params.uri);
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: true,
+					result
+				});
+			} catch (error: unknown) {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: {
+						code: "mcp_error",
+						message: error instanceof Error ? error.message : "MCP call failed"
+					}
+				});
+			}
+			break;
+		}
 	}
 }
 
-export function createServer(port: number): WebSocketServer {
+export function createServer(port: number, mcpHost: McpHost): WebSocketServer {
 	const server: WebSocketServer = new WebSocketServer({ port });
 
 	server.on("connection", (socket: WebSocket, request): void => {
@@ -292,7 +476,7 @@ export function createServer(port: number): WebSocketServer {
 				return;
 			}
 
-			handleRequest(socket, validationResult.data, session).catch((error: unknown): void => {
+			handleRequest(socket, validationResult.data, session, mcpHost).catch((error: unknown): void => {
 				console.error("Unhandled request error:", error);
 			});
 		});

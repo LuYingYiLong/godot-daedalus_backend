@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx src/main.ts",
     "ping": "tsx src/ping-client.ts",
+    "mcp": "tsx src/mcp/godot-mcp-server.ts",
     "typecheck": "tsc --noEmit",
     "test": "npm run typecheck"
   },
@@ -14,6 +15,7 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "openai": "^6.45.0",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3",

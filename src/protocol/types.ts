@@ -1,9 +1,11 @@
 import type { z } from "zod";
-import type { aiChatParamsSchema, clientRequestSchema } from "./schema.js";
+import type { aiChatParamsSchema, clientRequestSchema, promptIdSchema } from "./schema.js";
 
 export type AiChatParams = z.infer<typeof aiChatParamsSchema>;
 
 export type ClientRequest = z.infer<typeof clientRequestSchema>;
+
+export type PromptId = z.infer<typeof promptIdSchema>;
 
 export type ChatMessage = {
 	role: "system" | "user" | "assistant";

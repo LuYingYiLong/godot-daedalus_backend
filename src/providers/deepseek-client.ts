@@ -24,8 +24,7 @@ function createDeepSeekClient(options: DeepSeekChatOptions): OpenAI {
 	});
 }
 
-function createMessages(params: AiChatParams, history: ChatMessage[]): ChatCompletionMessageParam[] {
-	const systemPrompt: string = params.systemPrompt ?? "You are a helpful assistant.";
+function createMessages(params: AiChatParams, history: ChatMessage[], systemPrompt: string): ChatCompletionMessageParam[] {
 	return [
 		{
 			role: "system",
@@ -67,12 +66,13 @@ function applyChatOptions(requestBody: ChatCompletionCreateParamsBase, params: A
 export async function chatWithDeepSeek(
 	params: AiChatParams,
 	options: DeepSeekChatOptions,
-	history: ChatMessage[]
+	history: ChatMessage[],
+	systemPrompt: string
 ): Promise<string> {
 	const client: OpenAI = createDeepSeekClient(options);
 	const requestBody: ChatCompletionCreateParamsNonStreaming = {
 		model: options.model ?? process.env.DEEPSEEK_MODEL ?? DEFAULT_MODEL,
-		messages: createMessages(params, history)
+		messages: createMessages(params, history, systemPrompt)
 	};
 
 	applyChatOptions(requestBody, params);
@@ -90,12 +90,13 @@ export async function chatWithDeepSeek(
 export async function* streamChatWithDeepSeek(
 	params: AiChatParams,
 	options: DeepSeekChatOptions,
-	history: ChatMessage[]
+	history: ChatMessage[],
+	systemPrompt: string
 ): AsyncGenerator<string> {
 	const client: OpenAI = createDeepSeekClient(options);
 	const requestBody: ChatCompletionCreateParamsStreaming = {
 		model: options.model ?? process.env.DEEPSEEK_MODEL ?? DEFAULT_MODEL,
-		messages: createMessages(params, history),
+		messages: createMessages(params, history, systemPrompt),
 		stream: true
 	};
 
