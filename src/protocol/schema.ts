@@ -97,6 +97,63 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 			serverId: z.string().optional(),
 			uri: z.string(),
 		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("fileChange.create"),
+		params: z.object({
+			relativePath: z.string().min(1),
+			content: z.string(),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("fileChange.overwrite"),
+		params: z.object({
+			relativePath: z.string().min(1),
+			content: z.string(),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("fileChange.delete"),
+		params: z.object({
+			relativePath: z.string().min(1),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("approval.list"),
+		params: z.object({}).optional(),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("approval.approve"),
+		params: z.object({
+			approvalId: z.string().min(1),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("approval.reject"),
+		params: z.object({
+			approvalId: z.string().min(1),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("environment.configure"),
+		params: z.object({
+			godotExecutablePath: z.string().min(1).optional(),
+			godotProjectPath: z.string().min(1).optional(),
+		}),
 	})
 ]);
 

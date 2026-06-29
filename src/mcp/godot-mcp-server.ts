@@ -6,6 +6,16 @@ import * as path from "node:path";
 import { z } from "zod";
 
 const MAX_TEXT_FILE_BYTES: number = 512 * 1024;
+const MAX_NEW_FILE_BYTES: number = 64 * 1024;
+
+const WRITABLE_EXTENSIONS: Set<string> = new Set([
+	".gd",
+	".tres",
+	".json",
+	".md",
+	".txt"
+]);
+
 const DEFAULT_IGNORED_DIRECTORIES: Set<string> = new Set([
 	".git",
 	".godot",
@@ -216,6 +226,100 @@ function asJsonTextResult(value: unknown): { content: Array<{ type: "text"; text
 	return asTextResult(JSON.stringify(value, null, 2));
 }
 
+const PROHIBITED_PREFIXES: string[] = [".godot", "addons"];
+
+async function assertWritablePath(relativePath: string): Promise<string> {
+	const cleanedPath: string = relativePath.trim().replaceAll("\\", "/");
+	const resolvedPath: string = await resolveProjectPath(cleanedPath);
+	const normalized: string = path.relative(projectRoot, resolvedPath).replaceAll(path.sep, "/");
+
+	const segments: string[] = normalized.split("/");
+
+	for (const segment of segments) {
+		if (segment.startsWith(".") && segment !== "..") {
+			throw new Error(`Path contains hidden directory: ${segment}`);
+		}
+	}
+
+	for (const prefix of PROHIBITED_PREFIXES) {
+		if (normalized.startsWith(prefix + "/") || normalized === prefix) {
+			throw new Error(`Writing to ${prefix}/ is not allowed`);
+		}
+	}
+
+	const extension: string = path.extname(resolvedPath);
+	if (!WRITABLE_EXTENSIONS.has(extension)) {
+		throw new Error(`Unsupported writable extension: ${extension || "(none)"}. Allowed: ${Array.from(WRITABLE_EXTENSIONS).join(", ")}`);
+	}
+
+	return resolvedPath;
+}
+
+async function validateNewTextFile(relativePath: string, content: string): Promise<{
+	valid: boolean;
+	resolvedPath?: string;
+	normalizedPath: string;
+	errors: string[];
+}> {
+	const errors: string[] = [];
+	let resolvedPath: string;
+
+	if (content.length === 0) {
+		errors.push("File content is empty");
+	}
+
+	if (content.length > MAX_NEW_FILE_BYTES) {
+		errors.push(`Content too large: ${content.length} bytes (max ${MAX_NEW_FILE_BYTES})`);
+	}
+
+	try {
+		resolvedPath = await assertWritablePath(relativePath);
+	} catch (error: unknown) {
+		return {
+			valid: false,
+			normalizedPath: relativePath,
+			errors: [error instanceof Error ? error.message : "Path validation failed"]
+		};
+	}
+
+	const normalizedPath: string = path.relative(projectRoot, resolvedPath).replaceAll(path.sep, "/");
+
+	try {
+		await fs.access(resolvedPath);
+		errors.push(`File already exists: ${normalizedPath}`);
+	} catch {
+		// File does not exist — this is required for create.
+	}
+
+	return {
+		valid: errors.length === 0,
+		resolvedPath,
+		normalizedPath,
+		errors
+	};
+}
+
+async function createTextFile(relativePath: string, content: string): Promise<{
+	created: true;
+	path: string;
+	size: number;
+}> {
+	const validation = await validateNewTextFile(relativePath, content);
+
+	if (!validation.valid || validation.resolvedPath === undefined) {
+		throw new Error(validation.errors.join("; "));
+	}
+
+	await fs.mkdir(path.dirname(validation.resolvedPath), { recursive: true });
+	await fs.writeFile(validation.resolvedPath, content, "utf8");
+
+	return {
+		created: true,
+		path: validation.normalizedPath,
+		size: content.length
+	};
+}
+
 async function main(): Promise<void> {
 	await assertProjectExists();
 
@@ -343,6 +447,221 @@ async function main(): Promise<void> {
 			}
 
 			return asJsonTextResult({ matches });
+		}
+	);
+
+	server.registerTool(
+		"propose_create_text_file",
+		{
+			title: "Propose Create Text File",
+			description: "提出新建一个文本文件的提案。不会实际写入磁盘，仅返回校验结果和预览。只能创建 .gd/.tres/.json/.md/.txt 文件，不允许覆盖已有文件，不允许写入 .godot/ 或 addons/ 目录。",
+			inputSchema: z.object({
+				relativePath: z.string().min(1).describe("相对于项目根目录的新文件路径"),
+				content: z.string().describe("文件内容")
+			})
+		},
+		async ({ relativePath, content }) => {
+			const validation = await validateNewTextFile(relativePath, content);
+
+			if (!validation.valid) {
+				return asJsonTextResult({
+					valid: false,
+					path: validation.normalizedPath,
+					errors: validation.errors
+				});
+			}
+
+			const previewLength: number = Math.min(content.length, 500);
+			const preview: string = content.slice(0, previewLength) + (content.length > previewLength ? "\n..." : "");
+
+			return asJsonTextResult({
+				valid: true,
+				path: validation.normalizedPath,
+				size: content.length,
+				preview
+			});
+		}
+	);
+
+	server.registerTool(
+		"create_text_file",
+		{
+			title: "Create Text File",
+			description: "创建一个新的文本文件，会实际写入磁盘。只能创建 .gd/.tres/.json/.md/.txt 文件，不允许覆盖已有文件，不允许写入 .godot/ 或 addons/ 目录。",
+			inputSchema: z.object({
+				relativePath: z.string().min(1).describe("相对于项目根目录的新文件路径"),
+				content: z.string().describe("文件内容")
+			})
+		},
+		async ({ relativePath, content }) => asJsonTextResult(await createTextFile(relativePath, content))
+	);
+
+	server.registerTool(
+		"propose_overwrite_text_file",
+		{
+			title: "Propose Overwrite Text File",
+			description: "提出覆盖已有文件的提案。不会实际写入，仅校验并返回新旧内容对比。文件必须已存在，不允许写入 .godot/。",
+			inputSchema: z.object({
+				relativePath: z.string().min(1).describe("相对于项目根目录的已有文件路径"),
+				content: z.string().describe("新的完整文件内容")
+			})
+		},
+		async ({ relativePath, content }) => {
+			const errors: string[] = [];
+			let resolvedPath: string;
+
+			try {
+				resolvedPath = await assertWritablePath(relativePath);
+			} catch (error: unknown) {
+				return asJsonTextResult({
+					valid: false,
+					path: relativePath,
+					errors: [error instanceof Error ? error.message : "Path validation failed"]
+				});
+			}
+
+			if (content.length === 0) {
+				errors.push("File content is empty");
+			}
+
+			if (content.length > MAX_TEXT_FILE_BYTES) {
+				errors.push(`Content too large: ${content.length} bytes (max ${MAX_TEXT_FILE_BYTES})`);
+			}
+
+			let oldContent: string;
+			try {
+				oldContent = await fs.readFile(resolvedPath, "utf8");
+			} catch {
+				errors.push(`File does not exist: ${relativePath}`);
+				return asJsonTextResult({ valid: false, path: relativePath, errors });
+			}
+
+			if (errors.length > 0) {
+				return asJsonTextResult({ valid: false, path: relativePath, errors });
+			}
+
+			const previewLength: number = Math.min(content.length, 500);
+			const normalizedPath: string = path.relative(projectRoot, resolvedPath).replaceAll(path.sep, "/");
+
+			return asJsonTextResult({
+				valid: true,
+				path: normalizedPath,
+				size: content.length,
+				oldSize: oldContent.length,
+				preview: content.slice(0, previewLength) + (content.length > previewLength ? "\n..." : "")
+			});
+		}
+	);
+
+	server.registerTool(
+		"propose_replace_text_in_file",
+		{
+			title: "Propose Replace Text In File",
+			description: "提出替换文件中指定文本的提案。不会实际写入，仅校验并返回 diff 预览。文件必须已存在。",
+			inputSchema: z.object({
+				relativePath: z.string().min(1).describe("相对于项目根目录的已有文件路径"),
+				oldText: z.string().min(1).describe("要被替换的原文本（必须精确匹配）"),
+				newText: z.string().describe("替换后的新文本")
+			})
+		},
+		async ({ relativePath, oldText, newText }) => {
+			const errors: string[] = [];
+			let resolvedPath: string;
+
+			try {
+				resolvedPath = await assertWritablePath(relativePath);
+			} catch (error: unknown) {
+				return asJsonTextResult({
+					valid: false,
+					path: relativePath,
+					errors: [error instanceof Error ? error.message : "Path validation failed"]
+				});
+			}
+
+			let oldContent: string;
+			try {
+				oldContent = await fs.readFile(resolvedPath, "utf8");
+			} catch {
+				errors.push(`File does not exist: ${relativePath}`);
+				return asJsonTextResult({ valid: false, path: relativePath, errors });
+			}
+
+			if (!oldContent.includes(oldText)) {
+				errors.push("oldText not found in file. Ensure exact match including whitespace and indentation.");
+				return asJsonTextResult({ valid: false, path: relativePath, errors });
+			}
+
+			const newContent: string = oldContent.replace(oldText, newText);
+			const occurrenceCount: number = oldContent.split(oldText).length - 1;
+			const normalizedPath: string = path.relative(projectRoot, resolvedPath).replaceAll(path.sep, "/");
+
+			return asJsonTextResult({
+				valid: true,
+				path: normalizedPath,
+				occurrences: occurrenceCount,
+				oldLength: oldContent.length,
+				newLength: newContent.length,
+				preview: newContent.slice(0, 500) + (newContent.length > 500 ? "\n..." : "")
+			});
+		}
+	);
+
+	server.registerTool(
+		"delete_file",
+		{
+			title: "Delete File",
+			description: "删除项目中的文件。文件必须存在，不允许删除 .godot/ 中的文件。",
+			inputSchema: z.object({
+				relativePath: z.string().min(1).describe("相对于项目根目录的已有文件路径")
+			})
+		},
+		async ({ relativePath }) => {
+			const errors: string[] = [];
+			let resolvedPath: string;
+
+			try {
+				resolvedPath = await assertWritablePath(relativePath);
+			} catch (error: unknown) {
+				return asJsonTextResult({
+					valid: false,
+					path: relativePath,
+					errors: [error instanceof Error ? error.message : "Path validation failed"]
+				});
+			}
+
+			const normalizedPath: string = path.relative(projectRoot, resolvedPath).replaceAll(path.sep, "/");
+
+			if (normalizedPath.startsWith(".godot/") || normalizedPath === ".godot") {
+				return asJsonTextResult({
+					valid: false,
+					path: normalizedPath,
+					errors: ["Cannot delete files in .godot/"]
+				});
+			}
+
+			try {
+				const stat = await fs.stat(resolvedPath);
+				if (!stat.isFile()) {
+					errors.push(`Not a file: ${normalizedPath}`);
+				}
+			} catch {
+				errors.push(`File does not exist: ${normalizedPath}`);
+			}
+
+			if (errors.length > 0) {
+				return asJsonTextResult({ valid: false, path: normalizedPath, errors });
+			}
+
+			try {
+				await fs.unlink(resolvedPath);
+				return asJsonTextResult({ deleted: true, path: normalizedPath });
+			} catch (error: unknown) {
+				return asJsonTextResult({
+					valid: false,
+					path: normalizedPath,
+					errors: [error instanceof Error ? error.message : "Failed to delete file"]
+				});
+			}
 		}
 	);
 

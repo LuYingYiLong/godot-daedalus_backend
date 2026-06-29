@@ -12,11 +12,15 @@ import {
 	type DeepSeekChatOptions
 } from "../providers/deepseek-client.js";
 import type { McpHost } from "../mcp/mcp-host.js";
-import { getToolDefinitions, MAX_TOOL_STEPS } from "../tools/llm-tools.js";
-import { dispatchToolCalls } from "../tools/tool-dispatcher.js";
+import { getToolDefinitions, MAX_TOOL_STEPS, MAX_TOTAL_TOOL_RESULT_CHARS } from "../tools/llm-tools.js";
+import { dispatchToolCalls, type OnToolEvent } from "../tools/tool-dispatcher.js";
+import { ApprovalGateway } from "../tools/approval-gateway.js";
 
 const DEFAULT_BASE_URL = "https://api.deepseek.com";
 const DEFAULT_MODEL = "deepseek-v4-flash";
+const FINALIZE_AFTER_TOOL_LIMIT_PROMPT: string =
+	"工具调用阶段已经达到后端限制。请停止请求更多工具，基于目前已经获得的工具结果直接回答用户。"
+	+ "如果信息不完整，请明确说明哪些部分是根据已有信息总结的，哪些部分还需要进一步检查。";
 
 function estimateTextChars(text: string): number {
 	return text.length;
@@ -37,12 +41,45 @@ function extractTextContent(content: ChatCompletionMessageParam["content"]): str
 	return "";
 }
 
+async function createFinalAnswer(
+	client: OpenAI,
+	params: AiChatParams,
+	options: DeepSeekChatOptions,
+	messages: ChatCompletionMessageParam[],
+	reason: string
+): Promise<string> {
+	const finalMessages: ChatCompletionMessageParam[] = [
+		...messages,
+		{
+			role: "system",
+			content: `${FINALIZE_AFTER_TOOL_LIMIT_PROMPT}\n\n收束原因：${reason}`
+		}
+	];
+	const requestBody: ChatCompletionCreateParamsNonStreaming = {
+		model: options.model ?? process.env.DEEPSEEK_MODEL ?? DEFAULT_MODEL,
+		messages: finalMessages
+	};
+
+	applyChatOptions(requestBody, params);
+
+	const completion = await client.chat.completions.create(requestBody);
+	const text: string | null | undefined = completion.choices[0]?.message.content;
+
+	if (!text) {
+		throw new Error("LLM returned empty final response after tool limit");
+	}
+
+	return text;
+}
+
 export async function runDeepSeekAgent(
 	params: AiChatParams,
 	options: DeepSeekChatOptions,
 	history: ChatMessage[],
 	systemPrompt: string,
-	mcpHost: McpHost
+	mcpHost: McpHost,
+	gateway: ApprovalGateway,
+	onEvent?: OnToolEvent
 ): Promise<string> {
 	const client: OpenAI = createDeepSeekClient(options);
 	const tools = getToolDefinitions();
@@ -88,17 +125,30 @@ export async function runDeepSeekAgent(
 
 		messages.push(assistantMessage);
 
-		const toolResults = await dispatchToolCalls(mcpHost, toolCalls);
+		const toolResults = await dispatchToolCalls(mcpHost, toolCalls, step, gateway, onEvent);
 
 		for (const result of toolResults) {
 			const contentText: string = extractTextContent(result.content);
 			totalToolResultChars += estimateTextChars(contentText);
 			messages.push(result);
 		}
+
+		if (totalToolResultChars >= MAX_TOTAL_TOOL_RESULT_CHARS) {
+			return createFinalAnswer(
+				client,
+				params,
+				options,
+				messages,
+				`工具结果总量达到 ${totalToolResultChars} 字符，上限为 ${MAX_TOTAL_TOOL_RESULT_CHARS} 字符`
+			);
+		}
 	}
 
-	throw new Error(
-		`Tool calling exceeded maximum steps (${MAX_TOOL_STEPS}). ` +
-		`Total tool result chars: ${totalToolResultChars}`
+	return createFinalAnswer(
+		client,
+		params,
+		options,
+		messages,
+		`工具调用达到最大步数 ${MAX_TOOL_STEPS}，当前工具结果总量为 ${totalToolResultChars} 字符`
 	);
 }

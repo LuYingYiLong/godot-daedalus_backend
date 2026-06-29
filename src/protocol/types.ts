@@ -32,7 +32,7 @@ export type ServerResponse =
 export type ServerEvent = {
 	type: "event";
 	id: string;
-	event: "ai.delta" | "ai.done";
+	event: "ai.delta" | "ai.done" | "tool.call" | "tool.result" | "tool.error" | "tool.approval_required" | "tool.approved" | "tool.rejected";
 	data?: unknown;
 };
 
@@ -41,5 +41,6 @@ export type ModelProfile = {
 	model: string;
 	contextWindowTokens: number;
 	maxOutputTokens: number;
-	historyBudgetTokens: number;
+	defaultOutputReserveTokens: number;
+	safetyMarginTokens: number;
 };

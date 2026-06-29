@@ -2,6 +2,7 @@ import type { ChatCompletionTool } from "openai/resources/chat/completions";
 
 export const MAX_TOOL_STEPS: number = 4;
 export const MAX_TOOL_RESULT_CHARS: number = 12000;
+export const MAX_TOTAL_TOOL_RESULT_CHARS: number = 48000;
 
 type ToolMapping = {
 	serverId: string;
@@ -32,6 +33,26 @@ const TOOL_MAP: Record<string, ToolMapping> = {
 	"mcp_godot_search_text": {
 		serverId: "godot",
 		toolName: "search_text"
+	},
+	"mcp_godot_propose_create_text_file": {
+		serverId: "godot",
+		toolName: "propose_create_text_file"
+	},
+	"mcp_godot_create_text_file": {
+		serverId: "godot",
+		toolName: "create_text_file"
+	},
+	"mcp_godot_propose_overwrite_text_file": {
+		serverId: "godot",
+		toolName: "propose_overwrite_text_file"
+	},
+	"mcp_godot_propose_replace_text_in_file": {
+		serverId: "godot",
+		toolName: "propose_replace_text_in_file"
+	},
+	"mcp_godot_delete_file": {
+		serverId: "godot",
+		toolName: "delete_file"
 	}
 };
 
@@ -148,6 +169,93 @@ const TOOL_DEFINITIONS: ChatCompletionTool[] = [
 					}
 				},
 				required: ["query"]
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_godot_propose_create_text_file",
+			description: "提出新建一个文本文件的提案。不会实际写入磁盘。只能创建 .gd/.tres/.json/.md/.txt 文件，不允许覆盖已有文件。需要用户通过 Godot 客户端确认后才会真正写入。",
+			parameters: {
+				type: "object",
+				properties: {
+					relativePath: {
+						type: "string",
+						description: "相对于项目根目录的新文件路径，例如 'scripts/enemy.gd'"
+					},
+					content: {
+						type: "string",
+						description: "文件的完整内容"
+					}
+				},
+				required: ["relativePath", "content"]
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_godot_create_text_file",
+			description: "创建一个新的 Godot 项目文本文件。该工具会实际写入磁盘，默认需要用户在 Godot 客户端审批。只能创建 .gd/.tres/.json/.md/.txt 文件，不允许覆盖已有文件，不允许写入 .godot/ 或 addons/。",
+			parameters: {
+				type: "object",
+				properties: {
+					relativePath: {
+						type: "string",
+						description: "相对于项目根目录的新文件路径，例如 'scripts/enemy.gd'"
+					},
+					content: {
+						type: "string",
+						description: "文件的完整内容"
+					}
+				},
+				required: ["relativePath", "content"]
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_godot_propose_overwrite_text_file",
+			description: "提出覆盖已有文件的提案。不会实际写入。文件必须已存在，会返回新旧内容对比。AI 只能 propose，实际覆盖需要用户通过 Godot 客户端确认。",
+			parameters: {
+				type: "object",
+				properties: {
+					relativePath: { type: "string", description: "要覆盖的已有文件路径" },
+					content: { type: "string", description: "新的完整文件内容" }
+				},
+				required: ["relativePath", "content"]
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_godot_propose_replace_text_in_file",
+			description: "提出替换文件中指定文本的提案。不会实际写入。oldText 必须精确匹配（含空白和缩进），只替换首次出现。AI 只能 propose，实际替换需要用户确认。",
+			parameters: {
+				type: "object",
+				properties: {
+					relativePath: { type: "string", description: "已有文件路径" },
+					oldText: { type: "string", description: "要被替换的原文本，必须精确匹配" },
+					newText: { type: "string", description: "替换后的新文本" }
+				},
+				required: ["relativePath", "oldText", "newText"]
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_godot_delete_file",
+			description: "删除项目中的文件。此操作不可逆，需要用户确认。不能删除 .godot/ 中的文件。",
+			parameters: {
+				type: "object",
+				properties: {
+					relativePath: { type: "string", description: "要删除的文件路径" }
+				},
+				required: ["relativePath"]
 			}
 		}
 	}

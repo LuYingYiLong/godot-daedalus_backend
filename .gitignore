@@ -14,3 +14,7 @@ dist/
 # OS
 Thumbs.db
 .DS_Store
+
+# Tokenizer model files (large, download separately)
+scripts/tokenizer/tokenizer.json
+scripts/tokenizer/tokenizer_config.json

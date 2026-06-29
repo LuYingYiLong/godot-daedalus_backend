@@ -1,6 +1,15 @@
 import type { ChatCompletionMessageToolCall, ChatCompletionToolMessageParam } from "openai/resources/chat/completions";
 import type { McpHost } from "../mcp/mcp-host.js";
 import { MAX_TOOL_RESULT_CHARS, resolveToolMapping } from "./llm-tools.js";
+import { type ApprovalGateway } from "./approval-gateway.js";
+
+export type ToolEvent =
+	| { type: "tool.call"; step: number; toolName: string; args: Record<string, unknown> }
+	| { type: "tool.result"; step: number; toolName: string; resultChars: number; truncated: boolean }
+	| { type: "tool.error"; step: number; toolName: string; message: string }
+	| { type: "tool.approval_required"; step: number; toolName: string; approvalId: string; reason: string };
+
+export type OnToolEvent = (event: ToolEvent) => void;
 
 type ToolResultContent = {
 	content: Array<{ type: string; text?: string }>;
@@ -16,7 +25,10 @@ function trimResult(text: string): string {
 
 async function executeSingleToolCall(
 	mcpHost: McpHost,
-	toolCall: ChatCompletionMessageToolCall
+	toolCall: ChatCompletionMessageToolCall,
+	step: number,
+	gateway: ApprovalGateway,
+	onEvent?: OnToolEvent
 ): Promise<ChatCompletionToolMessageParam> {
 	if (toolCall.type !== "function") {
 		return {
@@ -27,22 +39,59 @@ async function executeSingleToolCall(
 	}
 
 	const functionName: string = toolCall.function.name;
-	const mapping = resolveToolMapping(functionName);
 
 	let argsParsed: Record<string, unknown>;
 
 	try {
 		argsParsed = JSON.parse(toolCall.function.arguments) as Record<string, unknown>;
 	} catch {
+		const message: string = `Invalid JSON arguments: ${toolCall.function.arguments}`;
+		onEvent?.({ type: "tool.error", step, toolName: functionName, message });
 		return {
 			role: "tool",
 			tool_call_id: toolCall.id,
-			content: `Error: Invalid JSON arguments: ${toolCall.function.arguments}`
+			content: `Error: ${message}`
 		};
 	}
 
+	const decision = await gateway.evaluate(functionName, argsParsed, toolCall.id);
+
+	if (decision.action === "deny") {
+		onEvent?.({ type: "tool.error", step, toolName: functionName, message: decision.reason });
+		return {
+			role: "tool",
+			tool_call_id: toolCall.id,
+			content: `Error: ${decision.reason}`
+		};
+	}
+
+	if (decision.action === "request_approval") {
+		const pending = gateway.requestApproval(functionName, argsParsed, toolCall.id, decision.reason);
+		onEvent?.({
+			type: "tool.approval_required",
+			step,
+			toolName: functionName,
+			approvalId: pending.approvalId,
+			reason: decision.reason
+		});
+
+		return {
+			role: "tool",
+			tool_call_id: toolCall.id,
+			content: `[需要用户审批] 工具 ${functionName} 需要用户在 Godot 客户端中批准后才能执行。审批ID: ${pending.approvalId}。原因: ${decision.reason}。请在回复中告知用户需要审批，并提供审批ID。`
+		};
+	}
+
+	if (onEvent) {
+		onEvent({ type: "tool.call", step, toolName: functionName, args: argsParsed });
+	}
+
 	try {
-		const result = await mcpHost.callTool(mapping.serverId, mapping.toolName, argsParsed) as ToolResultContent;
+		const result = await mcpHost.callTool(
+			resolveToolMapping(functionName).serverId,
+			resolveToolMapping(functionName).toolName,
+			argsParsed
+		) as ToolResultContent;
 		const firstContent = result.content[0];
 
 		let textResult: string;
@@ -53,28 +102,49 @@ async function executeSingleToolCall(
 			textResult = JSON.stringify(result);
 		}
 
+		const truncated: boolean = textResult.length > MAX_TOOL_RESULT_CHARS;
+
+		if (onEvent) {
+			onEvent({
+				type: "tool.result",
+				step,
+				toolName: functionName,
+				resultChars: textResult.length,
+				truncated
+			});
+		}
+
 		return {
 			role: "tool",
 			tool_call_id: toolCall.id,
 			content: trimResult(textResult)
 		};
 	} catch (error: unknown) {
+		const message: string = error instanceof Error ? error.message : "MCP tool call failed";
+
+		if (onEvent) {
+			onEvent({ type: "tool.error", step, toolName: functionName, message });
+		}
+
 		return {
 			role: "tool",
 			tool_call_id: toolCall.id,
-			content: `Error: ${error instanceof Error ? error.message : "MCP tool call failed"}`
+			content: `Error: ${message}`
 		};
 	}
 }
 
 export async function dispatchToolCalls(
 	mcpHost: McpHost,
-	toolCalls: ChatCompletionMessageToolCall[]
+	toolCalls: ChatCompletionMessageToolCall[],
+	step: number,
+	gateway: ApprovalGateway,
+	onEvent?: OnToolEvent
 ): Promise<ChatCompletionToolMessageParam[]> {
 	const results: ChatCompletionToolMessageParam[] = [];
 
 	for (const toolCall of toolCalls) {
-		const result = await executeSingleToolCall(mcpHost, toolCall);
+		const result = await executeSingleToolCall(mcpHost, toolCall, step, gateway, onEvent);
 		results.push(result);
 	}
 
