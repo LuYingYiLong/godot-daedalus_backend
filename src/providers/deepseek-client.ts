@@ -1,45 +1,38 @@
+import OpenAI from "openai";
+
 const DEFAULT_BASE_URL = "https://api.deepseek.com";
-const DEFAULT_MODEL = "deepseek-chat";
+const DEFAULT_MODEL = "deepseek-v4-flash";
 
-export async function chatWithDeepSeek(message: string): Promise<string> {
-	const apiKey: string | undefined = process.env.DEEPSEEK_API_KEY;
+export type DeepSeekChatOptions = {
+	apiKey: string;
+	baseUrl?: string | undefined;
+	model?: string | undefined;
+};
 
-	if (!apiKey) {
-		throw new Error("DEEPSEEK_API_KEY is not set");
-	}
-
-	const baseUrl: string = process.env.DEEPSEEK_BASE_URL ?? DEFAULT_BASE_URL;
-	const model: string = process.env.DEEPSEEK_MODEL ?? DEFAULT_MODEL;
-
-	const response: Response = await fetch(`${baseUrl}/chat/completions`, {
-		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-			Authorization: `Bearer ${apiKey}`,
-		},
-		body: JSON.stringify({
-			model,
-			messages: [
-				{ role: "system", content: "你是一个有帮助的助手。" },
-				{ role: "user", content: message },
-			],
-			stream: false,
-		}),
+export async function chatWithDeepSeek(message: string, options: DeepSeekChatOptions): Promise<string> {
+	const client: OpenAI = new OpenAI({
+		baseURL: options.baseUrl ?? process.env.DEEPSEEK_BASE_URL ?? DEFAULT_BASE_URL,
+		apiKey: options.apiKey
 	});
 
-	if (!response.ok) {
-		const errorText: string = await response.text();
-		throw new Error(`DeepSeek API error ${response.status}: ${errorText}`);
+	const completion = await client.chat.completions.create({
+		model: options.model ?? process.env.DEEPSEEK_MODEL ?? DEFAULT_MODEL,
+		messages: [
+			{
+				role: "system",
+				content: "You are a helpful assistant.",
+			},
+			{
+				role: "user",
+				content: message,
+			}
+		]
+	});
+
+	const text: string | null | undefined = completion.choices[0]?.message.content;
+	if (!text) {
+		throw new Error("LLM returned empty response");
 	}
 
-	const data: { choices: Array<{ message: { content: string } }> } =
-		await response.json() as { choices: Array<{ message: { content: string } }> };
-
-	const choice: { message: { content: string } } | undefined = data.choices[0];
-
-	if (!choice) {
-		throw new Error("DeepSeek API returned empty choices");
-	}
-
-	return choice.message.content;
+	return text;
 }

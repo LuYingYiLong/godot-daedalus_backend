@@ -10,6 +10,17 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 	z.object({
 		type: z.literal("request"),
 		id: z.string(),
+		method: z.literal("provider.configure"),
+		params: z.object({
+			provider: z.literal("deepseek"),
+			apiKey: z.string().min(1),
+			model: z.string().min(1).optional(),
+			baseUrl: z.string().min(1).optional(),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
 		method: z.literal("ai.chat"),
 		params: z.object({
 			message: z.string(),

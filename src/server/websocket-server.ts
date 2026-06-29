@@ -2,7 +2,14 @@ import WebSocket, { WebSocketServer } from "ws";
 import { clientRequestSchema } from "../protocol/schema.js";
 import type { ClientRequest } from "../protocol/types.js";
 import { chatWithDeepSeek } from "../providers/deepseek-client.js";
+import type { DeepSeekChatOptions } from "../providers/deepseek-client.js";
 import { sendJson } from "./send-json.js";
+
+type ClientSession = {
+	deepseekApiKey?: string | undefined;
+	deepseekModel?: string | undefined;
+	deepseekBaseUrl?: string | undefined;
+};
 
 function parseMessage(data: WebSocket.RawData, isBinary: boolean): unknown {
 	if (isBinary) {
@@ -13,7 +20,7 @@ function parseMessage(data: WebSocket.RawData, isBinary: boolean): unknown {
 	return JSON.parse(text) as unknown;
 }
 
-async function handleRequest(socket: WebSocket, request: ClientRequest): Promise<void> {
+async function handleRequest(socket: WebSocket, request: ClientRequest, session: ClientSession): Promise<void> {
 	switch (request.method) {
 		case "ping":
 			sendJson(socket, {
@@ -24,9 +31,47 @@ async function handleRequest(socket: WebSocket, request: ClientRequest): Promise
 			});
 			break;
 
-		case "ai.chat":
+		case "provider.configure":
+			session.deepseekApiKey = request.params.apiKey;
+			session.deepseekModel = request.params.model;
+			session.deepseekBaseUrl = request.params.baseUrl;
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: true,
+				result: {
+					provider: request.params.provider,
+					configured: true
+				}
+			});
+			break;
+
+		case "ai.chat": {
+			const apiKey: string | undefined = session.deepseekApiKey;
+
+			if (!apiKey) {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: {
+						code: "provider_not_configured",
+						message: "DeepSeek API key is not configured. Send provider.configure first."
+					}
+				});
+				break;
+			}
+
 			try {
-				const text: string = await chatWithDeepSeek(request.params.message);
+				const options: DeepSeekChatOptions = { apiKey };
+				if (session.deepseekModel !== undefined) {
+					options.model = session.deepseekModel;
+				}
+				if (session.deepseekBaseUrl !== undefined) {
+					options.baseUrl = session.deepseekBaseUrl;
+				}
+
+				const text: string = await chatWithDeepSeek(request.params.message, options);
 				sendJson(socket, {
 					type: "response",
 					id: request.id,
@@ -45,6 +90,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest): Promise
 				});
 			}
 			break;
+		}
 	}
 }
 
@@ -52,6 +98,7 @@ export function createServer(port: number): WebSocketServer {
 	const server: WebSocketServer = new WebSocketServer({ port });
 
 	server.on("connection", (socket: WebSocket, request): void => {
+		const session: ClientSession = {};
 		const remoteAddress: string = request.socket.remoteAddress ?? "unknown";
 		console.log(`Client connected: ${remoteAddress}`);
 
@@ -92,7 +139,7 @@ export function createServer(port: number): WebSocketServer {
 				return;
 			}
 
-			handleRequest(socket, validationResult.data).catch((error: unknown): void => {
+			handleRequest(socket, validationResult.data, session).catch((error: unknown): void => {
 				console.error("Unhandled request error:", error);
 			});
 		});

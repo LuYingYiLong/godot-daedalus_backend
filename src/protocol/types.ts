@@ -3,6 +3,15 @@ export type ClientRequest = {
 	id: string;
 } & (
 	| { method: "ping"; params?: Record<string, never> | undefined }
+	| {
+		method: "provider.configure";
+		params: {
+			provider: "deepseek";
+			apiKey: string;
+			model?: string | undefined;
+			baseUrl?: string | undefined;
+		};
+	}
 	| { method: "ai.chat"; params: { message: string } }
 );
 
