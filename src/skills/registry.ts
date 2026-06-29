@@ -37,7 +37,11 @@ const FILE_CREATE_TOOLS: string[] = [
 
 const VERIFY_TOOLS: string[] = [
 	"mcp_terminal_get_capabilities",
-	"mcp_terminal_run_command_preset"
+	"mcp_terminal_run_safe_preset"
+];
+
+const TERMINAL_WRITE_TOOLS: string[] = [
+	"mcp_terminal_run_write_preset"
 ];
 
 const PROPOSE_EDIT_TOOLS: string[] = [
@@ -52,7 +56,7 @@ const skills: Record<SkillId, Skill> = {
 		description: "Inspect the Godot project and create an AGENTS.md project guide.",
 		promptPath: "src/skills/templates/godot-project-init.md",
 		defaultPromptId: "godot.assistant",
-		allowedTools: [...READ_TOOLS, ...FILE_CREATE_TOOLS, ...PROPOSE_EDIT_TOOLS, ...VERIFY_TOOLS]
+		allowedTools: [...READ_TOOLS, ...FILE_CREATE_TOOLS, ...PROPOSE_EDIT_TOOLS, ...VERIFY_TOOLS, ...TERMINAL_WRITE_TOOLS]
 	},
 	"gdscript.review": {
 		id: "gdscript.review",
@@ -76,7 +80,7 @@ const skills: Record<SkillId, Skill> = {
 		description: "Create new project files through approval-gated tools.",
 		promptPath: "src/skills/templates/file-creator.md",
 		defaultPromptId: "godot.assistant",
-		allowedTools: [...READ_TOOLS, ...FILE_CREATE_TOOLS, ...VERIFY_TOOLS]
+		allowedTools: [...READ_TOOLS, ...FILE_CREATE_TOOLS, ...VERIFY_TOOLS, ...TERMINAL_WRITE_TOOLS]
 	},
 	"backend.helper": {
 		id: "backend.helper",

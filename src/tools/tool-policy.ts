@@ -19,7 +19,8 @@ const TOOL_POLICIES: Record<string, ToolPolicy> = {
 	"mcp_godot_propose_replace_text_in_file": { risk: "propose" },
 	"mcp_godot_delete_file": { risk: "destructive" },
 	"mcp_terminal_get_capabilities": { risk: "read" },
-	"mcp_terminal_run_command_preset": { risk: "verify" },
+	"mcp_terminal_run_safe_preset": { risk: "verify" },
+	"mcp_terminal_run_write_preset": { risk: "write" },
 };
 
 export function getToolPolicy(toolName: string): ToolPolicy | undefined {

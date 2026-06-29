@@ -16,6 +16,12 @@ import { computeInputBudget, selectMessagesWithinBudget } from "../session/sessi
 import { ApprovalGateway } from "../tools/approval-gateway.js";
 import { composeSkillPrompt, getSkill, isSkillId, listSkills } from "../skills/registry.js";
 import type { SkillId } from "../skills/registry.js";
+import { loadWorkspaces, findWorkspace, getDefaultWorkspace } from "../workspace/registry.js";
+import type { WorkspaceConfig } from "../workspace/types.js";
+import {
+	createSession, openSession, saveSession, listSessions,
+	deleteSession, renameSession, type SessionMetadata
+} from "../session/session-store.js";
 
 const tokenCounterPromise: Promise<TokenCounter> = createTokenCounter();
 
@@ -33,6 +39,9 @@ type ClientSession = {
 	modelProfile: ModelProfile;
 	approvalGateway: ApprovalGateway;
 	activeSkillId?: SkillId | undefined;
+	activeWorkspace?: WorkspaceConfig | undefined;
+	sessionId?: string | undefined;
+	sessionTitle?: string | undefined;
 };
 
 type SlashCommandResult =
@@ -99,6 +108,10 @@ async function appendChatTurnToSession(
 	session.messages = await selectMessagesWithinBudget(nextMessages, Math.max(0, budgetTokens), tc);
 }
 
+function getSessionProjectPath(session: ClientSession): string {
+	return session.activeWorkspace?.rootPath ?? session.godotProjectPath ?? process.env.GODOT_PROJECT_PATH ?? "";
+}
+
 function createDeepSeekChatOptions(session: ClientSession, apiKey: string): DeepSeekChatOptions {
 	const options: DeepSeekChatOptions = { apiKey };
 	if (session.deepseekModel !== undefined) {
@@ -137,8 +150,15 @@ function createSessionInfoResult(session: ClientSession, mcpHost: McpHost): Reco
 		approvalMode: session.approvalGateway.getMode(),
 		pendingApprovals: session.approvalGateway.listPending().length,
 		mcpServers: mcpHost.getConnectedServerIds(),
-		godotExecutablePath: session.godotExecutablePath ?? null,
-		godotProjectPath: session.godotProjectPath ?? process.env.GODOT_PROJECT_PATH ?? null,
+		godotExecutablePath: session.activeWorkspace?.godotExecutablePath ?? session.godotExecutablePath ?? null,
+		godotProjectPath: getSessionProjectPath(session) || null,
+		activeWorkspace: session.activeWorkspace ? {
+			id: session.activeWorkspace.id,
+			name: session.activeWorkspace.name,
+			kind: session.activeWorkspace.kind,
+			rootPath: session.activeWorkspace.rootPath,
+			godotExecutablePath: session.activeWorkspace.godotExecutablePath ?? null
+		} : null,
 		activeSkillId: session.activeSkillId ?? null
 	};
 }
@@ -334,21 +354,33 @@ async function createMcpSystemContext(mcpHost: McpHost, session: ClientSession):
 	const sections: string[] = [];
 
 	// Godot environment section
-	if (session.godotExecutablePath || session.godotProjectPath) {
+	if (session.godotExecutablePath || session.godotProjectPath || session.activeWorkspace) {
 		sections.push("## Godot 开发环境");
-		sections.push("当前连接的 Godot 客户端提供以下环境信息。你可以基于这些路径建议用户执行具体命令。");
 
-		if (session.godotExecutablePath) {
-			sections.push(`- Godot 可执行文件：\`${session.godotExecutablePath}\``);
+		if (session.activeWorkspace) {
+			sections.push(`- 当前工作区：\`${session.activeWorkspace.name}\`（ID: \`${session.activeWorkspace.id}\`）`);
+			sections.push(`- 项目根路径：\`${session.activeWorkspace.rootPath}\``);
+
+			if (session.activeWorkspace.godotExecutablePath) {
+				sections.push(`- Godot 可执行文件：\`${session.activeWorkspace.godotExecutablePath}\``);
+			}
+		} else {
+			sections.push("当前连接的 Godot 客户端提供以下环境信息。你可以基于这些路径建议用户执行具体命令。");
+
+			if (session.godotExecutablePath) {
+				sections.push(`- Godot 可执行文件：\`${session.godotExecutablePath}\``);
+			}
+
+			if (session.godotProjectPath) {
+				sections.push(`- Godot 项目路径：\`${session.godotProjectPath}\``);
+			}
 		}
 
-		if (session.godotProjectPath) {
-			sections.push(`- Godot 项目路径：\`${session.godotProjectPath}\``);
-		}
+		const effectiveGodotPath: string | undefined = session.activeWorkspace?.godotExecutablePath ?? session.godotExecutablePath;
 
-		if (session.godotExecutablePath) {
-			sections.push(`- 语法检查命令：\`"${session.godotExecutablePath}" --headless --path "项目路径" --check-only --quit\``);
-			sections.push(`- 无头运行命令：\`"${session.godotExecutablePath}" --headless --path "项目路径" --quit\``);
+		if (effectiveGodotPath) {
+			sections.push(`- 语法检查命令：\`"${effectiveGodotPath}" --headless --path "项目路径" --check-only --quit\``);
+			sections.push(`- 无头运行命令：\`"${effectiveGodotPath}" --headless --path "项目路径" --quit\``);
 		}
 
 		sections.push("");
@@ -685,6 +717,129 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 			});
 			break;
 
+		case "session.create": {
+			const metadata: SessionMetadata = await createSession(
+				request.params.title,
+				request.params.workspaceId,
+				request.params.skillId
+			);
+			session.sessionId = metadata.id;
+			session.sessionTitle = metadata.title;
+			if (request.params.workspaceId) {
+				const ws: WorkspaceConfig | undefined = findWorkspace(request.params.workspaceId);
+				if (ws) {
+					session.activeWorkspace = ws;
+					session.godotProjectPath = ws.rootPath;
+				}
+			}
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: true,
+				result: metadata
+			});
+			break;
+		}
+
+		case "session.open": {
+			try {
+				const stored = await openSession(request.params.sessionId);
+				session.sessionId = stored.metadata.id;
+				session.sessionTitle = stored.metadata.title;
+				session.messages = stored.messages.map((m) => ({ role: m.role, content: m.content }));
+
+				if (stored.metadata.workspaceId) {
+					const ws: WorkspaceConfig | undefined = findWorkspace(stored.metadata.workspaceId);
+					if (ws) {
+						session.activeWorkspace = ws;
+						session.godotProjectPath = ws.rootPath;
+					}
+				}
+
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: true,
+					result: {
+						opened: true,
+						metadata: stored.metadata,
+						messageCount: stored.messages.length
+					}
+				});
+			} catch (error: unknown) {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: {
+						code: "session_not_found",
+						message: error instanceof Error ? error.message : "Session not found"
+					}
+				});
+			}
+			break;
+		}
+
+		case "session.list":
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: true,
+				result: { sessions: await listSessions() }
+			});
+			break;
+
+		case "session.save":
+			if (!session.sessionId) {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: { code: "no_session", message: "No active session to save. Create one first with session.create." }
+				});
+				break;
+			}
+			await saveSession(session.sessionId, session.messages, {
+				workspaceId: session.activeWorkspace?.id,
+				activeSkillId: session.activeSkillId
+			});
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: true,
+				result: { saved: true, sessionId: session.sessionId, messageCount: session.messages.length }
+			});
+			break;
+
+		case "session.delete":
+			await deleteSession(request.params.sessionId);
+			if (session.sessionId === request.params.sessionId) {
+				session.sessionId = undefined;
+				session.sessionTitle = undefined;
+				session.messages = [];
+			}
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: true,
+				result: { deleted: true, sessionId: request.params.sessionId }
+			});
+			break;
+
+		case "session.rename": {
+			const metadata: SessionMetadata = await renameSession(request.params.sessionId, request.params.title);
+			if (session.sessionId === request.params.sessionId) {
+				session.sessionTitle = metadata.title;
+			}
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: true,
+				result: metadata
+			});
+			break;
+		}
+
 		case "mcp.listTools": {
 			const serverId: string = request.params?.serverId ?? "godot";
 
@@ -799,7 +954,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 		}
 
 		case "fileChange.create": {
-			const projectPath: string | undefined = process.env.GODOT_PROJECT_PATH;
+			const projectPath: string = getSessionProjectPath(session);
 
 			if (!projectPath) {
 				sendJson(socket, {
@@ -808,7 +963,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 					ok: false,
 					error: {
 						code: "config_error",
-						message: "GODOT_PROJECT_PATH is not configured on the server"
+						message: "No workspace selected and GODOT_PROJECT_PATH is not configured"
 					}
 				});
 				break;
@@ -892,14 +1047,14 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 		}
 
 		case "fileChange.overwrite": {
-			const projectPath: string | undefined = process.env.GODOT_PROJECT_PATH;
+			const projectPath: string = getSessionProjectPath(session);
 
 			if (!projectPath) {
 				sendJson(socket, {
 					type: "response",
 					id: request.id,
 					ok: false,
-					error: { code: "config_error", message: "GODOT_PROJECT_PATH is not configured" }
+					error: { code: "config_error", message: "No workspace selected" }
 				});
 				break;
 			}
@@ -977,14 +1132,14 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 		}
 
 		case "fileChange.delete": {
-			const projectPath: string | undefined = process.env.GODOT_PROJECT_PATH;
+			const projectPath: string = getSessionProjectPath(session);
 
 			if (!projectPath) {
 				sendJson(socket, {
 					type: "response",
 					id: request.id,
 					ok: false,
-					error: { code: "config_error", message: "GODOT_PROJECT_PATH is not configured" }
+					error: { code: "config_error", message: "No workspace selected" }
 				});
 				break;
 			}
@@ -1147,6 +1302,83 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 				}
 			});
 			break;
+
+		case "workspace.list":
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: true,
+				result: {
+					workspaces: loadWorkspaces(),
+					active: session.activeWorkspace?.id ?? null
+				}
+			});
+			break;
+
+		case "workspace.select": {
+			const workspace: WorkspaceConfig | undefined = findWorkspace(request.params.workspaceId);
+
+			if (!workspace) {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: {
+						code: "workspace_not_found",
+						message: `Workspace not found: ${request.params.workspaceId}`
+					}
+				});
+				break;
+			}
+
+			try {
+				await mcpHost.switchWorkspace(workspace);
+			} catch (error: unknown) {
+				console.error("Failed to switch MCP workspace:", error);
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: {
+						code: "workspace_switch_failed",
+						message: error instanceof Error ? error.message : "Failed to switch MCP workspace"
+					}
+				});
+				break;
+			}
+
+			session.activeWorkspace = workspace;
+			session.godotProjectPath = workspace.rootPath;
+
+			if (workspace.godotExecutablePath) {
+				session.godotExecutablePath = workspace.godotExecutablePath;
+			}
+
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: true,
+				result: {
+					selected: true,
+					workspace: {
+						id: workspace.id,
+						name: workspace.name,
+						kind: workspace.kind,
+						rootPath: workspace.rootPath
+					}
+				}
+			});
+			break;
+		}
+
+		case "workspace.info":
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: true,
+				result: session.activeWorkspace ?? null
+			});
+			break;
 	}
 }
 
@@ -1157,7 +1389,8 @@ export function createServer(port: number, mcpHost: McpHost): WebSocketServer {
 		const session: ClientSession = {
 			messages: [],
 			modelProfile: getDefaultModelProfile(),
-			approvalGateway: new ApprovalGateway()
+			approvalGateway: new ApprovalGateway(),
+			activeWorkspace: getDefaultWorkspace()
 		};
 		const remoteAddress: string = request.socket.remoteAddress ?? "unknown";
 		console.log(`Client connected: ${remoteAddress}`);
@@ -1205,6 +1438,14 @@ export function createServer(port: number, mcpHost: McpHost): WebSocketServer {
 		});
 
 		socket.on("close", (): void => {
+			if (session.sessionId && session.messages.length > 0) {
+				saveSession(session.sessionId, session.messages, {
+					workspaceId: session.activeWorkspace?.id,
+					activeSkillId: session.activeSkillId
+				}).catch((error: unknown): void => {
+					console.error("Failed to auto-save session on disconnect:", error);
+				});
+			}
 			console.log(`Client disconnected: ${remoteAddress}`);
 		});
 	});

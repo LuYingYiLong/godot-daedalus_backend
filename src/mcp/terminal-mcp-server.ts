@@ -8,11 +8,14 @@ const MAX_STDOUT_CHARS: number = 12000;
 const MAX_STDERR_CHARS: number = 12000;
 const COMMAND_TIMEOUT_MS: number = 30_000;
 
+type CommandRisk = "read" | "verify" | "write" | "destructive";
+
 type CommandPreset = {
 	name: string;
 	description: string;
 	command: string[];
 	workingDirectory: string;
+	risk: CommandRisk;
 };
 
 const BACKEND_DIR: string = process.env.BACKEND_DIR ?? process.cwd();
@@ -31,19 +34,36 @@ const COMMAND_PRESETS: CommandPreset[] = [
 		name: "backend.typecheck",
 		description: "运行后端 TypeScript 类型检查 (tsc --noEmit)",
 		command: NPM_TYPECHECK_COMMAND,
-		workingDirectory: BACKEND_DIR
+		workingDirectory: BACKEND_DIR,
+		risk: "verify"
 	},
 	{
 		name: "git.status",
 		description: "显示 Git 工作区状态 (只读)",
 		command: ["git", "status", "--short"],
-		workingDirectory: BACKEND_DIR
+		workingDirectory: BACKEND_DIR,
+		risk: "read"
+	},
+	{
+		name: "git.diff",
+		description: "显示 Git 工作区差异 (只读)",
+		command: ["git", "diff", "--stat"],
+		workingDirectory: BACKEND_DIR,
+		risk: "read"
+	},
+	{
+		name: "git.init",
+		description: "初始化 Git 仓库",
+		command: ["git", "init"],
+		workingDirectory: BACKEND_DIR,
+		risk: "write"
 	},
 	{
 		name: "godot.check_only",
 		description: "运行 Godot 全项目脚本语法检查 (只读)",
 		command: [GODOT_EXECUTABLE, "--headless", "--disable-crash-handler", "--path", GODOT_PROJECT, "--check-only", "--quit"],
-		workingDirectory: GODOT_PROJECT || BACKEND_DIR
+		workingDirectory: GODOT_PROJECT || BACKEND_DIR,
+		risk: "verify"
 	}
 ];
 
@@ -169,56 +189,116 @@ async function main(): Promise<void> {
 		"get_terminal_capabilities",
 		{
 			title: "Get Terminal Capabilities",
-			description: "返回当前终端 MCP 支持的所有预设命令列表。这些是唯一可以执行的命令。",
+			description: "返回当前终端 MCP 支持的所有预设命令列表及其风险等级。",
 			inputSchema: z.object({})
 		},
 		async () => asJsonTextResult({
 			presets: COMMAND_PRESETS.map((p: CommandPreset) => ({
-						name: p.name,
-						description: p.description,
-						workingDirectory: p.workingDirectory
+				name: p.name,
+				description: p.description,
+				workingDirectory: p.workingDirectory,
+				risk: p.risk
 			}))
 		})
 	);
 
 	server.registerTool(
-		"run_command_preset",
+		"run_safe_preset",
 		{
-			title: "Run Command Preset",
-			description: "执行一个预设命令。只能执行 get_terminal_capabilities 返回的预设名称。不能传入任意 shell 字符串。",
+			title: "Run Safe Command Preset",
+			description: "执行安全的预设命令（read/verify 风险），自动允许。包括 git.status、git.diff、backend.typecheck、godot.check_only。",
 			inputSchema: z.object({
-				presetName: z.string().min(1).describe("要执行的预设命令名称"),
-				workingDirectory: z.string().optional().describe("覆盖预设的默认工作目录（仅限项目内部路径）")
+				presetName: z.string().min(1).describe("安全预设名称"),
+				workingDirectory: z.string().optional().describe("覆盖默认工作目录")
 			})
 		},
 		async ({ presetName, workingDirectory }) => {
 			const preset: CommandPreset = findPreset(presetName);
-			let cwd: string;
 
+			if (preset.risk !== "read" && preset.risk !== "verify") {
+				return asJsonTextResult({
+					preset: presetName,
+					ok: false,
+					error: `Preset '${presetName}' has risk '${preset.risk}', not allowed via run_safe_preset. Use run_write_preset for write commands.`,
+					requiredRisk: preset.risk
+				});
+			}
+
+			let cwd: string;
 			try {
 				cwd = resolveWorkingDirectory(workingDirectory, preset);
 			} catch (error: unknown) {
 				return asJsonTextResult({
 					preset: presetName,
 					ok: false,
-					exitCode: null,
-					stdout: "",
-					stderr: error instanceof Error ? error.message : "Invalid working directory",
-					durationMs: 0,
-					truncated: false
+					error: error instanceof Error ? error.message : "Invalid working directory"
 				});
 			}
 
 			const result = await runCommand(preset.command, cwd);
 
 			return asJsonTextResult({
-						preset: presetName,
-						ok: result.exitCode === 0,
-						exitCode: result.exitCode,
-						stdout: result.stdout,
-						stderr: result.stderr,
-						durationMs: result.durationMs,
-						truncated: result.truncated
+				preset: presetName,
+				ok: result.exitCode === 0,
+				exitCode: result.exitCode,
+				stdout: result.stdout,
+				stderr: result.stderr,
+				durationMs: result.durationMs,
+				truncated: result.truncated
+			});
+		}
+	);
+
+	server.registerTool(
+		"run_write_preset",
+		{
+			title: "Run Write Command Preset",
+			description: "执行写操作预设命令（write 风险），需要通过审批系统批准。可用的写预设：git.init。破坏性预设会被直接拒绝。",
+			inputSchema: z.object({
+				presetName: z.string().min(1).describe("写操作预设名称"),
+				workingDirectory: z.string().optional().describe("覆盖默认工作目录")
+			})
+		},
+		async ({ presetName, workingDirectory }) => {
+			const preset: CommandPreset = findPreset(presetName);
+
+			if (preset.risk === "destructive") {
+				return asJsonTextResult({
+					preset: presetName,
+					ok: false,
+					error: `Preset '${presetName}' has destructive risk and is permanently forbidden.`
+				});
+			}
+
+			if (preset.risk !== "write") {
+				return asJsonTextResult({
+					preset: presetName,
+					ok: false,
+					error: `Preset '${presetName}' has risk '${preset.risk}', use run_safe_preset instead.`
+				});
+			}
+
+			let cwd: string;
+			try {
+				cwd = resolveWorkingDirectory(workingDirectory, preset);
+			} catch (error: unknown) {
+				return asJsonTextResult({
+					preset: presetName,
+					ok: false,
+					error: error instanceof Error ? error.message : "Invalid working directory"
+				});
+			}
+
+			const result = await runCommand(preset.command, cwd);
+
+			return asJsonTextResult({
+				preset: presetName,
+				ok: result.exitCode === 0,
+				exitCode: result.exitCode,
+				stdout: result.stdout,
+				stderr: result.stderr,
+				durationMs: result.durationMs,
+				truncated: result.truncated
 			});
 		}
 	);

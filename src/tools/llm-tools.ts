@@ -54,9 +54,13 @@ const TOOL_MAP: Record<string, ToolMapping> = {
 		serverId: "godot",
 		toolName: "delete_file"
 	},
-	"mcp_terminal_run_command_preset": {
+	"mcp_terminal_run_safe_preset": {
 		serverId: "terminal",
-		toolName: "run_command_preset"
+		toolName: "run_safe_preset"
+	},
+	"mcp_terminal_run_write_preset": {
+		serverId: "terminal",
+		toolName: "run_write_preset"
 	},
 	"mcp_terminal_get_capabilities": {
 		serverId: "terminal",
@@ -271,7 +275,7 @@ const TOOL_DEFINITIONS: ChatCompletionTool[] = [
 		type: "function",
 		function: {
 			name: "mcp_terminal_get_capabilities",
-			description: "获取终端 MCP 支持的所有预设命令列表。在首次使用终端工具前应先调用此工具了解可用命令。",
+			description: "获取终端 MCP 支持的所有预设命令列表及其风险等级。首次使用终端工具前应先调用此工具了解可用命令。",
 			parameters: {
 				type: "object",
 				properties: {},
@@ -282,18 +286,31 @@ const TOOL_DEFINITIONS: ChatCompletionTool[] = [
 	{
 		type: "function",
 		function: {
-			name: "mcp_terminal_run_command_preset",
-			description: "执行一个预设的终端命令。只能执行 get_terminal_capabilities 返回的预设名称。不能传入任意 shell 字符串。可用的预设包括：backend.typecheck（TypeScript 类型检查）、git.status（Git 工作区状态）、godot.check_only（Godot 脚本语法检查）。",
+			name: "mcp_terminal_run_safe_preset",
+			description: "执行安全的（read/verify 风险）终端预设命令，自动允许。包括：backend.typecheck（TypeScript 类型检查）、git.status（Git 工作区状态）、git.diff（Git 差异）、godot.check_only（Godot 脚本语法检查）。",
 			parameters: {
 				type: "object",
 				properties: {
 					presetName: {
 						type: "string",
-						description: "预设命令名称，如 'backend.typecheck'、'git.status'、'godot.check_only'"
-					},
-					workingDirectory: {
+						description: "安全预设名称，如 'backend.typecheck'、'git.status'、'git.diff'、'godot.check_only'"
+					}
+				},
+				required: ["presetName"]
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_terminal_run_write_preset",
+			description: "执行写操作（write 风险）终端预设命令，需要通过审批系统批准。可用的写预设：git.init。此工具调用后不会立即执行，需要用户在 Godot 客户端批准。",
+			parameters: {
+				type: "object",
+				properties: {
+					presetName: {
 						type: "string",
-						description: "可选，覆盖预设的默认工作目录"
+						description: "写操作预设名称，如 'git.init'"
 					}
 				},
 				required: ["presetName"]

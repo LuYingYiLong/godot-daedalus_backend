@@ -18,3 +18,9 @@ Thumbs.db
 # Tokenizer model files (large, download separately)
 scripts/tokenizer/tokenizer.json
 scripts/tokenizer/tokenizer_config.json
+
+# Workspace config (contains local paths)
+config/workspaces.json
+
+# Session data (contains conversation history)
+data/sessions/

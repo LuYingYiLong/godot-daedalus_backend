@@ -89,6 +89,53 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 	z.object({
 		type: z.literal("request"),
 		id: z.string(),
+		method: z.literal("session.create"),
+		params: z.object({
+			title: z.string().min(1),
+			workspaceId: z.string().optional(),
+			skillId: z.string().optional(),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("session.open"),
+		params: z.object({
+			sessionId: z.string().min(1),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("session.list"),
+		params: z.object({}).optional(),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("session.save"),
+		params: z.object({}).optional(),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("session.delete"),
+		params: z.object({
+			sessionId: z.string().min(1),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("session.rename"),
+		params: z.object({
+			sessionId: z.string().min(1),
+			title: z.string().min(1),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
 		method: z.literal("mcp.listTools"),
 		params: z.object({
 			serverId: z.string().optional(),
@@ -177,6 +224,26 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 			godotExecutablePath: z.string().min(1).optional(),
 			godotProjectPath: z.string().min(1).optional(),
 		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("workspace.list"),
+		params: z.object({}).optional(),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("workspace.select"),
+		params: z.object({
+			workspaceId: z.string().min(1),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("workspace.info"),
+		params: z.object({}).optional(),
 	})
 ]);
 
