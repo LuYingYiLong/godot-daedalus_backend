@@ -9,6 +9,7 @@ export const aiChatParamsSchema = z.object({
 		maxTokens: z.number().int().positive().optional(),
 		stop: z.union([z.string(), z.array(z.string())]).optional(),
 		responseFormat: z.union([z.literal("text"), z.literal("json")]).optional(),
+		stream: z.boolean().optional(),
 	}).optional()
 });
 
@@ -36,6 +37,18 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		method: z.literal("ai.chat"),
 		params: aiChatParamsSchema,
 	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("session.reset"),
+		params: z.object({}).optional(),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("session.info"),
+		params: z.object({}).optional(),
+	})
 ]);
 
 export const serverResponseSchema = z.discriminatedUnion("ok", [

@@ -5,6 +5,11 @@ export type AiChatParams = z.infer<typeof aiChatParamsSchema>;
 
 export type ClientRequest = z.infer<typeof clientRequestSchema>;
 
+export type ChatMessage = {
+	role: "system" | "user" | "assistant";
+	content: string;
+};
+
 export type ServerResponse =
 	| {
 		type: "response";
@@ -29,3 +34,10 @@ export type ServerEvent = {
 	data?: unknown;
 };
 
+export type ModelProfile = {
+	provider: "deepseek";
+	model: string;
+	contextWindowTokens: number;
+	maxOutputTokens: number;
+	historyBudgetTokens: number;
+};
