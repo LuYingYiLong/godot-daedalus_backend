@@ -46,9 +46,17 @@ const TOOL_MAP: Record<string, ToolMapping> = {
 		serverId: "godot",
 		toolName: "propose_overwrite_text_file"
 	},
+	"mcp_godot_overwrite_text_file": {
+		serverId: "godot",
+		toolName: "overwrite_text_file"
+	},
 	"mcp_godot_propose_replace_text_in_file": {
 		serverId: "godot",
 		toolName: "propose_replace_text_in_file"
+	},
+	"mcp_godot_replace_text_in_file": {
+		serverId: "godot",
+		toolName: "replace_text_in_file"
 	},
 	"mcp_godot_delete_file": {
 		serverId: "godot",
@@ -244,8 +252,39 @@ const TOOL_DEFINITIONS: ChatCompletionTool[] = [
 	{
 		type: "function",
 		function: {
+			name: "mcp_godot_overwrite_text_file",
+			description: "覆盖已有文本文件，会实际写入磁盘，默认需要用户在 Godot 客户端审批。只能写入 .gd/.tres/.json/.md/.txt 文件，不允许写入 .godot/、addons/ 或隐藏目录。",
+			parameters: {
+				type: "object",
+				properties: {
+					relativePath: { type: "string", description: "要覆盖的已有文件路径" },
+					content: { type: "string", description: "新的完整文件内容" }
+				},
+				required: ["relativePath", "content"]
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
 			name: "mcp_godot_propose_replace_text_in_file",
 			description: "提出替换文件中指定文本的提案。不会实际写入。oldText 必须精确匹配（含空白和缩进），只替换首次出现。AI 只能 propose，实际替换需要用户确认。",
+			parameters: {
+				type: "object",
+				properties: {
+					relativePath: { type: "string", description: "已有文件路径" },
+					oldText: { type: "string", description: "要被替换的原文本，必须精确匹配" },
+					newText: { type: "string", description: "替换后的新文本" }
+				},
+				required: ["relativePath", "oldText", "newText"]
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_godot_replace_text_in_file",
+			description: "替换已有文本文件中首次出现的指定文本，会实际写入磁盘，默认需要用户在 Godot 客户端审批。oldText 必须精确匹配。",
 			parameters: {
 				type: "object",
 				properties: {

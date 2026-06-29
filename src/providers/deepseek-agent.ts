@@ -15,6 +15,7 @@ import type { McpHost } from "../mcp/mcp-host.js";
 import { getToolDefinitions, getToolDefinitionsForNames, MAX_TOOL_STEPS, MAX_TOTAL_TOOL_RESULT_CHARS } from "../tools/llm-tools.js";
 import { dispatchToolCalls, ToolApprovalRequiredError, type OnToolEvent } from "../tools/tool-dispatcher.js";
 import { ApprovalGateway } from "../tools/approval-gateway.js";
+import { containsDsmlToolCalls, parseDsmlToolCalls, stripDsmlToolCalls } from "./deepseek-dsml-tools.js";
 
 const DEFAULT_BASE_URL = "https://api.deepseek.com";
 const DEFAULT_MODEL = "deepseek-v4-flash";
@@ -112,10 +113,18 @@ export async function runDeepSeekAgent(
 		}
 
 		const message = choice.message;
-		const toolCalls: ChatCompletionMessageToolCall[] | undefined = message.tool_calls;
+		let toolCalls: ChatCompletionMessageToolCall[] | undefined = message.tool_calls;
+		const contentText: string | null = message.content;
+
+		if ((!toolCalls || toolCalls.length === 0) && containsDsmlToolCalls(contentText)) {
+			const parsedToolCalls: ChatCompletionMessageToolCall[] = parseDsmlToolCalls(contentText ?? "", `dsml-step-${step}`);
+			if (parsedToolCalls.length > 0) {
+				toolCalls = parsedToolCalls;
+			}
+		}
 
 		if (!toolCalls || toolCalls.length === 0) {
-			const text: string | null = message.content;
+			const text: string | null = contentText;
 
 			if (!text) {
 				throw new Error("LLM returned empty response");
@@ -126,7 +135,7 @@ export async function runDeepSeekAgent(
 
 		const assistantMessage: ChatCompletionMessageParam = {
 			role: "assistant",
-			content: message.content,
+			content: containsDsmlToolCalls(contentText) ? stripDsmlToolCalls(contentText ?? "") : contentText,
 			tool_calls: toolCalls
 		} as ChatCompletionMessageParam;
 

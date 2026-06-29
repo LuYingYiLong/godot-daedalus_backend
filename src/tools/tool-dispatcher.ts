@@ -7,7 +7,7 @@ export type ToolEvent =
 	| { type: "tool.call"; step: number; toolName: string; args: Record<string, unknown> }
 	| { type: "tool.result"; step: number; toolName: string; resultChars: number; truncated: boolean }
 	| { type: "tool.error"; step: number; toolName: string; message: string }
-	| { type: "tool.approval_required"; step: number; toolName: string; approvalId: string; reason: string };
+	| { type: "tool.approval_required"; step: number; toolName: string; approvalId: string; reason: string; args: Record<string, unknown> };
 
 export type OnToolEvent = (event: ToolEvent) => void;
 
@@ -82,7 +82,8 @@ async function executeSingleToolCall(
 			step,
 			toolName: functionName,
 			approvalId: pending.approvalId,
-			reason: decision.reason
+			reason: decision.reason,
+			args: argsParsed
 		});
 
 		throw new ToolApprovalRequiredError(pending);

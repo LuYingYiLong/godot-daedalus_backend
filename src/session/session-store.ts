@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 import type { ChatMessage } from "../protocol/types.js";
 
 const SESSIONS_DIR: string = resolve(process.env.SESSIONS_DIR ?? "data/sessions");
+const SESSION_ID_PATTERN: RegExp = /^session-[a-zA-Z0-9_-]+$/;
 
 export type SessionMetadata = {
 	id: string;
@@ -24,18 +25,30 @@ export type StoredSession = {
 	messages: StoredMessage[];
 };
 
-async function sessionDir(sessionId: string): Promise<string> {
-	const dir: string = join(SESSIONS_DIR, sessionId);
+function assertSafeSessionId(sessionId: string): string {
+	if (!SESSION_ID_PATTERN.test(sessionId)) {
+		throw new Error(`Invalid session id: ${sessionId}`);
+	}
+
+	return sessionId;
+}
+
+function getSessionDir(sessionId: string): string {
+	return join(SESSIONS_DIR, assertSafeSessionId(sessionId));
+}
+
+async function createSessionDir(sessionId: string): Promise<string> {
+	const dir: string = getSessionDir(sessionId);
 	await mkdir(dir, { recursive: true });
 	return dir;
 }
 
-async function metaPath(sessionId: string): Promise<string> {
-	return join(await sessionDir(sessionId), "metadata.json");
+function metaPath(sessionId: string): string {
+	return join(getSessionDir(sessionId), "metadata.json");
 }
 
-async function messagesPath(sessionId: string): Promise<string> {
-	return join(await sessionDir(sessionId), "messages.jsonl");
+function messagesPath(sessionId: string): string {
+	return join(getSessionDir(sessionId), "messages.jsonl");
 }
 
 export async function createSession(title: string, workspaceId?: string, skillId?: string): Promise<SessionMetadata> {
@@ -52,7 +65,7 @@ export async function createSession(title: string, workspaceId?: string, skillId
 		updatedAt: timestamp
 	};
 
-	const dir: string = await sessionDir(id);
+	const dir: string = await createSessionDir(id);
 	await writeFile(join(dir, "metadata.json"), JSON.stringify(metadata, null, 2), "utf8");
 	await writeFile(join(dir, "messages.jsonl"), "", "utf8");
 
@@ -60,8 +73,8 @@ export async function createSession(title: string, workspaceId?: string, skillId
 }
 
 export async function openSession(sessionId: string): Promise<StoredSession> {
-	const metaFile: string = await metaPath(sessionId);
-	const msgFile: string = await messagesPath(sessionId);
+	const metaFile: string = metaPath(sessionId);
+	const msgFile: string = messagesPath(sessionId);
 
 	let metadata: SessionMetadata;
 
@@ -97,18 +110,16 @@ export async function openSession(sessionId: string): Promise<StoredSession> {
 }
 
 export async function saveSession(sessionId: string, messages: ChatMessage[], metadata?: Partial<SessionMetadata>): Promise<void> {
-	const metaFile: string = await metaPath(sessionId);
-	const msgFile: string = await messagesPath(sessionId);
+	const metaFile: string = metaPath(sessionId);
+	const msgFile: string = messagesPath(sessionId);
 
-	if (metadata && Object.keys(metadata).length > 0) {
-		const existing: StoredSession = await openSession(sessionId);
-		const updated: SessionMetadata = {
-			...existing.metadata,
-			...metadata,
-			updatedAt: new Date().toISOString()
-		};
-		await writeFile(metaFile, JSON.stringify(updated, null, 2), "utf8");
-	}
+	const existing: StoredSession = await openSession(sessionId);
+	const updated: SessionMetadata = {
+		...existing.metadata,
+		...(metadata ?? {}),
+		updatedAt: new Date().toISOString()
+	};
+	await writeFile(metaFile, JSON.stringify(updated, null, 2), "utf8");
 
 	const timestamp: string = new Date().toISOString();
 	const lines: string[] = [];
@@ -121,9 +132,9 @@ export async function saveSession(sessionId: string, messages: ChatMessage[], me
 }
 
 export async function appendMessage(sessionId: string, message: ChatMessage): Promise<void> {
-	const msgFile: string = await messagesPath(sessionId);
+	const msgFile: string = messagesPath(sessionId);
 	const line: string = JSON.stringify({ ...message, createdAt: new Date().toISOString() }) + "\n";
-	await writeFile(msgFile, line, { flag: "a" });
+	await writeFile(msgFile, line, { encoding: "utf8", flag: "a" });
 }
 
 export async function listSessions(): Promise<SessionMetadata[]> {
@@ -152,7 +163,7 @@ export async function listSessions(): Promise<SessionMetadata[]> {
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {
-	const dir: string = await sessionDir(sessionId);
+	const dir: string = getSessionDir(sessionId);
 	await rm(dir, { recursive: true, force: true });
 }
 
@@ -164,7 +175,7 @@ export async function renameSession(sessionId: string, newTitle: string): Promis
 		updatedAt: new Date().toISOString()
 	};
 
-	const metaFile: string = await metaPath(sessionId);
+	const metaFile: string = metaPath(sessionId);
 	await writeFile(metaFile, JSON.stringify(updated, null, 2), "utf8");
 
 	return updated;
@@ -172,7 +183,7 @@ export async function renameSession(sessionId: string, newTitle: string): Promis
 
 export async function sessionExists(sessionId: string): Promise<boolean> {
 	try {
-		await access(join(SESSIONS_DIR, sessionId));
+		await access(getSessionDir(sessionId));
 		return true;
 	} catch {
 		return false;

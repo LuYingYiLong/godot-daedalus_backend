@@ -320,6 +320,68 @@ async function createTextFile(relativePath: string, content: string): Promise<{
 	};
 }
 
+async function overwriteTextFile(relativePath: string, content: string): Promise<{
+	overwritten: true;
+	path: string;
+	size: number;
+	oldSize: number;
+}> {
+	if (content.length === 0) {
+		throw new Error("File content is empty");
+	}
+
+	if (content.length > MAX_TEXT_FILE_BYTES) {
+		throw new Error(`Content too large: ${content.length} bytes (max ${MAX_TEXT_FILE_BYTES})`);
+	}
+
+	const resolvedPath: string = await assertWritablePath(relativePath);
+	const oldContent: string = await fs.readFile(resolvedPath, "utf8");
+	await fs.writeFile(resolvedPath, content, "utf8");
+
+	return {
+		overwritten: true,
+		path: path.relative(projectRoot, resolvedPath).replaceAll(path.sep, "/"),
+		size: content.length,
+		oldSize: oldContent.length
+	};
+}
+
+async function replaceTextInFile(relativePath: string, oldText: string, newText: string): Promise<{
+	replaced: true;
+	path: string;
+	occurrences: number;
+	size: number;
+	oldSize: number;
+}> {
+	if (oldText.length === 0) {
+		throw new Error("oldText must not be empty");
+	}
+
+	const resolvedPath: string = await assertWritablePath(relativePath);
+	const oldContent: string = await fs.readFile(resolvedPath, "utf8");
+
+	if (!oldContent.includes(oldText)) {
+		throw new Error("oldText was not found in file");
+	}
+
+	const occurrenceCount: number = oldContent.split(oldText).length - 1;
+	const newContent: string = oldContent.replace(oldText, newText);
+
+	if (newContent.length > MAX_TEXT_FILE_BYTES) {
+		throw new Error(`Content too large after replacement: ${newContent.length} bytes (max ${MAX_TEXT_FILE_BYTES})`);
+	}
+
+	await fs.writeFile(resolvedPath, newContent, "utf8");
+
+	return {
+		replaced: true,
+		path: path.relative(projectRoot, resolvedPath).replaceAll(path.sep, "/"),
+		occurrences: occurrenceCount,
+		size: newContent.length,
+		oldSize: oldContent.length
+	};
+}
+
 async function main(): Promise<void> {
 	await assertProjectExists();
 
@@ -554,6 +616,19 @@ async function main(): Promise<void> {
 	);
 
 	server.registerTool(
+		"overwrite_text_file",
+		{
+			title: "Overwrite Text File",
+			description: "覆盖已有文本文件，会实际写入磁盘。只能写入 .gd/.tres/.json/.md/.txt 文件，不允许写入 .godot/、addons/ 或隐藏目录。",
+			inputSchema: z.object({
+				relativePath: z.string().min(1).describe("相对于项目根目录的已有文件路径"),
+				content: z.string().describe("新的完整文件内容")
+			})
+		},
+		async ({ relativePath, content }) => asJsonTextResult(await overwriteTextFile(relativePath, content))
+	);
+
+	server.registerTool(
 		"propose_replace_text_in_file",
 		{
 			title: "Propose Replace Text In File",
@@ -604,6 +679,20 @@ async function main(): Promise<void> {
 				preview: newContent.slice(0, 500) + (newContent.length > 500 ? "\n..." : "")
 			});
 		}
+	);
+
+	server.registerTool(
+		"replace_text_in_file",
+		{
+			title: "Replace Text In File",
+			description: "替换已有文件中首次出现的指定文本，会实际写入磁盘。oldText 必须精确匹配。",
+			inputSchema: z.object({
+				relativePath: z.string().min(1).describe("相对于项目根目录的已有文件路径"),
+				oldText: z.string().min(1).describe("要被替换的原文本（必须精确匹配）"),
+				newText: z.string().describe("替换后的新文本")
+			})
+		},
+		async ({ relativePath, oldText, newText }) => asJsonTextResult(await replaceTextInFile(relativePath, oldText, newText))
 	);
 
 	server.registerTool(

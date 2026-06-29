@@ -718,20 +718,63 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 			break;
 
 		case "session.create": {
+			const workspaceId: string | undefined = request.params.workspaceId ?? session.activeWorkspace?.id;
+			const skillId: SkillId | undefined = request.params.skillId ?? session.activeSkillId;
+			let workspace: WorkspaceConfig | undefined;
+
+			if (workspaceId) {
+				workspace = findWorkspace(workspaceId);
+
+				if (!workspace) {
+					sendJson(socket, {
+						type: "response",
+						id: request.id,
+						ok: false,
+						error: {
+							code: "workspace_not_found",
+							message: `Workspace not found: ${workspaceId}`
+						}
+					});
+					break;
+				}
+
+				try {
+					await mcpHost.switchWorkspace(workspace);
+				} catch (error: unknown) {
+					sendJson(socket, {
+						type: "response",
+						id: request.id,
+						ok: false,
+						error: {
+							code: "workspace_switch_failed",
+							message: error instanceof Error ? error.message : "Failed to switch MCP workspace"
+						}
+					});
+					break;
+				}
+			}
+
 			const metadata: SessionMetadata = await createSession(
 				request.params.title,
-				request.params.workspaceId,
-				request.params.skillId
+				workspaceId,
+				skillId
 			);
 			session.sessionId = metadata.id;
 			session.sessionTitle = metadata.title;
-			if (request.params.workspaceId) {
-				const ws: WorkspaceConfig | undefined = findWorkspace(request.params.workspaceId);
-				if (ws) {
-					session.activeWorkspace = ws;
-					session.godotProjectPath = ws.rootPath;
+
+			if (workspace) {
+				session.activeWorkspace = workspace;
+				session.godotProjectPath = workspace.rootPath;
+
+				if (workspace.godotExecutablePath) {
+					session.godotExecutablePath = workspace.godotExecutablePath;
 				}
 			}
+
+			if (skillId) {
+				session.activeSkillId = skillId;
+			}
+
 			sendJson(socket, {
 				type: "response",
 				id: request.id,
@@ -744,17 +787,56 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 		case "session.open": {
 			try {
 				const stored = await openSession(request.params.sessionId);
-				session.sessionId = stored.metadata.id;
-				session.sessionTitle = stored.metadata.title;
-				session.messages = stored.messages.map((m) => ({ role: m.role, content: m.content }));
+				let workspace: WorkspaceConfig | undefined;
 
 				if (stored.metadata.workspaceId) {
-					const ws: WorkspaceConfig | undefined = findWorkspace(stored.metadata.workspaceId);
-					if (ws) {
-						session.activeWorkspace = ws;
-						session.godotProjectPath = ws.rootPath;
+					workspace = findWorkspace(stored.metadata.workspaceId);
+
+					if (!workspace) {
+						sendJson(socket, {
+							type: "response",
+							id: request.id,
+							ok: false,
+							error: {
+								code: "workspace_not_found",
+								message: `Session workspace not found: ${stored.metadata.workspaceId}`
+							}
+						});
+						break;
+					}
+
+					try {
+						await mcpHost.switchWorkspace(workspace);
+					} catch (error: unknown) {
+						sendJson(socket, {
+							type: "response",
+							id: request.id,
+							ok: false,
+							error: {
+								code: "workspace_switch_failed",
+								message: error instanceof Error ? error.message : "Failed to switch MCP workspace"
+							}
+						});
+						break;
 					}
 				}
+
+				session.sessionId = stored.metadata.id;
+				session.sessionTitle = stored.metadata.title;
+				session.messages = stored.messages.map((message) => ({ role: message.role, content: message.content }));
+
+				if (workspace) {
+					session.activeWorkspace = workspace;
+					session.godotProjectPath = workspace.rootPath;
+
+					if (workspace.godotExecutablePath) {
+						session.godotExecutablePath = workspace.godotExecutablePath;
+					}
+				}
+
+				session.activeSkillId = stored.metadata.activeSkillId && isSkillId(stored.metadata.activeSkillId)
+					? stored.metadata.activeSkillId
+					: undefined;
 
 				sendJson(socket, {
 					type: "response",
@@ -1226,7 +1308,25 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 
 		case "approval.approve": {
 			try {
+				const pending = session.approvalGateway.getPending(request.params.approvalId);
+				if (!pending) {
+					sendJson(socket, {
+						type: "response",
+						id: request.id,
+						ok: false,
+						error: { code: "approval_not_found", message: `Approval not found: ${request.params.approvalId}` }
+					});
+					break;
+				}
+
 				const result = await session.approvalGateway.approve(request.params.approvalId, mcpHost);
+
+				// Inject tool result back into session so next ai.chat sees it
+				session.messages.push({
+					role: "system",
+					content: `[工具执行结果] ${pending.llmToolName} 已通过审批并执行完成：\n${result.content.slice(0, 2000)}`
+				});
+
 				sendJson(socket, {
 					type: "response",
 					id: request.id,
@@ -1237,7 +1337,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 					type: "event",
 					id: request.id,
 					event: "tool.approved",
-					data: { approvalId: request.params.approvalId }
+					data: { approvalId: request.params.approvalId, toolName: pending.llmToolName }
 				});
 			} catch (error: unknown) {
 				sendJson(socket, {

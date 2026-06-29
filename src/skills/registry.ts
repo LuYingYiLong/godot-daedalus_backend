@@ -49,6 +49,11 @@ const PROPOSE_EDIT_TOOLS: string[] = [
 	"mcp_godot_propose_replace_text_in_file"
 ];
 
+const FILE_EDIT_TOOLS: string[] = [
+	"mcp_godot_overwrite_text_file",
+	"mcp_godot_replace_text_in_file"
+];
+
 const skills: Record<SkillId, Skill> = {
 	"godot.project_init": {
 		id: "godot.project_init",
@@ -56,7 +61,7 @@ const skills: Record<SkillId, Skill> = {
 		description: "Inspect the Godot project and create an AGENTS.md project guide.",
 		promptPath: "src/skills/templates/godot-project-init.md",
 		defaultPromptId: "godot.assistant",
-		allowedTools: [...READ_TOOLS, ...FILE_CREATE_TOOLS, ...PROPOSE_EDIT_TOOLS, ...VERIFY_TOOLS, ...TERMINAL_WRITE_TOOLS]
+		allowedTools: [...READ_TOOLS, ...FILE_CREATE_TOOLS, ...PROPOSE_EDIT_TOOLS, ...FILE_EDIT_TOOLS, ...VERIFY_TOOLS, ...TERMINAL_WRITE_TOOLS]
 	},
 	"gdscript.review": {
 		id: "gdscript.review",
@@ -80,7 +85,7 @@ const skills: Record<SkillId, Skill> = {
 		description: "Create new project files through approval-gated tools.",
 		promptPath: "src/skills/templates/file-creator.md",
 		defaultPromptId: "godot.assistant",
-		allowedTools: [...READ_TOOLS, ...FILE_CREATE_TOOLS, ...VERIFY_TOOLS, ...TERMINAL_WRITE_TOOLS]
+		allowedTools: [...READ_TOOLS, ...FILE_CREATE_TOOLS, ...PROPOSE_EDIT_TOOLS, ...FILE_EDIT_TOOLS, ...VERIFY_TOOLS, ...TERMINAL_WRITE_TOOLS]
 	},
 	"backend.helper": {
 		id: "backend.helper",
