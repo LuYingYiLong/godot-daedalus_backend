@@ -17,14 +17,14 @@ export type DeepSeekChatOptions = {
 	model?: string | undefined;
 };
 
-function createDeepSeekClient(options: DeepSeekChatOptions): OpenAI {
+export function createDeepSeekClient(options: DeepSeekChatOptions): OpenAI {
 	return new OpenAI({
 		baseURL: options.baseUrl ?? process.env.DEEPSEEK_BASE_URL ?? DEFAULT_BASE_URL,
 		apiKey: options.apiKey
 	});
 }
 
-function createMessages(params: AiChatParams, history: ChatMessage[], systemPrompt: string): ChatCompletionMessageParam[] {
+export function createMessages(params: AiChatParams, history: ChatMessage[], systemPrompt: string): ChatCompletionMessageParam[] {
 	return [
 		{
 			role: "system",
@@ -41,7 +41,7 @@ function createMessages(params: AiChatParams, history: ChatMessage[], systemProm
 	];
 }
 
-function applyChatOptions(requestBody: ChatCompletionCreateParamsBase, params: AiChatParams): void {
+export function applyChatOptions(requestBody: ChatCompletionCreateParamsBase, params: AiChatParams): void {
 	if (params.options?.temperature !== undefined) {
 		requestBody.temperature = params.options.temperature;
 	}

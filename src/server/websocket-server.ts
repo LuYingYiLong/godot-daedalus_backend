@@ -2,7 +2,7 @@ import WebSocket, { WebSocketServer } from "ws";
 import { composeSystemPrompt, listPromptTemplates } from "../prompts/registry.js";
 import { clientRequestSchema } from "../protocol/schema.js";
 import type { AiChatParams, ChatMessage, ClientRequest, ModelProfile } from "../protocol/types.js";
-import { chatWithDeepSeek, streamChatWithDeepSeek } from "../providers/deepseek-client.js";
+import { runDeepSeekAgent } from "../providers/deepseek-agent.js";
 import type { DeepSeekChatOptions } from "../providers/deepseek-client.js";
 import { McpHost } from "../mcp/mcp-host.js";
 import { sendJson } from "./send-json.js";
@@ -227,14 +227,14 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 				const history: ChatMessage[] = trimHistoryByTokenBudget(session.messages, historyBudgetTokens);
 
 				if (request.params.options?.stream === true) {
-					let text: string = "";
-					for await (const delta of streamChatWithDeepSeek(request.params, options, history, fullSystemPrompt)) {
-						text += delta;
+					const text: string = await runDeepSeekAgent(request.params, options, history, fullSystemPrompt, mcpHost);
+
+					for (let index: number = 0; index < text.length; index += 1) {
 						sendJson(socket, {
 							type: "event",
 							id: request.id,
 							event: "ai.delta",
-							data: { text: delta }
+							data: { text: text[index] }
 						});
 					}
 
@@ -254,7 +254,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 						}
 					});
 				} else {
-					const text: string = await chatWithDeepSeek(request.params, options, history, fullSystemPrompt);
+					const text: string = await runDeepSeekAgent(request.params, options, history, fullSystemPrompt, mcpHost);
 					appendChatTurnToSession(session, history, request.params.message, text);
 
 					sendJson(socket, {
