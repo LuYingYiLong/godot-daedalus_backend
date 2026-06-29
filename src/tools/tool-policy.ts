@@ -1,6 +1,6 @@
 export type ApprovalMode = "read-only" | "manual" | "auto-safe" | "bypass";
 
-export type ToolRisk = "read" | "propose" | "write" | "destructive";
+export type ToolRisk = "read" | "verify" | "propose" | "write" | "destructive";
 
 export type ToolPolicy = {
 	risk: ToolRisk;
@@ -18,6 +18,8 @@ const TOOL_POLICIES: Record<string, ToolPolicy> = {
 	"mcp_godot_propose_overwrite_text_file": { risk: "propose" },
 	"mcp_godot_propose_replace_text_in_file": { risk: "propose" },
 	"mcp_godot_delete_file": { risk: "destructive" },
+	"mcp_terminal_get_capabilities": { risk: "read" },
+	"mcp_terminal_run_command_preset": { risk: "verify" },
 };
 
 export function getToolPolicy(toolName: string): ToolPolicy | undefined {
@@ -51,13 +53,13 @@ export function evaluateToolCall(
 	}
 
 	if (mode === "read-only") {
-		return policy.risk === "read"
+		return policy.risk === "read" || policy.risk === "verify"
 			? { action: "allow" }
 			: { action: "deny", reason: "当前为只读模式，不允许写操作" };
 	}
 
 	if (mode === "manual") {
-		if (policy.risk === "read" || policy.risk === "propose") {
+		if (policy.risk === "read" || policy.risk === "verify" || policy.risk === "propose") {
 			return { action: "allow" };
 		}
 
@@ -65,7 +67,7 @@ export function evaluateToolCall(
 	}
 
 	if (mode === "auto-safe") {
-		if (policy.risk === "read" || policy.risk === "propose") {
+		if (policy.risk === "read" || policy.risk === "verify" || policy.risk === "propose") {
 			return { action: "allow" };
 		}
 

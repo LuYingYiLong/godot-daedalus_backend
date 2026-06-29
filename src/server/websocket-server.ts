@@ -2,7 +2,7 @@ import WebSocket, { WebSocketServer } from "ws";
 import { composeSystemPrompt, listPromptTemplates } from "../prompts/registry.js";
 import { clientRequestSchema } from "../protocol/schema.js";
 import type { AiChatParams, ChatMessage, ClientRequest, ModelProfile } from "../protocol/types.js";
-import { runDeepSeekAgent } from "../providers/deepseek-agent.js";
+import { runDeepSeekAgent, type DeepSeekAgentResult } from "../providers/deepseek-agent.js";
 import type { OnToolEvent } from "../tools/tool-dispatcher.js";
 import type { DeepSeekChatOptions } from "../providers/deepseek-client.js";
 import { McpHost } from "../mcp/mcp-host.js";
@@ -14,6 +14,8 @@ import { type TokenCounter } from "../tokens/token-counter.js";
 import { createTokenCounter } from "../tokens/token-counter-factory.js";
 import { computeInputBudget, selectMessagesWithinBudget } from "../session/session-compressor.js";
 import { ApprovalGateway } from "../tools/approval-gateway.js";
+import { composeSkillPrompt, getSkill, isSkillId, listSkills } from "../skills/registry.js";
+import type { SkillId } from "../skills/registry.js";
 
 const tokenCounterPromise: Promise<TokenCounter> = createTokenCounter();
 
@@ -30,7 +32,13 @@ type ClientSession = {
 	messages: ChatMessage[];
 	modelProfile: ModelProfile;
 	approvalGateway: ApprovalGateway;
+	activeSkillId?: SkillId | undefined;
 };
+
+type SlashCommandResult =
+	| { type: "handled" }
+	| { type: "ai"; params: AiChatParams }
+	| { type: "none" };
 
 function parseMessage(data: WebSocket.RawData, isBinary: boolean): unknown {
 	if (isBinary) {
@@ -115,6 +123,210 @@ function canCallMcpToolDirectly(toolName: string): boolean {
 	]);
 
 	return allowedTools.has(toolName);
+}
+
+function createSessionInfoResult(session: ClientSession, mcpHost: McpHost): Record<string, unknown> {
+	return {
+		providerConfigured: session.deepseekApiKey !== undefined,
+		model: session.deepseekModel ?? session.modelProfile.model,
+		historyMessagesStored: session.messages.length,
+		contextWindowTokens: session.modelProfile.contextWindowTokens,
+		maxOutputTokens: session.modelProfile.maxOutputTokens,
+		defaultOutputReserveTokens: session.modelProfile.defaultOutputReserveTokens,
+		safetyMarginTokens: session.modelProfile.safetyMarginTokens,
+		approvalMode: session.approvalGateway.getMode(),
+		pendingApprovals: session.approvalGateway.listPending().length,
+		mcpServers: mcpHost.getConnectedServerIds(),
+		godotExecutablePath: session.godotExecutablePath ?? null,
+		godotProjectPath: session.godotProjectPath ?? process.env.GODOT_PROJECT_PATH ?? null,
+		activeSkillId: session.activeSkillId ?? null
+	};
+}
+
+function formatSessionInfo(session: ClientSession, mcpHost: McpHost): string {
+	const info = createSessionInfoResult(session, mcpHost);
+	return [
+		"## 当前上下文",
+		`- Provider configured: ${String(info.providerConfigured)}`,
+		`- Model: ${String(info.model)}`,
+		`- Active skill: ${String(info.activeSkillId ?? "none")}`,
+		`- History messages: ${String(info.historyMessagesStored)}`,
+		`- Context window: ${String(info.contextWindowTokens)} tokens`,
+		`- Default output reserve: ${String(info.defaultOutputReserveTokens)} tokens`,
+		`- Safety margin: ${String(info.safetyMarginTokens)} tokens`,
+		`- Approval mode: ${String(info.approvalMode)}`,
+		`- Pending approvals: ${String(info.pendingApprovals)}`,
+		`- MCP servers: ${JSON.stringify(info.mcpServers)}`,
+		`- Godot project: ${String(info.godotProjectPath ?? "")}`
+	].join("\n");
+}
+
+function formatPendingApprovals(session: ClientSession): string {
+	const pending = session.approvalGateway.listPending();
+	if (pending.length === 0) {
+		return "当前没有待审批工具调用。";
+	}
+
+	return [
+		"## 待审批工具调用",
+		...pending.map((approval): string => [
+			`- ${approval.approvalId}`,
+			`  - Tool: ${approval.llmToolName}`,
+			`  - Reason: ${approval.reason}`,
+			`  - Args: \`${JSON.stringify(approval.args)}\``
+		].join("\n"))
+	].join("\n");
+}
+
+function formatSkillList(): string {
+	return [
+		"## 可用 Skills",
+		...listSkills().map((skill): string => `- \`${skill.id}\`：${skill.name} - ${skill.description}`)
+	].join("\n");
+}
+
+function createSlashHelpText(): string {
+	return [
+		"## 可用指令",
+		"- `/help`：显示指令帮助。",
+		"- `/context`：显示当前模型、上下文窗口、MCP 和审批信息。",
+		"- `/approvals`：显示待审批工具调用。",
+		"- `/skills`：列出可用 skills。",
+		"- `/skill <skillId>`：激活会话默认 skill，例如 `/skill gdscript.review`。",
+		"- `/skill off`：关闭会话默认 skill。",
+		"- `/reset`：清空当前会话历史。",
+		"- `/init`：检查当前 Godot 项目，并请求生成项目根目录 `AGENTS.md`。"
+	].join("\n");
+}
+
+function sendChatText(socket: WebSocket, request: ClientRequest, text: string, session: ClientSession, mcpHost: McpHost): void {
+	if (request.method !== "ai.chat" || request.params.options?.stream !== true) {
+		sendJson(socket, {
+			type: "response",
+			id: request.id,
+			ok: true,
+			result: {
+				text,
+				context: createSessionInfoResult(session, mcpHost)
+			}
+		});
+		return;
+	}
+
+	for (let index: number = 0; index < text.length; index += 1) {
+		sendJson(socket, {
+			type: "event",
+			id: request.id,
+			event: "ai.delta",
+			data: { text: text[index] }
+		});
+	}
+
+	sendJson(socket, {
+		type: "event",
+		id: request.id,
+		event: "ai.done",
+		data: {
+			text,
+			context: createSessionInfoResult(session, mcpHost)
+		}
+	});
+}
+
+async function handleSlashCommand(
+	socket: WebSocket,
+	request: ClientRequest,
+	session: ClientSession,
+	mcpHost: McpHost
+): Promise<SlashCommandResult> {
+	if (request.method !== "ai.chat") {
+		return { type: "none" };
+	}
+
+	const inputText: string = request.params.message.trim();
+	if (!inputText.startsWith("/")) {
+		return { type: "none" };
+	}
+
+	const [rawCommand = "", ...restParts] = inputText.split(/\s+/);
+	const command: string = rawCommand.toLowerCase();
+	const restText: string = restParts.join(" ").trim();
+
+	if (command === "/help") {
+		sendChatText(socket, request, createSlashHelpText(), session, mcpHost);
+		return { type: "handled" };
+	}
+
+	if (command === "/context") {
+		sendChatText(socket, request, formatSessionInfo(session, mcpHost), session, mcpHost);
+		return { type: "handled" };
+	}
+
+	if (command === "/approvals") {
+		sendChatText(socket, request, formatPendingApprovals(session), session, mcpHost);
+		return { type: "handled" };
+	}
+
+	if (command === "/skills") {
+		sendChatText(socket, request, formatSkillList(), session, mcpHost);
+		return { type: "handled" };
+	}
+
+	if (command === "/skill") {
+		if (restText.length === 0) {
+			const activeText: string = session.activeSkillId ?? "none";
+			sendChatText(socket, request, `当前激活 skill：\`${activeText}\`\n\n${formatSkillList()}`, session, mcpHost);
+			return { type: "handled" };
+		}
+
+		if (restText === "off" || restText === "none") {
+			session.activeSkillId = undefined;
+			sendChatText(socket, request, "已关闭会话默认 skill。", session, mcpHost);
+			return { type: "handled" };
+		}
+
+		if (!isSkillId(restText)) {
+			sendChatText(socket, request, `未知 skill：\`${restText}\`\n\n${formatSkillList()}`, session, mcpHost);
+			return { type: "handled" };
+		}
+
+		session.activeSkillId = restText;
+		const skill = getSkill(restText);
+		sendChatText(socket, request, `已激活 skill：\`${skill.id}\` - ${skill.name}`, session, mcpHost);
+		return { type: "handled" };
+	}
+
+	if (command === "/reset") {
+		session.messages = [];
+		sendChatText(socket, request, "已清空当前会话历史。", session, mcpHost);
+		return { type: "handled" };
+	}
+
+	if (command === "/init") {
+		session.messages = [];
+		const extraInstruction: string = restText.length > 0
+			? `\n\n用户补充要求：${restText}`
+			: "";
+
+		return {
+			type: "ai",
+			params: {
+				...request.params,
+				promptId: "godot.assistant",
+				skillId: "godot.project_init",
+				message: [
+					"请初始化当前 Godot 项目的 AI 协作上下文。",
+					"请通过 MCP 工具检查项目摘要、场景、脚本、插件和关键配置。",
+					"请生成适合项目根目录的 AGENTS.md 内容，并调用文件创建工具请求创建 `AGENTS.md`。",
+					"如果 `AGENTS.md` 已存在，请读取并总结现有内容，不要覆盖；说明是否建议更新。",
+					"文件创建工具需要用户审批时，请明确告知审批 ID 和用户需要在 Godot 客户端 Approvals 区域批准。"
+				].join("\n") + extraInstruction
+			}
+		};
+	}
+
+	sendChatText(socket, request, `未知指令：\`${command}\`\n\n${createSlashHelpText()}`, session, mcpHost);
+	return { type: "handled" };
 }
 
 async function createMcpSystemContext(mcpHost: McpHost, session: ClientSession): Promise<string> {
@@ -266,6 +478,14 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 			break;
 
 		case "ai.chat": {
+			const slashCommandResult: SlashCommandResult = await handleSlashCommand(socket, request, session, mcpHost);
+			if (slashCommandResult.type === "handled") {
+				break;
+			}
+
+			const params: AiChatParams = slashCommandResult.type === "ai"
+				? slashCommandResult.params
+				: request.params;
 			const apiKey: string | undefined = session.deepseekApiKey;
 
 			if (!apiKey) {
@@ -283,17 +503,24 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 
 			try {
 				const options: DeepSeekChatOptions = createDeepSeekChatOptions(session, apiKey);
+				const activeSkillId: SkillId | undefined = params.skillId ?? session.activeSkillId;
+				const activeSkill = activeSkillId !== undefined ? getSkill(activeSkillId) : undefined;
+				const allowedToolNames: readonly string[] | undefined = activeSkill?.allowedTools;
+				const promptId = params.promptId ?? (activeSkillId !== undefined ? getSkill(activeSkillId).defaultPromptId : undefined);
 				const systemPrompt: string = await composeSystemPrompt(
-					request.params.promptId,
-					request.params.systemPrompt
+					promptId,
+					params.systemPrompt
 				);
+				const skillPrompt: string = await composeSkillPrompt(activeSkillId);
 				const mcpSystemContext: string = await createMcpSystemContext(mcpHost, session);
-				const fullSystemPrompt: string = systemPrompt + mcpSystemContext;
+				const fullSystemPrompt: string = systemPrompt
+					+ (skillPrompt.length > 0 ? `\n\n${skillPrompt}` : "")
+					+ mcpSystemContext;
 				const historyBudgetTokens: number = await computeHistoryBudget(
 					session.modelProfile,
-					request.params,
+					params,
 					systemPrompt,
-					mcpSystemContext
+					skillPrompt + mcpSystemContext
 				);
 				const history: ChatMessage[] = await selectHistoryWithinBudget(session.messages, historyBudgetTokens);
 
@@ -306,8 +533,25 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 					});
 				};
 
-				if (request.params.options?.stream === true) {
-					const text: string = await runDeepSeekAgent(request.params, options, history, fullSystemPrompt, mcpHost, session.approvalGateway, onToolEvent);
+				if (params.options?.stream === true) {
+					const agentResult: DeepSeekAgentResult = await runDeepSeekAgent(params, options, history, fullSystemPrompt, mcpHost, session.approvalGateway, allowedToolNames, onToolEvent);
+
+					if (agentResult.status === "approval_required") {
+						sendJson(socket, {
+							type: "event",
+							id: request.id,
+							event: "ai.paused",
+							data: {
+								reason: "approval_required",
+								approvalId: agentResult.approvalId,
+								toolName: agentResult.toolName,
+								message: `工具 ${agentResult.toolName} 需要审批：${agentResult.approvalId}`
+							}
+						});
+						break;
+					}
+
+					const text: string = agentResult.text;
 
 					for (let index: number = 0; index < text.length; index += 1) {
 						sendJson(socket, {
@@ -318,7 +562,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 						});
 					}
 
-					await appendChatTurnToSession(session, history, request.params.message, text);
+					await appendChatTurnToSession(session, history, params.message, text);
 					sendJson(socket, {
 						type: "event",
 						id: request.id,
@@ -334,8 +578,26 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 						}
 					});
 				} else {
-					const text: string = await runDeepSeekAgent(request.params, options, history, fullSystemPrompt, mcpHost, session.approvalGateway, onToolEvent);
-					await appendChatTurnToSession(session, history, request.params.message, text);
+					const agentResult: DeepSeekAgentResult = await runDeepSeekAgent(params, options, history, fullSystemPrompt, mcpHost, session.approvalGateway, allowedToolNames, onToolEvent);
+
+					if (agentResult.status === "approval_required") {
+						sendJson(socket, {
+							type: "response",
+							id: request.id,
+							ok: true,
+							result: {
+								paused: true,
+								reason: "approval_required",
+								approvalId: agentResult.approvalId,
+								toolName: agentResult.toolName,
+								message: `工具 ${agentResult.toolName} 需要审批：${agentResult.approvalId}`
+							}
+						});
+						break;
+					}
+
+					const text: string = agentResult.text;
+					await appendChatTurnToSession(session, history, params.message, text);
 
 					sendJson(socket, {
 						type: "response",
@@ -377,6 +639,30 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 			});
 			break;
 
+		case "skill.list":
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: true,
+				result: {
+					skills: listSkills(),
+					activeSkillId: session.activeSkillId ?? null
+				}
+			});
+			break;
+
+		case "skill.activate":
+			session.activeSkillId = request.params.skillId ?? undefined;
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: true,
+				result: {
+					activeSkillId: session.activeSkillId ?? null
+				}
+			});
+			break;
+
 		case "session.reset":
 			session.messages = [];
 			sendJson(socket, {
@@ -395,20 +681,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 				type: "response",
 				id: request.id,
 				ok: true,
-				result: {
-					providerConfigured: session.deepseekApiKey !== undefined,
-					model: session.deepseekModel ?? session.modelProfile.model,
-					historyMessagesStored: session.messages.length,
-					contextWindowTokens: session.modelProfile.contextWindowTokens,
-					maxOutputTokens: session.modelProfile.maxOutputTokens,
-					defaultOutputReserveTokens: session.modelProfile.defaultOutputReserveTokens,
-					safetyMarginTokens: session.modelProfile.safetyMarginTokens,
-					approvalMode: session.approvalGateway.getMode(),
-					pendingApprovals: session.approvalGateway.listPending().length,
-					mcpServers: mcpHost.getConnectedServerIds(),
-					godotExecutablePath: session.godotExecutablePath ?? null,
-					godotProjectPath: session.godotProjectPath ?? process.env.GODOT_PROJECT_PATH ?? null
-				}
+				result: createSessionInfoResult(session, mcpHost)
 			});
 			break;
 

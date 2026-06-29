@@ -12,8 +12,8 @@ import {
 	type DeepSeekChatOptions
 } from "../providers/deepseek-client.js";
 import type { McpHost } from "../mcp/mcp-host.js";
-import { getToolDefinitions, MAX_TOOL_STEPS, MAX_TOTAL_TOOL_RESULT_CHARS } from "../tools/llm-tools.js";
-import { dispatchToolCalls, type OnToolEvent } from "../tools/tool-dispatcher.js";
+import { getToolDefinitions, getToolDefinitionsForNames, MAX_TOOL_STEPS, MAX_TOTAL_TOOL_RESULT_CHARS } from "../tools/llm-tools.js";
+import { dispatchToolCalls, ToolApprovalRequiredError, type OnToolEvent } from "../tools/tool-dispatcher.js";
 import { ApprovalGateway } from "../tools/approval-gateway.js";
 
 const DEFAULT_BASE_URL = "https://api.deepseek.com";
@@ -21,6 +21,10 @@ const DEFAULT_MODEL = "deepseek-v4-flash";
 const FINALIZE_AFTER_TOOL_LIMIT_PROMPT: string =
 	"工具调用阶段已经达到后端限制。请停止请求更多工具，基于目前已经获得的工具结果直接回答用户。"
 	+ "如果信息不完整，请明确说明哪些部分是根据已有信息总结的，哪些部分还需要进一步检查。";
+
+export type DeepSeekAgentResult =
+	| { status: "completed"; text: string }
+	| { status: "approval_required"; approvalId: string; toolName: string; reason: string };
 
 function estimateTextChars(text: string): number {
 	return text.length;
@@ -79,10 +83,13 @@ export async function runDeepSeekAgent(
 	systemPrompt: string,
 	mcpHost: McpHost,
 	gateway: ApprovalGateway,
+	allowedToolNames?: readonly string[] | undefined,
 	onEvent?: OnToolEvent
-): Promise<string> {
+): Promise<DeepSeekAgentResult> {
 	const client: OpenAI = createDeepSeekClient(options);
-	const tools = getToolDefinitions();
+	const tools = allowedToolNames !== undefined
+		? getToolDefinitionsForNames(allowedToolNames)
+		: getToolDefinitions();
 
 	const messages: ChatCompletionMessageParam[] = createMessages(params, history, systemPrompt);
 
@@ -114,7 +121,7 @@ export async function runDeepSeekAgent(
 				throw new Error("LLM returned empty response");
 			}
 
-			return text;
+			return { status: "completed", text };
 		}
 
 		const assistantMessage: ChatCompletionMessageParam = {
@@ -125,7 +132,21 @@ export async function runDeepSeekAgent(
 
 		messages.push(assistantMessage);
 
-		const toolResults = await dispatchToolCalls(mcpHost, toolCalls, step, gateway, onEvent);
+		let toolResults;
+		try {
+			toolResults = await dispatchToolCalls(mcpHost, toolCalls, step, gateway, onEvent);
+		} catch (error: unknown) {
+			if (error instanceof ToolApprovalRequiredError) {
+				return {
+					status: "approval_required",
+					approvalId: error.pendingApproval.approvalId,
+					toolName: error.pendingApproval.llmToolName,
+					reason: error.pendingApproval.reason
+				};
+			}
+
+			throw error;
+		}
 
 		for (const result of toolResults) {
 			const contentText: string = extractTextContent(result.content);
@@ -134,21 +155,27 @@ export async function runDeepSeekAgent(
 		}
 
 		if (totalToolResultChars >= MAX_TOTAL_TOOL_RESULT_CHARS) {
-			return createFinalAnswer(
-				client,
-				params,
-				options,
-				messages,
-				`工具结果总量达到 ${totalToolResultChars} 字符，上限为 ${MAX_TOTAL_TOOL_RESULT_CHARS} 字符`
-			);
+			return {
+				status: "completed",
+				text: await createFinalAnswer(
+					client,
+					params,
+					options,
+					messages,
+					`工具结果总量达到 ${totalToolResultChars} 字符，上限为 ${MAX_TOTAL_TOOL_RESULT_CHARS} 字符`
+				)
+			};
 		}
 	}
 
-	return createFinalAnswer(
-		client,
-		params,
-		options,
-		messages,
-		`工具调用达到最大步数 ${MAX_TOOL_STEPS}，当前工具结果总量为 ${totalToolResultChars} 字符`
-	);
+	return {
+		status: "completed",
+		text: await createFinalAnswer(
+			client,
+			params,
+			options,
+			messages,
+			`工具调用达到最大步数 ${MAX_TOOL_STEPS}，当前工具结果总量为 ${totalToolResultChars} 字符`
+		)
+	};
 }

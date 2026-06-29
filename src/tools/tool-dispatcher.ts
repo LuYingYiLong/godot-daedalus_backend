@@ -1,7 +1,7 @@
 import type { ChatCompletionMessageToolCall, ChatCompletionToolMessageParam } from "openai/resources/chat/completions";
 import type { McpHost } from "../mcp/mcp-host.js";
 import { MAX_TOOL_RESULT_CHARS, resolveToolMapping } from "./llm-tools.js";
-import { type ApprovalGateway } from "./approval-gateway.js";
+import { type ApprovalGateway, type PendingApproval } from "./approval-gateway.js";
 
 export type ToolEvent =
 	| { type: "tool.call"; step: number; toolName: string; args: Record<string, unknown> }
@@ -10,6 +10,16 @@ export type ToolEvent =
 	| { type: "tool.approval_required"; step: number; toolName: string; approvalId: string; reason: string };
 
 export type OnToolEvent = (event: ToolEvent) => void;
+
+export class ToolApprovalRequiredError extends Error {
+	readonly pendingApproval: PendingApproval;
+
+	constructor(pendingApproval: PendingApproval) {
+		super(`Tool approval required: ${pendingApproval.approvalId}`);
+		this.name = "ToolApprovalRequiredError";
+		this.pendingApproval = pendingApproval;
+	}
+}
 
 type ToolResultContent = {
 	content: Array<{ type: string; text?: string }>;
@@ -75,11 +85,7 @@ async function executeSingleToolCall(
 			reason: decision.reason
 		});
 
-		return {
-			role: "tool",
-			tool_call_id: toolCall.id,
-			content: `[需要用户审批] 工具 ${functionName} 需要用户在 Godot 客户端中批准后才能执行。审批ID: ${pending.approvalId}。原因: ${decision.reason}。请在回复中告知用户需要审批，并提供审批ID。`
-		};
+		throw new ToolApprovalRequiredError(pending);
 	}
 
 	if (onEvent) {

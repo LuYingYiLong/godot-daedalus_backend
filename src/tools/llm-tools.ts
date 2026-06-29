@@ -53,6 +53,14 @@ const TOOL_MAP: Record<string, ToolMapping> = {
 	"mcp_godot_delete_file": {
 		serverId: "godot",
 		toolName: "delete_file"
+	},
+	"mcp_terminal_run_command_preset": {
+		serverId: "terminal",
+		toolName: "run_command_preset"
+	},
+	"mcp_terminal_get_capabilities": {
+		serverId: "terminal",
+		toolName: "get_terminal_capabilities"
 	}
 };
 
@@ -258,11 +266,55 @@ const TOOL_DEFINITIONS: ChatCompletionTool[] = [
 				required: ["relativePath"]
 			}
 		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_terminal_get_capabilities",
+			description: "获取终端 MCP 支持的所有预设命令列表。在首次使用终端工具前应先调用此工具了解可用命令。",
+			parameters: {
+				type: "object",
+				properties: {},
+				required: []
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_terminal_run_command_preset",
+			description: "执行一个预设的终端命令。只能执行 get_terminal_capabilities 返回的预设名称。不能传入任意 shell 字符串。可用的预设包括：backend.typecheck（TypeScript 类型检查）、git.status（Git 工作区状态）、godot.check_only（Godot 脚本语法检查）。",
+			parameters: {
+				type: "object",
+				properties: {
+					presetName: {
+						type: "string",
+						description: "预设命令名称，如 'backend.typecheck'、'git.status'、'godot.check_only'"
+					},
+					workingDirectory: {
+						type: "string",
+						description: "可选，覆盖预设的默认工作目录"
+					}
+				},
+				required: ["presetName"]
+			}
+		}
 	}
 ];
 
 export function getToolDefinitions(): ChatCompletionTool[] {
 	return TOOL_DEFINITIONS;
+}
+
+export function getToolDefinitionsForNames(toolNames: readonly string[]): ChatCompletionTool[] {
+	const allowedNames: Set<string> = new Set(toolNames);
+	return TOOL_DEFINITIONS.filter((tool: ChatCompletionTool): boolean => {
+		if (tool.type !== "function") {
+			return false;
+		}
+
+		return allowedNames.has(tool.function.name);
+	});
 }
 
 export function resolveToolMapping(llmToolName: string): ToolMapping {

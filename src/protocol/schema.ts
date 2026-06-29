@@ -7,9 +7,18 @@ export const promptIdSchema = z.enum([
 	"backend.helper"
 ]);
 
+export const skillIdSchema = z.enum([
+	"godot.project_init",
+	"gdscript.review",
+	"scene.builder",
+	"file.creator",
+	"backend.helper"
+]);
+
 export const aiChatParamsSchema = z.object({
 	message: z.string(),
 	promptId: promptIdSchema.optional(),
+	skillId: skillIdSchema.optional(),
 	systemPrompt: z.string().optional(),
 	options: z.object({
 		temperature: z.number().min(0).max(2).optional(),
@@ -50,6 +59,20 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		id: z.string(),
 		method: z.literal("prompt.list"),
 		params: z.object({}).optional(),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("skill.list"),
+		params: z.object({}).optional(),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("skill.activate"),
+		params: z.object({
+			skillId: skillIdSchema.nullable(),
+		}),
 	}),
 	z.object({
 		type: z.literal("request"),
