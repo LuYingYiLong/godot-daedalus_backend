@@ -71,7 +71,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 					options.baseUrl = session.deepseekBaseUrl;
 				}
 
-				const text: string = await chatWithDeepSeek(request.params.message, options);
+				const text: string = await chatWithDeepSeek(request.params, options);
 				sendJson(socket, {
 					type: "response",
 					id: request.id,

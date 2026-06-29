@@ -1,5 +1,17 @@
 import { z } from "zod";
 
+export const aiChatParamsSchema = z.object({
+	message: z.string(),
+	systemPrompt: z.string().optional(),
+	options: z.object({
+		temperature: z.number().min(0).max(2).optional(),
+		topP: z.number().min(0).max(1).optional(),
+		maxTokens: z.number().int().positive().optional(),
+		stop: z.union([z.string(), z.array(z.string())]).optional(),
+		responseFormat: z.union([z.literal("text"), z.literal("json")]).optional(),
+	}).optional()
+});
+
 export const clientRequestSchema = z.discriminatedUnion("method", [
 	z.object({
 		type: z.literal("request"),
@@ -22,9 +34,7 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		type: z.literal("request"),
 		id: z.string(),
 		method: z.literal("ai.chat"),
-		params: z.object({
-			message: z.string(),
-		}),
+		params: aiChatParamsSchema,
 	}),
 ]);
 

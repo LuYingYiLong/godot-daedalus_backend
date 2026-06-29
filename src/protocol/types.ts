@@ -1,19 +1,9 @@
-export type ClientRequest = {
-	type: "request";
-	id: string;
-} & (
-	| { method: "ping"; params?: Record<string, never> | undefined }
-	| {
-		method: "provider.configure";
-		params: {
-			provider: "deepseek";
-			apiKey: string;
-			model?: string | undefined;
-			baseUrl?: string | undefined;
-		};
-	}
-	| { method: "ai.chat"; params: { message: string } }
-);
+import type { z } from "zod";
+import type { aiChatParamsSchema, clientRequestSchema } from "./schema.js";
+
+export type AiChatParams = z.infer<typeof aiChatParamsSchema>;
+
+export type ClientRequest = z.infer<typeof clientRequestSchema>;
 
 export type ServerResponse =
 	| {
@@ -38,3 +28,4 @@ export type ServerEvent = {
 	event: "ai.delta" | "ai.done";
 	data?: unknown;
 };
+
