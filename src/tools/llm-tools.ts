@@ -73,6 +73,42 @@ const TOOL_MAP: Record<string, ToolMapping> = {
 	"mcp_terminal_get_capabilities": {
 		serverId: "terminal",
 		toolName: "get_terminal_capabilities"
+	},
+	"mcp_godot_inspect_scene_tree": {
+		serverId: "godot",
+		toolName: "inspect_scene_tree"
+	},
+	"mcp_godot_propose_create_scene": {
+		serverId: "godot",
+		toolName: "propose_create_scene"
+	},
+	"mcp_godot_create_scene": {
+		serverId: "godot",
+		toolName: "create_scene"
+	},
+	"mcp_godot_propose_add_node_to_scene": {
+		serverId: "godot",
+		toolName: "propose_add_node_to_scene"
+	},
+	"mcp_godot_add_node_to_scene": {
+		serverId: "godot",
+		toolName: "add_node_to_scene"
+	},
+	"mcp_godot_propose_attach_script_to_node": {
+		serverId: "godot",
+		toolName: "propose_attach_script_to_node"
+	},
+	"mcp_godot_attach_script_to_node": {
+		serverId: "godot",
+		toolName: "attach_script_to_node"
+	},
+	"mcp_godot_propose_connect_signal_in_scene": {
+		serverId: "godot",
+		toolName: "propose_connect_signal_in_scene"
+	},
+	"mcp_godot_connect_signal_in_scene": {
+		serverId: "godot",
+		toolName: "connect_signal_in_scene"
 	}
 };
 
@@ -196,7 +232,7 @@ const TOOL_DEFINITIONS: ChatCompletionTool[] = [
 		type: "function",
 		function: {
 			name: "mcp_godot_propose_create_text_file",
-			description: "提出新建一个文本文件的提案。不会实际写入磁盘。只能创建 .gd/.tres/.json/.md/.txt 文件，不允许覆盖已有文件。需要用户通过 Godot 客户端确认后才会真正写入。",
+			description: "提出新建一个文本文件的提案。不会实际写入磁盘。只能创建 .gd/.tres/.tscn/.json/.md/.txt 文件。.tscn 文件必须包含 [gd_scene ...] 头部和至少一个 [node ...] 根节点。不允许覆盖已有文件。需要用户通过 Godot 客户端确认后才会真正写入。",
 			parameters: {
 				type: "object",
 				properties: {
@@ -217,7 +253,7 @@ const TOOL_DEFINITIONS: ChatCompletionTool[] = [
 		type: "function",
 		function: {
 			name: "mcp_godot_create_text_file",
-			description: "创建一个新的 Godot 项目文本文件。该工具会实际写入磁盘，默认需要用户在 Godot 客户端审批。只能创建 .gd/.tres/.json/.md/.txt 文件，不允许覆盖已有文件，不允许写入 .godot/ 或 addons/。",
+			description: "创建一个新的 Godot 项目文本文件。该工具会实际写入磁盘，默认需要用户在 Godot 客户端审批。支持创建 .gd/.tres/.tscn/.json/.md/.txt 文件。.tscn 文件必须包含 [gd_scene ...] 头部和至少一个 [node ...] 根节点。不允许覆盖已有文件，不允许写入 .godot/ 或 addons/。写入后建议运行 godot.check_only 验证。",
 			parameters: {
 				type: "object",
 				properties: {
@@ -238,7 +274,7 @@ const TOOL_DEFINITIONS: ChatCompletionTool[] = [
 		type: "function",
 		function: {
 			name: "mcp_godot_propose_overwrite_text_file",
-			description: "提出覆盖已有文件的提案。不会实际写入。文件必须已存在，会返回新旧内容对比。AI 只能 propose，实际覆盖需要用户通过 Godot 客户端确认。",
+			description: "提出覆盖已有文件的提案。不会实际写入。支持 .gd/.tres/.tscn/.json/.md/.txt 文件。.tscn 文件必须包含 [gd_scene ...] 头部和至少一个 [node ...] 根节点。文件必须已存在，会返回新旧内容对比。AI 只能 propose，实际覆盖需要用户通过 Godot 客户端确认。",
 			parameters: {
 				type: "object",
 				properties: {
@@ -253,7 +289,7 @@ const TOOL_DEFINITIONS: ChatCompletionTool[] = [
 		type: "function",
 		function: {
 			name: "mcp_godot_overwrite_text_file",
-			description: "覆盖已有文本文件，会实际写入磁盘，默认需要用户在 Godot 客户端审批。只能写入 .gd/.tres/.json/.md/.txt 文件，不允许写入 .godot/、addons/ 或隐藏目录。",
+			description: "覆盖已有文本文件，会实际写入磁盘，默认需要用户在 Godot 客户端审批。支持写入 .gd/.tres/.tscn/.json/.md/.txt 文件。.tscn 文件必须包含 [gd_scene ...] 头部和至少一个 [node ...] 根节点。不允许写入 .godot/、addons/ 或隐藏目录。写入后建议运行 godot.check_only 验证。",
 			parameters: {
 				type: "object",
 				properties: {

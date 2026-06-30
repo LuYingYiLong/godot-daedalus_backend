@@ -1,9 +1,12 @@
-import { mkdir, readFile, writeFile, readdir, rm, access } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { getDefaultSessionsDir } from "../app-paths.js";
 import type { ChatMessage } from "../protocol/types.js";
 
-const SESSIONS_DIR: string = resolve(process.env.SESSIONS_DIR ?? "data/sessions");
+const SESSIONS_DIR: string = getDefaultSessionsDir();
 const SESSION_ID_PATTERN: RegExp = /^session-[a-zA-Z0-9_-]+$/;
+
+let ensureSessionsDirPromise: Promise<void> | null = null;
 
 export type SessionMetadata = {
 	id: string;
@@ -25,6 +28,13 @@ export type StoredSession = {
 	messages: StoredMessage[];
 };
 
+export type SessionSummary = {
+	content: string;
+	messageCount: number;
+	tokenEstimate: number;
+	generatedAt: string;
+};
+
 function assertSafeSessionId(sessionId: string): string {
 	if (!SESSION_ID_PATTERN.test(sessionId)) {
 		throw new Error(`Invalid session id: ${sessionId}`);
@@ -37,7 +47,18 @@ function getSessionDir(sessionId: string): string {
 	return join(SESSIONS_DIR, assertSafeSessionId(sessionId));
 }
 
+async function ensureSessionsDir(): Promise<void> {
+	if (!ensureSessionsDirPromise) {
+		ensureSessionsDirPromise = (async (): Promise<void> => {
+			await mkdir(SESSIONS_DIR, { recursive: true });
+		})();
+	}
+
+	await ensureSessionsDirPromise;
+}
+
 async function createSessionDir(sessionId: string): Promise<string> {
+	await ensureSessionsDir();
 	const dir: string = getSessionDir(sessionId);
 	await mkdir(dir, { recursive: true });
 	return dir;
@@ -73,6 +94,7 @@ export async function createSession(title: string, workspaceId?: string, skillId
 }
 
 export async function openSession(sessionId: string): Promise<StoredSession> {
+	await ensureSessionsDir();
 	const metaFile: string = metaPath(sessionId);
 	const msgFile: string = messagesPath(sessionId);
 
@@ -132,17 +154,14 @@ export async function saveSession(sessionId: string, messages: ChatMessage[], me
 }
 
 export async function appendMessage(sessionId: string, message: ChatMessage): Promise<void> {
+	await ensureSessionsDir();
 	const msgFile: string = messagesPath(sessionId);
 	const line: string = JSON.stringify({ ...message, createdAt: new Date().toISOString() }) + "\n";
 	await writeFile(msgFile, line, { encoding: "utf8", flag: "a" });
 }
 
 export async function listSessions(): Promise<SessionMetadata[]> {
-	try {
-		await mkdir(SESSIONS_DIR, { recursive: true });
-	} catch {
-		// Already exists
-	}
+	await ensureSessionsDir();
 
 	const entries: string[] = await readdir(SESSIONS_DIR, { withFileTypes: true })
 		.then((items) => items.filter((d) => d.isDirectory()).map((d) => d.name));
@@ -163,6 +182,7 @@ export async function listSessions(): Promise<SessionMetadata[]> {
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {
+	await ensureSessionsDir();
 	const dir: string = getSessionDir(sessionId);
 	await rm(dir, { recursive: true, force: true });
 }
@@ -182,10 +202,96 @@ export async function renameSession(sessionId: string, newTitle: string): Promis
 }
 
 export async function sessionExists(sessionId: string): Promise<boolean> {
+	await ensureSessionsDir();
 	try {
 		await access(getSessionDir(sessionId));
 		return true;
 	} catch {
 		return false;
+	}
+}
+
+function summaryPath(sessionId: string): string {
+	return join(getSessionDir(sessionId), "summary.md");
+}
+
+function parseSummaryFrontmatter(raw: string): SessionSummary {
+	if (!raw.startsWith("---\n")) {
+		return {
+			content: raw.trim(),
+			messageCount: 0,
+			tokenEstimate: 0,
+			generatedAt: ""
+		};
+	}
+
+	const endIndex: number = raw.indexOf("\n---\n", 4);
+	if (endIndex === -1) {
+		return {
+			content: raw.trim(),
+			messageCount: 0,
+			tokenEstimate: 0,
+			generatedAt: ""
+		};
+	}
+
+	const header: string = raw.slice(4, endIndex);
+	const content: string = raw.slice(endIndex + 5).trim();
+	const metadata: Record<string, string> = {};
+
+	for (const line of header.split("\n")) {
+		const colonIndex: number = line.indexOf(":");
+		if (colonIndex === -1) {
+			continue;
+		}
+
+		const key: string = line.slice(0, colonIndex).trim();
+		const value: string = line.slice(colonIndex + 1).trim();
+		metadata[key] = value;
+	}
+
+	return {
+		content,
+		messageCount: Number.parseInt(metadata.messageCount ?? "0", 10),
+		tokenEstimate: Number.parseInt(metadata.tokenEstimate ?? "0", 10),
+		generatedAt: metadata.generatedAt ?? ""
+	};
+}
+
+function formatSummaryMarkdown(summary: SessionSummary): string {
+	return [
+		"---",
+		`messageCount: ${summary.messageCount}`,
+		`tokenEstimate: ${summary.tokenEstimate}`,
+		`generatedAt: ${summary.generatedAt}`,
+		"---",
+		"",
+		summary.content.trim(),
+		""
+	].join("\n");
+}
+
+export async function readSummary(sessionId: string): Promise<SessionSummary | null> {
+	try {
+		const filePath: string = summaryPath(sessionId);
+		const raw: string = await readFile(filePath, "utf8");
+		return parseSummaryFrontmatter(raw);
+	} catch {
+		return null;
+	}
+}
+
+export async function writeSummary(sessionId: string, summary: SessionSummary): Promise<void> {
+	await ensureSessionsDir();
+	const filePath: string = summaryPath(sessionId);
+	await writeFile(filePath, formatSummaryMarkdown(summary), "utf8");
+}
+
+export async function deleteSummary(sessionId: string): Promise<void> {
+	try {
+		const filePath: string = summaryPath(sessionId);
+		await rm(filePath, { force: true });
+	} catch {
+		// Already gone
 	}
 }

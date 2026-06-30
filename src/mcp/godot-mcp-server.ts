@@ -11,10 +11,13 @@ const MAX_NEW_FILE_BYTES: number = 64 * 1024;
 const WRITABLE_EXTENSIONS: Set<string> = new Set([
 	".gd",
 	".tres",
+	".tscn",
 	".json",
 	".md",
 	".txt"
 ]);
+
+const MAX_TSCN_FILE_BYTES: number = 256 * 1024;
 
 const DEFAULT_IGNORED_DIRECTORIES: Set<string> = new Set([
 	".git",
@@ -228,6 +231,497 @@ function asJsonTextResult(value: unknown): { content: Array<{ type: "text"; text
 
 const PROHIBITED_PREFIXES: string[] = [".godot", "addons"];
 
+type TscnSection = {
+	name: string;
+	attrs: Record<string, string>;
+};
+
+type TscnExtResource = {
+	id: string;
+	type: string;
+	path: string | undefined;
+	uid: string | undefined;
+};
+
+type TscnSubResource = {
+	id: string;
+	type: string;
+	properties: Record<string, string>;
+};
+
+type TscnNode = {
+	name: string;
+	type: string;
+	parent: string | null;
+	properties: Record<string, string>;
+	script: string | null;
+	instance: string | null;
+};
+
+type TscnConnection = {
+	signal: string;
+	from: string;
+	to: string;
+	method: string;
+	flags: number | null;
+	binds: string | null;
+};
+
+type TscnData = {
+	format: number;
+	loadSteps: number;
+	uid: string | null;
+	extResources: TscnExtResource[];
+	subResources: TscnSubResource[];
+	nodes: TscnNode[];
+	connections: TscnConnection[];
+};
+
+function parseSectionHeader(line: string): TscnSection | null {
+	const match = line.match(/^\[([^\]]+)\](.*)$/);
+	if (match === null) return null;
+	const sectionContent: string = match[1]!.trim();
+	const firstWhitespaceIndex: number = sectionContent.search(/\s/);
+	const name: string = firstWhitespaceIndex === -1
+		? sectionContent
+		: sectionContent.slice(0, firstWhitespaceIndex);
+	const attrs: Record<string, string> = {};
+	const attrStr: string = firstWhitespaceIndex === -1
+		? match[2]!.trim()
+		: sectionContent.slice(firstWhitespaceIndex + 1).trim();
+	if (attrStr.length > 0) {
+		const attrRegex = /(\w+)=("(?:[^"\\]|\\.)*"|\S+)/g;
+		let attrMatch;
+		while ((attrMatch = attrRegex.exec(attrStr)) !== null) {
+			let value = attrMatch[2]!;
+			if (value.startsWith('"') && value.endsWith('"')) {
+				value = value.slice(1, -1);
+			}
+			attrs[attrMatch[1]!] = value;
+		}
+	}
+	return { name, attrs };
+}
+
+function parseTscn(content: string): TscnData {
+	const lines = content.split("\n");
+	const data: TscnData = {
+		format: 0,
+		loadSteps: 0,
+		uid: null,
+		extResources: [],
+		subResources: [],
+		nodes: [],
+		connections: []
+	};
+
+	let currentSection: string | null = null;
+	let currentSubResourceProps: Record<string, string> = {};
+	let currentSubResourceId = "";
+	let currentSubResourceType = "";
+
+	for (const rawLine of lines) {
+		const line = rawLine.trimEnd();
+		if (line.length === 0 || line.startsWith(";")) continue;
+
+		const section = parseSectionHeader(line);
+		if (section !== null) {
+			// Flush any pending sub-resource
+			if (currentSection === "sub_resource" && currentSubResourceId.length > 0) {
+				data.subResources.push({
+					id: currentSubResourceId,
+					type: currentSubResourceType,
+					properties: { ...currentSubResourceProps }
+				});
+				currentSubResourceProps = {};
+				currentSubResourceId = "";
+				currentSubResourceType = "";
+			}
+
+			currentSection = section.name;
+
+			if (section.name === "gd_scene") {
+				data.format = parseInt(section.attrs["format"] ?? "0", 10);
+				data.loadSteps = parseInt(section.attrs["load_steps"] ?? "0", 10);
+				data.uid = section.attrs["uid"] ?? null;
+			} else if (section.name === "ext_resource") {
+				data.extResources.push({
+					id: section.attrs["id"] ?? "",
+					type: section.attrs["type"] ?? "",
+					path: section.attrs["path"],
+					uid: section.attrs["uid"]
+				});
+			} else if (section.name === "sub_resource") {
+				currentSubResourceId = section.attrs["id"] ?? "";
+				currentSubResourceType = section.attrs["type"] ?? "";
+				currentSubResourceProps = {};
+			} else if (section.name === "node") {
+				data.nodes.push({
+					name: section.attrs["name"] ?? "",
+					type: section.attrs["type"] ?? "",
+					parent: section.attrs["parent"] ?? null,
+					properties: {},
+					script: null,
+					instance: section.attrs["instance"] ?? null
+				});
+			} else if (section.name === "connection") {
+				data.connections.push({
+					signal: section.attrs["signal"] ?? "",
+					from: section.attrs["from"] ?? "",
+					to: section.attrs["to"] ?? "",
+					method: section.attrs["method"] ?? "",
+					flags: section.attrs["flags"] !== undefined ? parseInt(section.attrs["flags"], 10) : null,
+					binds: section.attrs["binds"] ?? null
+				});
+			}
+			continue;
+		}
+
+		// Property line
+		const eqIdx = line.indexOf("=");
+		if (eqIdx === -1) continue;
+
+		const key = line.slice(0, eqIdx).trim();
+		const value = line.slice(eqIdx + 1).trim();
+
+		if (currentSection === "node" && data.nodes.length > 0) {
+			const lastNode = data.nodes[data.nodes.length - 1]!;
+			if (key === "script" && value.startsWith('ExtResource(')) {
+				lastNode.script = value;
+			} else {
+				lastNode.properties[key] = value;
+			}
+		} else if (currentSection === "sub_resource") {
+			currentSubResourceProps[key] = value;
+		}
+	}
+
+	// Flush final sub-resource
+	if (currentSection === "sub_resource" && currentSubResourceId.length > 0) {
+		data.subResources.push({
+			id: currentSubResourceId,
+			type: currentSubResourceType,
+			properties: { ...currentSubResourceProps }
+		});
+	}
+
+	return data;
+}
+
+function quoteTscnString(value: string): string {
+	return value
+		.replaceAll("\\", "\\\\")
+		.replaceAll("\"", "\\\"");
+}
+
+function createNodePathMap(nodes: TscnNode[]): Map<string, TscnNode> {
+	const pathMap: Map<string, TscnNode> = new Map();
+	const rootNode: TscnNode | undefined = nodes.find((node: TscnNode): boolean => node.parent === null);
+	const rootName: string | undefined = rootNode?.name;
+
+	if (rootNode !== undefined) {
+		pathMap.set(".", rootNode);
+		pathMap.set(rootNode.name, rootNode);
+	}
+
+	for (const node of nodes) {
+		if (node.parent === null) {
+			continue;
+		}
+
+		const parentPath: string = node.parent === "." ? (rootName ?? ".") : node.parent;
+		const fullPath: string = parentPath.length > 0 ? `${parentPath}/${node.name}` : node.name;
+		pathMap.set(fullPath, node);
+
+		if (node.parent === ".") {
+			pathMap.set(node.name, node);
+		}
+
+		if (rootName !== undefined && !fullPath.startsWith(`${rootName}/`) && fullPath !== rootName) {
+			pathMap.set(`${rootName}/${fullPath}`, node);
+		}
+	}
+
+	return pathMap;
+}
+
+function toSceneRelativeNodePath(data: TscnData, nodePath: string): string {
+	const normalizedPath: string = nodePath.trim().replace(/^\//, "");
+	const rootNode: TscnNode | undefined = data.nodes.find((node: TscnNode): boolean => node.parent === null);
+	const rootName: string | undefined = rootNode?.name;
+
+	if (normalizedPath.length === 0 || normalizedPath === ".") {
+		return ".";
+	}
+
+	if (rootName !== undefined) {
+		if (normalizedPath === rootName) {
+			return ".";
+		}
+
+		if (normalizedPath.startsWith(`${rootName}/`)) {
+			return normalizedPath.slice(rootName.length + 1);
+		}
+	}
+
+	return normalizedPath;
+}
+
+function getNodeSectionIndex(lines: string[], targetNode: TscnNode): number {
+	for (let index: number = 0; index < lines.length; index += 1) {
+		const section: TscnSection | null = parseSectionHeader(lines[index]!);
+		if (section === null || section.name !== "node") {
+			continue;
+		}
+
+		const name: string = section.attrs["name"] ?? "";
+		const type: string = section.attrs["type"] ?? "";
+		const parent: string | null = section.attrs["parent"] ?? null;
+
+		if (name === targetNode.name && type === targetNode.type && parent === targetNode.parent) {
+			return index;
+		}
+	}
+
+	return -1;
+}
+
+function getNextSectionIndex(lines: string[], startIndex: number): number {
+	let index: number = startIndex + 1;
+	while (index < lines.length) {
+		const line: string = lines[index]!.trim();
+		if (line.startsWith("[")) {
+			break;
+		}
+		index += 1;
+	}
+
+	return index;
+}
+
+function generateSceneTscn(rootNodeType: string, rootNodeName: string): string {
+	return `[gd_scene load_steps=2 format=3]
+
+[node name="${quoteTscnString(rootNodeName)}" type="${quoteTscnString(rootNodeType)}"]
+`;
+}
+
+function findNodeInTscn(data: TscnData, targetPath: string): TscnNode | null {
+	const normalizedTargetPath: string = targetPath.trim().replace(/^\//, "");
+	if (normalizedTargetPath.length === 0 || normalizedTargetPath === ".") {
+		return data.nodes.find(n => n.parent === null) ?? null;
+	}
+
+	return createNodePathMap(data.nodes).get(normalizedTargetPath) ?? null;
+}
+
+function getNodeFullPath(node: TscnNode, allNodes: TscnNode[]): string {
+	if (node.parent === null || node.parent === ".") return node.name;
+
+	// Find parent
+	const parent = allNodes.find(n => {
+		const parentPath = n.parent === "." || n.parent === null ? "" : n.parent;
+		const nodePath = parentPath.length > 0 ? `${parentPath}/${n.name}` : n.name;
+		return nodePath === node.parent;
+	});
+
+	if (parent === undefined) return node.name;
+	return `${getNodeFullPath(parent, allNodes)}/${node.name}`;
+}
+
+function addNodeToSceneTscn(content: string, parentPath: string, nodeType: string, nodeName: string, properties: Record<string, string>): string {
+	const data: TscnData = parseTscn(content);
+	const parentNode: TscnNode | null = findNodeInTscn(data, parentPath);
+
+	if (parentNode === null) {
+		throw new Error(`Parent node not found in scene: ${parentPath}`);
+	}
+
+	const resolvedParent: string = toSceneRelativeNodePath(data, parentPath);
+	const rootNode: TscnNode | undefined = data.nodes.find((node: TscnNode): boolean => node.parent === null);
+	const candidateScenePath: string = resolvedParent === "." ? nodeName : `${resolvedParent}/${nodeName}`;
+	const candidateFullPath: string = rootNode === undefined ? candidateScenePath : `${rootNode.name}/${candidateScenePath}`;
+	const nodePathMap: Map<string, TscnNode> = createNodePathMap(data.nodes);
+
+	if (nodePathMap.has(candidateScenePath) || nodePathMap.has(candidateFullPath)) {
+		throw new Error(`Node already exists in scene: ${candidateScenePath}`);
+	}
+
+	let nodeLine = `[node name="${quoteTscnString(nodeName)}" type="${quoteTscnString(nodeType)}" parent="${quoteTscnString(resolvedParent)}"]`;
+	if (Object.keys(properties).length > 0) {
+		for (const [key, value] of Object.entries(properties)) {
+			nodeLine += `\n${key} = ${value}`;
+		}
+	}
+	nodeLine += "\n";
+
+	// Insert before the last section (connections or end of file)
+	const lines = content.split("\n");
+	const insertIdx = findLastNodeInsertIndex(lines);
+	lines.splice(insertIdx, 0, nodeLine);
+	return lines.join("\n");
+}
+
+function findLastNodeInsertIndex(lines: string[]): number {
+	// Find where to insert a new node: after the last [node ...] section's properties
+	let lastNodeLine = -1;
+	for (let i = 0; i < lines.length; i++) {
+		if (lines[i]!.startsWith("[node ")) {
+			lastNodeLine = i;
+		}
+	}
+
+	if (lastNodeLine === -1) {
+		// No nodes yet, find where [gd_scene] header ends
+		for (let i = 0; i < lines.length; i++) {
+			if (lines[i]!.startsWith("[gd_scene ")) {
+				// Find next non-empty, non-property line after header
+				let j = i + 1;
+				while (j < lines.length && lines[j]!.trim().length === 0) j++;
+				return j;
+			}
+		}
+		return lines.length;
+	}
+
+	// Skip the [node ...] line and its properties
+	let i = lastNodeLine + 1;
+	while (i < lines.length) {
+		const line = lines[i]!.trim();
+		if (line.length === 0 || line.startsWith(";")) {
+			i++;
+			continue;
+		}
+		if (line.startsWith("[")) break;
+		i++;
+	}
+	return i;
+}
+
+function attachScriptToSceneTscn(content: string, nodePath: string, scriptPath: string): string {
+	const data = parseTscn(content);
+	const targetNode = findNodeInTscn(data, nodePath);
+
+	if (targetNode === null) {
+		throw new Error(`Node not found in scene: ${nodePath}`);
+	}
+
+	const extResMatch = scriptPath.match(/^ExtResource\("([^"]+)"\)$/);
+	const lines = content.split("\n");
+	const nodeSectionIndex: number = getNodeSectionIndex(lines, targetNode);
+
+	if (nodeSectionIndex === -1) {
+		throw new Error(`Node section not found in scene: ${nodePath}`);
+	}
+
+	const nodeSectionEndIndex: number = getNextSectionIndex(lines, nodeSectionIndex);
+	for (let index: number = nodeSectionIndex + 1; index < nodeSectionEndIndex; index += 1) {
+		if (lines[index]!.trim().startsWith("script =")) {
+			throw new Error(`Node already has a script: ${nodePath}`);
+		}
+	}
+
+	let scriptValue: string;
+	if (extResMatch !== null) {
+		scriptValue = scriptPath;
+	} else {
+		if (!scriptPath.startsWith("res://") || !scriptPath.endsWith(".gd")) {
+			throw new Error("scriptPath must be a res:// path ending with .gd or an ExtResource(\"id\") reference");
+		}
+
+		const existingResource: TscnExtResource | undefined = data.extResources.find(
+			(resource: TscnExtResource): boolean => resource.path === scriptPath
+		);
+		let resourceId: string;
+
+		if (existingResource !== undefined) {
+			resourceId = existingResource.id;
+		} else {
+			const usedIds: Set<string> = new Set(data.extResources.map((resource: TscnExtResource): string => resource.id));
+			let nextIndex: number = data.extResources.length + 1;
+			do {
+				resourceId = `${nextIndex}_script`;
+				nextIndex += 1;
+			} while (usedIds.has(resourceId));
+
+			const gdSceneIndex: number = lines.findIndex((line: string): boolean => line.startsWith("[gd_scene "));
+			if (gdSceneIndex === -1) {
+				throw new Error("Missing [gd_scene ...] header");
+			}
+
+			lines[gdSceneIndex] = lines[gdSceneIndex]!.replace(
+				/load_steps=(\d+)/,
+				(_match: string, value: string): string => `load_steps=${Number.parseInt(value, 10) + 1}`
+			);
+			lines.splice(gdSceneIndex + 1, 0, `[ext_resource type="Script" path="${quoteTscnString(scriptPath)}" id="${resourceId}"]`);
+		}
+
+		scriptValue = `ExtResource("${resourceId}")`;
+	}
+
+	const refreshedData: TscnData = parseTscn(lines.join("\n"));
+	const refreshedNode: TscnNode | null = findNodeInTscn(refreshedData, nodePath);
+	if (refreshedNode === null) {
+		throw new Error(`Node not found after script resource update: ${nodePath}`);
+	}
+
+	const refreshedNodeSectionIndex: number = getNodeSectionIndex(lines, refreshedNode);
+	lines.splice(refreshedNodeSectionIndex + 1, 0, `script = ${scriptValue}`);
+	return lines.join("\n");
+}
+
+function connectSignalInSceneTscn(content: string, signal: string, fromNode: string, toNode: string, method: string, flags?: number, binds?: string): string {
+	const data: TscnData = parseTscn(content);
+
+	if (findNodeInTscn(data, fromNode) === null) {
+		throw new Error(`Signal source node not found in scene: ${fromNode}`);
+	}
+
+	if (findNodeInTscn(data, toNode) === null) {
+		throw new Error(`Signal target node not found in scene: ${toNode}`);
+	}
+
+	const resolvedFromNode: string = toSceneRelativeNodePath(data, fromNode);
+	const resolvedToNode: string = toSceneRelativeNodePath(data, toNode);
+	const connExists: boolean = data.connections.some(
+		(connection: TscnConnection): boolean =>
+			connection.signal === signal
+			&& toSceneRelativeNodePath(data, connection.from) === resolvedFromNode
+			&& toSceneRelativeNodePath(data, connection.to) === resolvedToNode
+			&& connection.method === method
+	);
+
+	if (connExists) {
+		throw new Error("This signal connection already exists in the scene");
+	}
+
+	let connLine = `[connection signal="${quoteTscnString(signal)}" from="${quoteTscnString(resolvedFromNode)}" to="${quoteTscnString(resolvedToNode)}" method="${quoteTscnString(method)}"`;
+	if (flags !== undefined) {
+		connLine += ` flags=${flags}`;
+	}
+	if (binds !== undefined && binds.length > 0) {
+		connLine += ` binds= ${binds}`;
+	}
+	connLine += "]\n";
+
+	// Find the last [connection ...] line or the end
+	const lines = content.split("\n");
+	let lastConnIdx = -1;
+	for (let i = 0; i < lines.length; i++) {
+		if (lines[i]!.startsWith("[connection ")) {
+			lastConnIdx = i;
+		}
+	}
+
+	if (lastConnIdx >= 0) {
+		lines.splice(lastConnIdx + 1, 0, connLine);
+	} else {
+		lines.push(connLine);
+	}
+
+	return lines.join("\n").replace(/\n\n+$/, "\n");
+}
+
 async function assertWritablePath(relativePath: string): Promise<string> {
 	const cleanedPath: string = relativePath.trim().replaceAll("\\", "/");
 	const resolvedPath: string = await resolveProjectPath(cleanedPath);
@@ -255,6 +749,22 @@ async function assertWritablePath(relativePath: string): Promise<string> {
 	return resolvedPath;
 }
 
+function validateTscnContent(content: string): string[] {
+	const errors: string[] = [];
+	const trimmedContent: string = content.trimStart();
+
+	if (!/^\[gd_scene\s/.test(trimmedContent)) {
+		errors.push("TSCN file must start with [gd_scene ...] header");
+	}
+
+	const nodeMatches: RegExpMatchArray | null = trimmedContent.match(/^\[node\s/gm);
+	if (nodeMatches === null || nodeMatches.length === 0) {
+		errors.push("TSCN file must contain at least one [node ...] section (root node)");
+	}
+
+	return errors;
+}
+
 async function validateNewTextFile(relativePath: string, content: string): Promise<{
 	valid: boolean;
 	resolvedPath?: string;
@@ -268,8 +778,16 @@ async function validateNewTextFile(relativePath: string, content: string): Promi
 		errors.push("File content is empty");
 	}
 
-	if (content.length > MAX_NEW_FILE_BYTES) {
+	if (relativePath.endsWith(".tscn")) {
+		if (content.length > MAX_TSCN_FILE_BYTES) {
+			errors.push(`Content too large: ${content.length} bytes (max ${MAX_TSCN_FILE_BYTES})`);
+		}
+	} else if (content.length > MAX_NEW_FILE_BYTES) {
 		errors.push(`Content too large: ${content.length} bytes (max ${MAX_NEW_FILE_BYTES})`);
+	}
+
+	if (relativePath.endsWith(".tscn") && content.length > 0) {
+		errors.push(...validateTscnContent(content));
 	}
 
 	try {
@@ -330,8 +848,16 @@ async function overwriteTextFile(relativePath: string, content: string): Promise
 		throw new Error("File content is empty");
 	}
 
-	if (content.length > MAX_TEXT_FILE_BYTES) {
-		throw new Error(`Content too large: ${content.length} bytes (max ${MAX_TEXT_FILE_BYTES})`);
+	const maxBytes: number = relativePath.endsWith(".tscn") ? MAX_TSCN_FILE_BYTES : MAX_TEXT_FILE_BYTES;
+	if (content.length > maxBytes) {
+		throw new Error(`Content too large: ${content.length} bytes (max ${maxBytes})`);
+	}
+
+	if (relativePath.endsWith(".tscn")) {
+		const tscnErrors: string[] = validateTscnContent(content);
+		if (tscnErrors.length > 0) {
+			throw new Error(`TSCN validation failed: ${tscnErrors.join("; ")}`);
+		}
 	}
 
 	const resolvedPath: string = await assertWritablePath(relativePath);
@@ -516,7 +1042,7 @@ async function main(): Promise<void> {
 		"propose_create_text_file",
 		{
 			title: "Propose Create Text File",
-			description: "提出新建一个文本文件的提案。不会实际写入磁盘，仅返回校验结果和预览。只能创建 .gd/.tres/.json/.md/.txt 文件，不允许覆盖已有文件，不允许写入 .godot/ 或 addons/ 目录。",
+			description: "提出新建一个文本文件的提案。不会实际写入磁盘，仅返回校验结果和预览。支持 .gd/.tres/.tscn/.json/.md/.txt 文件。.tscn 文件必须包含 [gd_scene ...] 头部和至少一个 [node ...] 根节点。不允许覆盖已有文件，不允许写入 .godot/ 或 addons/ 目录。",
 			inputSchema: z.object({
 				relativePath: z.string().min(1).describe("相对于项目根目录的新文件路径"),
 				content: z.string().describe("文件内容")
@@ -549,7 +1075,7 @@ async function main(): Promise<void> {
 		"create_text_file",
 		{
 			title: "Create Text File",
-			description: "创建一个新的文本文件，会实际写入磁盘。只能创建 .gd/.tres/.json/.md/.txt 文件，不允许覆盖已有文件，不允许写入 .godot/ 或 addons/ 目录。",
+			description: "创建一个新的文本文件，会实际写入磁盘。支持 .gd/.tres/.tscn/.json/.md/.txt 文件。.tscn 文件必须包含 [gd_scene ...] 头部和至少一个 [node ...] 根节点。不允许覆盖已有文件，不允许写入 .godot/ 或 addons/ 目录。写入后建议运行 godot.check_only 验证。",
 			inputSchema: z.object({
 				relativePath: z.string().min(1).describe("相对于项目根目录的新文件路径"),
 				content: z.string().describe("文件内容")
@@ -562,7 +1088,7 @@ async function main(): Promise<void> {
 		"propose_overwrite_text_file",
 		{
 			title: "Propose Overwrite Text File",
-			description: "提出覆盖已有文件的提案。不会实际写入，仅校验并返回新旧内容对比。文件必须已存在，不允许写入 .godot/。",
+			description: "提出覆盖已有文件的提案。不会实际写入，仅校验并返回新旧内容对比。支持 .gd/.tres/.tscn/.json/.md/.txt 文件。.tscn 文件必须包含 [gd_scene ...] 头部和至少一个 [node ...] 根节点。文件必须已存在，不允许写入 .godot/。",
 			inputSchema: z.object({
 				relativePath: z.string().min(1).describe("相对于项目根目录的已有文件路径"),
 				content: z.string().describe("新的完整文件内容")
@@ -586,10 +1112,14 @@ async function main(): Promise<void> {
 				errors.push("File content is empty");
 			}
 
-			if (content.length > MAX_TEXT_FILE_BYTES) {
-				errors.push(`Content too large: ${content.length} bytes (max ${MAX_TEXT_FILE_BYTES})`);
+			const overwriteMaxBytes: number = relativePath.endsWith(".tscn") ? MAX_TSCN_FILE_BYTES : MAX_TEXT_FILE_BYTES;
+			if (content.length > overwriteMaxBytes) {
+				errors.push(`Content too large: ${content.length} bytes (max ${overwriteMaxBytes})`);
 			}
 
+			if (relativePath.endsWith(".tscn") && content.length > 0) {
+				errors.push(...validateTscnContent(content));
+			}
 			let oldContent: string;
 			try {
 				oldContent = await fs.readFile(resolvedPath, "utf8");
@@ -619,7 +1149,7 @@ async function main(): Promise<void> {
 		"overwrite_text_file",
 		{
 			title: "Overwrite Text File",
-			description: "覆盖已有文本文件，会实际写入磁盘。只能写入 .gd/.tres/.json/.md/.txt 文件，不允许写入 .godot/、addons/ 或隐藏目录。",
+			description: "覆盖已有文本文件，会实际写入磁盘。支持 .gd/.tres/.tscn/.json/.md/.txt 文件。.tscn 文件必须包含 [gd_scene ...] 头部和至少一个 [node ...] 根节点。不允许写入 .godot/、addons/ 或隐藏目录。写入后建议运行 godot.check_only 验证。",
 			inputSchema: z.object({
 				relativePath: z.string().min(1).describe("相对于项目根目录的已有文件路径"),
 				content: z.string().describe("新的完整文件内容")
@@ -803,6 +1333,250 @@ async function main(): Promise<void> {
 				text: JSON.stringify({ scripts: await walkProjectFiles({ extensions: [".gd"] }) }, null, 2)
 			}]
 		})
+	);
+
+	// Scene semantic tools
+	server.registerTool(
+		"inspect_scene_tree",
+		{
+			title: "Inspect Scene Tree",
+			description: "解析 .tscn 场景文件，返回节点树、脚本引用和信号连接的完整结构化信息。",
+			inputSchema: z.object({
+				relativePath: z.string().min(1).describe("场景文件的相对路径，例如 'scenes/main.tscn'")
+			})
+		},
+		async ({ relativePath }) => {
+			try {
+				const fullPath = await resolveProjectPath(relativePath);
+				const ext = path.extname(fullPath);
+				if (ext !== ".tscn") {
+					return asJsonTextResult({ valid: false, path: relativePath, errors: ["File is not a .tscn scene file"] });
+				}
+				const content = await fs.readFile(fullPath, "utf8");
+				const data = parseTscn(content);
+				return asJsonTextResult({ valid: true, path: relativePath, data });
+			} catch (error: unknown) {
+				return asJsonTextResult({ valid: false, path: relativePath, errors: [error instanceof Error ? error.message : "Failed to inspect scene"] });
+			}
+		}
+	);
+
+	server.registerTool(
+		"propose_create_scene",
+		{
+			title: "Propose Create Scene",
+			description: "提出创建一个新的 Godot 场景文件（.tscn）的提案。不会实际写入磁盘，仅返回校验结果和预览。参数包含相对路径、根节点类型和根节点名称。",
+			inputSchema: z.object({
+				relativePath: z.string().min(1).describe("新场景文件的相对路径，必须以 .tscn 结尾"),
+				rootNodeType: z.string().min(1).describe("根节点类型，例如 Node2D、Node3D、Control"),
+				rootNodeName: z.string().min(1).describe("根节点名称，例如 Main、Game")
+			})
+		},
+		async ({ relativePath, rootNodeType, rootNodeName }) => {
+			const content = generateSceneTscn(rootNodeType, rootNodeName);
+			const validation = await validateNewTextFile(relativePath, content);
+			if (!validation.valid) {
+				return asJsonTextResult({ valid: false, path: validation.normalizedPath, errors: validation.errors });
+			}
+			return asJsonTextResult({
+				valid: true,
+				path: validation.normalizedPath,
+				rootNodeType,
+				rootNodeName,
+				size: content.length,
+				preview: content
+			});
+		}
+	);
+
+	server.registerTool(
+		"create_scene",
+		{
+			title: "Create Scene",
+			description: "创建一个新的 Godot 场景 .tscn 文件，会实际写入磁盘。需要用户审批。参数包含相对路径、根节点类型和根节点名称。写入后建议运行 godot.check_only 验证。",
+			inputSchema: z.object({
+				relativePath: z.string().min(1).describe("新场景文件的相对路径，必须以 .tscn 结尾"),
+				rootNodeType: z.string().min(1).describe("根节点类型，例如 Node2D、Node3D、Control"),
+				rootNodeName: z.string().min(1).describe("根节点名称，例如 Main、Game")
+			})
+		},
+		async ({ relativePath, rootNodeType, rootNodeName }) => {
+			const content = generateSceneTscn(rootNodeType, rootNodeName);
+			const result = await createTextFile(relativePath, content);
+			return asJsonTextResult({ ...result, rootNodeType, rootNodeName });
+		}
+	);
+
+	server.registerTool(
+		"propose_add_node_to_scene",
+		{
+			title: "Propose Add Node To Scene",
+			description: "提出向场景添加节点的提案。不会实际写入磁盘，仅校验并返回修改后的场景预览。参数包含场景路径、父节点路径、节点类型、节点名称和属性。",
+			inputSchema: z.object({
+				scenePath: z.string().min(1).describe("已有场景文件的相对路径"),
+				parentPath: z.string().min(1).describe("父节点的路径，根节点用 . 表示"),
+				nodeType: z.string().min(1).describe("节点类型，例如 Label、Button、CollisionShape2D"),
+				nodeName: z.string().min(1).describe("节点名称，例如 HealthLabel"),
+				properties: z.record(z.string(), z.string()).optional().describe("节点属性，例如 { text: 'Hello', position: 'Vector2(100, 200)' }")
+			})
+		},
+		async ({ scenePath, parentPath, nodeType, nodeName, properties }) => {
+			try {
+				const fullPath = await resolveProjectPath(scenePath);
+				const oldContent = await fs.readFile(fullPath, "utf8");
+				const data = parseTscn(oldContent);
+				const targetParent = findNodeInTscn(data, parentPath);
+				if (targetParent === null) {
+					return asJsonTextResult({ valid: false, scenePath, errors: [`Parent node not found: ${parentPath}`] });
+				}
+				const newContent = addNodeToSceneTscn(oldContent, parentPath, nodeType, nodeName, properties ?? {});
+				const previewStart = newContent.indexOf(`[node name="${quoteTscnString(nodeName)}"`);
+				const preview = previewStart >= 0 ? newContent.slice(Math.max(0, previewStart - 50), previewStart + 200) : newContent.slice(0, 500);
+				return asJsonTextResult({
+					valid: true,
+					scenePath,
+					nodeType,
+					nodeName,
+					parentPath,
+					preview: preview + (newContent.length > preview.length ? "\n..." : "")
+				});
+			} catch (error: unknown) {
+				return asJsonTextResult({ valid: false, scenePath, errors: [error instanceof Error ? error.message : "Failed to preview node addition"] });
+			}
+		}
+	);
+
+	server.registerTool(
+		"add_node_to_scene",
+		{
+			title: "Add Node To Scene",
+			description: "向已有场景添加一个节点，会实际写入磁盘。需要用户审批。参数包含场景路径、父节点路径、节点类型、节点名称和属性。",
+			inputSchema: z.object({
+				scenePath: z.string().min(1).describe("已有场景文件的相对路径"),
+				parentPath: z.string().min(1).describe("父节点的路径，根节点用 . 表示"),
+				nodeType: z.string().min(1).describe("节点类型"),
+				nodeName: z.string().min(1).describe("节点名称"),
+				properties: z.record(z.string(), z.string()).optional().describe("节点属性")
+			})
+		},
+		async ({ scenePath, parentPath, nodeType, nodeName, properties }) => {
+			const fullPath = await resolveProjectPath(scenePath);
+			const oldContent = await fs.readFile(fullPath, "utf8");
+			const newContent = addNodeToSceneTscn(oldContent, parentPath, nodeType, nodeName, properties ?? {});
+			await fs.writeFile(fullPath, newContent, "utf8");
+			return asJsonTextResult({ modified: true, scenePath, nodeType, nodeName, parentPath });
+		}
+	);
+
+	server.registerTool(
+		"propose_attach_script_to_node",
+		{
+			title: "Propose Attach Script To Node",
+			description: "提出给场景中的节点挂载脚本的提案。不会实际写入，仅校验并返回预览。参数包含场景路径、节点路径和脚本路径。",
+			inputSchema: z.object({
+				scenePath: z.string().min(1).describe("场景文件的相对路径"),
+				nodePath: z.string().min(1).describe("目标节点的路径，例如 Main/Player"),
+				scriptPath: z.string().min(1).describe("脚本资源路径，例如 res://scripts/player.gd 或 ExtResource('1_abc')")
+			})
+		},
+		async ({ scenePath, nodePath, scriptPath }) => {
+			try {
+				const fullPath = await resolveProjectPath(scenePath);
+				const oldContent = await fs.readFile(fullPath, "utf8");
+				const data = parseTscn(oldContent);
+				const targetNode = findNodeInTscn(data, nodePath);
+				if (targetNode === null) {
+					return asJsonTextResult({ valid: false, scenePath, errors: [`Node not found: ${nodePath}`] });
+				}
+				if (targetNode.script !== null) {
+					return asJsonTextResult({ valid: false, scenePath, errors: [`Node already has a script: ${targetNode.script}`] });
+				}
+				const newContent = attachScriptToSceneTscn(oldContent, nodePath, scriptPath);
+				const nodeIdx = newContent.indexOf(`[node name="${quoteTscnString(targetNode.name)}"`);
+				const preview = nodeIdx >= 0 ? newContent.slice(nodeIdx, nodeIdx + 300) : newContent.slice(0, 500);
+				return asJsonTextResult({ valid: true, scenePath, nodePath, scriptPath, preview: preview + "\n..." });
+			} catch (error: unknown) {
+				return asJsonTextResult({ valid: false, scenePath, errors: [error instanceof Error ? error.message : "Failed to preview script attachment"] });
+			}
+		}
+	);
+
+	server.registerTool(
+		"attach_script_to_node",
+		{
+			title: "Attach Script To Node",
+			description: "给场景中的节点挂载脚本，会实际写入磁盘。需要用户审批。参数包含场景路径、节点路径和脚本路径。",
+			inputSchema: z.object({
+				scenePath: z.string().min(1).describe("场景文件的相对路径"),
+				nodePath: z.string().min(1).describe("目标节点的路径"),
+				scriptPath: z.string().min(1).describe("脚本资源路径")
+			})
+		},
+		async ({ scenePath, nodePath, scriptPath }) => {
+			const fullPath = await resolveProjectPath(scenePath);
+			const oldContent = await fs.readFile(fullPath, "utf8");
+			const newContent = attachScriptToSceneTscn(oldContent, nodePath, scriptPath);
+			await fs.writeFile(fullPath, newContent, "utf8");
+			return asJsonTextResult({ modified: true, scenePath, nodePath, scriptPath });
+		}
+	);
+
+	server.registerTool(
+		"propose_connect_signal_in_scene",
+		{
+			title: "Propose Connect Signal In Scene",
+			description: "提出在场景中连接信号的提案。不会实际写入，仅校验并返回预览。参数包含场景路径、信号名、发送节点、接收节点和方法名。",
+			inputSchema: z.object({
+				scenePath: z.string().min(1).describe("场景文件的相对路径"),
+				signal: z.string().min(1).describe("信号名称，例如 pressed、body_entered"),
+				fromNode: z.string().min(1).describe("发送信号的节点路径"),
+				toNode: z.string().min(1).describe("接收信号的节点路径，方法所在节点用 . 表示"),
+				method: z.string().min(1).describe("回调方法名称，例如 _on_button_pressed"),
+				flags: z.number().int().optional().describe("连接标志，默认 0"),
+				binds: z.string().optional().describe("绑定的参数，例如 [] 或 [1, 2]")
+			})
+		},
+		async ({ scenePath, signal, fromNode, toNode, method, flags, binds }) => {
+			try {
+				const fullPath = await resolveProjectPath(scenePath);
+				const oldContent = await fs.readFile(fullPath, "utf8");
+				const data = parseTscn(oldContent);
+				const connExists = data.connections.some(c => c.signal === signal && c.from === fromNode && c.to === toNode && c.method === method);
+				if (connExists) {
+					return asJsonTextResult({ valid: false, scenePath, errors: ["This signal connection already exists in the scene"] });
+				}
+				const newContent = connectSignalInSceneTscn(oldContent, signal, fromNode, toNode, method, flags, binds);
+				const connLine = newContent.lastIndexOf("[connection ");
+				const preview = connLine >= 0 ? newContent.slice(connLine, connLine + 200) : newContent.slice(-500);
+				return asJsonTextResult({ valid: true, scenePath, signal, fromNode, toNode, method, preview });
+			} catch (error: unknown) {
+				return asJsonTextResult({ valid: false, scenePath, errors: [error instanceof Error ? error.message : "Failed to preview signal connection"] });
+			}
+		}
+	);
+
+	server.registerTool(
+		"connect_signal_in_scene",
+		{
+			title: "Connect Signal In Scene",
+			description: "在场景中连接一个信号，会实际写入磁盘。需要用户审批。参数包含场景路径、信号名、发送节点、接收节点和方法名。",
+			inputSchema: z.object({
+				scenePath: z.string().min(1).describe("场景文件的相对路径"),
+				signal: z.string().min(1).describe("信号名称"),
+				fromNode: z.string().min(1).describe("发送信号的节点路径"),
+				toNode: z.string().min(1).describe("接收信号的节点路径"),
+				method: z.string().min(1).describe("回调方法名称"),
+				flags: z.number().int().optional().describe("连接标志"),
+				binds: z.string().optional().describe("绑定的参数")
+			})
+		},
+		async ({ scenePath, signal, fromNode, toNode, method, flags, binds }) => {
+			const fullPath = await resolveProjectPath(scenePath);
+			const oldContent = await fs.readFile(fullPath, "utf8");
+			const newContent = connectSignalInSceneTscn(oldContent, signal, fromNode, toNode, method, flags, binds);
+			await fs.writeFile(fullPath, newContent, "utf8");
+			return asJsonTextResult({ modified: true, scenePath, signal, fromNode, toNode, method });
+		}
 	);
 
 	const transport: StdioServerTransport = new StdioServerTransport();

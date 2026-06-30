@@ -2,7 +2,12 @@ import WebSocket, { WebSocketServer } from "ws";
 import { composeSystemPrompt, listPromptTemplates } from "../prompts/registry.js";
 import { clientRequestSchema } from "../protocol/schema.js";
 import type { AiChatParams, ChatMessage, ClientRequest, ModelProfile } from "../protocol/types.js";
-import { runDeepSeekAgent, type DeepSeekAgentResult } from "../providers/deepseek-agent.js";
+import {
+	continueDeepSeekAgent,
+	runDeepSeekAgent,
+	type DeepSeekAgentContinuation,
+	type DeepSeekAgentResult
+} from "../providers/deepseek-agent.js";
 import type { OnToolEvent } from "../tools/tool-dispatcher.js";
 import type { DeepSeekChatOptions } from "../providers/deepseek-client.js";
 import { McpHost } from "../mcp/mcp-host.js";
@@ -20,8 +25,19 @@ import { loadWorkspaces, findWorkspace, getDefaultWorkspace } from "../workspace
 import type { WorkspaceConfig } from "../workspace/types.js";
 import {
 	createSession, openSession, saveSession, listSessions,
-	deleteSession, renameSession, type SessionMetadata
+	deleteSession, renameSession,
+	readSummary, writeSummary,
+	type SessionMetadata,
+	type SessionSummary
 } from "../session/session-store.js";
+import { createDeepSeekClient } from "../providers/deepseek-client.js";
+import {
+	clearProviderConfig,
+	getProviderConfigStatus,
+	loadProviderConfigWithSecret,
+	saveProviderConfig,
+	type ProviderConfigWithSecret
+} from "../providers/provider-config-store.js";
 
 const tokenCounterPromise: Promise<TokenCounter> = createTokenCounter();
 
@@ -42,6 +58,17 @@ type ClientSession = {
 	activeWorkspace?: WorkspaceConfig | undefined;
 	sessionId?: string | undefined;
 	sessionTitle?: string | undefined;
+	summaryMessage?: ChatMessage | undefined;
+	summaryCoveredMessageCount?: number | undefined;
+	pendingAiContinuations: Map<string, PendingAiContinuation>;
+};
+
+type PendingAiContinuation = {
+	params: AiChatParams;
+	options: DeepSeekChatOptions;
+	continuation: DeepSeekAgentContinuation;
+	allowedToolNames?: readonly string[] | undefined;
+	userMessage: string;
 };
 
 type SlashCommandResult =
@@ -61,6 +88,17 @@ function parseMessage(data: WebSocket.RawData, isBinary: boolean): unknown {
 async function estimateTextTokens(text: string): Promise<number> {
 	const tc: TokenCounter = await getTokenCounter();
 	return tc.countText(text);
+}
+
+async function estimateMessagesTokens(messages: ChatMessage[]): Promise<number> {
+	const tc: TokenCounter = await getTokenCounter();
+	let total: number = 0;
+
+	for (const message of messages) {
+		total += await tc.countText(`${message.role}: ${message.content}`);
+	}
+
+	return total;
 }
 
 async function selectHistoryWithinBudget(messages: ChatMessage[], budgetTokens: number): Promise<ChatMessage[]> {
@@ -93,19 +131,41 @@ async function computeHistoryBudget(
 
 async function appendChatTurnToSession(
 	session: ClientSession,
-	history: ChatMessage[],
+	_history: ChatMessage[],
 	userMessage: string,
 	assistantMessage: string
 ): Promise<void> {
-	const tc: TokenCounter = await getTokenCounter();
 	const nextMessages: ChatMessage[] = [
-		...history,
+		...session.messages,
 		{ role: "user", content: userMessage },
 		{ role: "assistant", content: assistantMessage }
 	];
-	const profile: ModelProfile = session.modelProfile;
-	const budgetTokens: number = profile.contextWindowTokens - profile.defaultOutputReserveTokens - profile.safetyMarginTokens;
-	session.messages = await selectMessagesWithinBudget(nextMessages, Math.max(0, budgetTokens), tc);
+	session.messages = nextMessages;
+}
+
+async function selectHistoryForModel(session: ClientSession, budgetTokens: number): Promise<ChatMessage[]> {
+	if (session.summaryMessage === undefined) {
+		return selectHistoryWithinBudget(session.messages, budgetTokens);
+	}
+
+	const summaryTokens: number = await estimateMessagesTokens([session.summaryMessage]);
+	const recentBudgetTokens: number = Math.max(0, budgetTokens - summaryTokens);
+	const recentSourceMessages: ChatMessage[] = session.summaryCoveredMessageCount !== undefined
+		? session.messages.slice(session.summaryCoveredMessageCount)
+		: session.messages;
+	const recentMessages: ChatMessage[] = await selectHistoryWithinBudget(recentSourceMessages, recentBudgetTokens);
+	return [session.summaryMessage, ...recentMessages];
+}
+
+function createSummaryMessage(summary: SessionSummary): ChatMessage {
+	const generatedAtText: string = summary.generatedAt.length > 0
+		? ` — 生成于 ${summary.generatedAt}`
+		: "";
+
+	return {
+		role: "system",
+		content: `[会话摘要${generatedAtText}]\n${summary.content}`
+	};
 }
 
 function getSessionProjectPath(session: ClientSession): string {
@@ -124,6 +184,128 @@ function createDeepSeekChatOptions(session: ClientSession, apiKey: string): Deep
 	return options;
 }
 
+function createToolEventForwarder(socket: WebSocket, requestId: string): OnToolEvent {
+	return (event): void => {
+		sendJson(socket, {
+			type: "event",
+			id: requestId,
+			event: event.type,
+			data: event
+		});
+	};
+}
+
+function createPendingAiContinuation(
+	params: AiChatParams,
+	options: DeepSeekChatOptions,
+	continuation: DeepSeekAgentContinuation,
+	allowedToolNames: readonly string[] | undefined,
+	userMessage: string
+): PendingAiContinuation {
+	const pendingContinuation: PendingAiContinuation = {
+		params,
+		options,
+		continuation,
+		userMessage
+	};
+
+	if (allowedToolNames !== undefined) {
+		pendingContinuation.allowedToolNames = allowedToolNames;
+	}
+
+	return pendingContinuation;
+}
+
+function sendAiPaused(socket: WebSocket, requestId: string, agentResult: Extract<DeepSeekAgentResult, { status: "approval_required" }>): void {
+	sendJson(socket, {
+		type: "event",
+		id: requestId,
+		event: "ai.paused",
+		data: {
+			reason: "approval_required",
+			approvalId: agentResult.approvalId,
+			toolName: agentResult.toolName,
+			message: `工具 ${agentResult.toolName} 需要审批：${agentResult.approvalId}`
+		}
+	});
+}
+
+async function sendContinuedAgentResult(
+	socket: WebSocket,
+	requestId: string,
+	session: ClientSession,
+	mcpHost: McpHost,
+	agentResult: DeepSeekAgentResult,
+	pendingContinuation: PendingAiContinuation,
+	historyBudgetTokens: number | null = null
+): Promise<void> {
+	if (agentResult.status === "approval_required") {
+		const nextPendingContinuation: PendingAiContinuation = createPendingAiContinuation(
+			pendingContinuation.params,
+			pendingContinuation.options,
+			agentResult.continuation,
+			pendingContinuation.allowedToolNames,
+			pendingContinuation.userMessage
+		);
+		session.pendingAiContinuations.set(agentResult.approvalId, nextPendingContinuation);
+		sendAiPaused(socket, requestId, agentResult);
+		return;
+	}
+
+	const text: string = agentResult.text;
+
+	for (let index: number = 0; index < text.length; index += 1) {
+		sendJson(socket, {
+			type: "event",
+			id: requestId,
+			event: "ai.delta",
+			data: { text: text[index] }
+		});
+	}
+
+	await appendChatTurnToSession(session, [], pendingContinuation.userMessage, text);
+	sendJson(socket, {
+		type: "event",
+		id: requestId,
+		event: "ai.done",
+		data: {
+			text,
+			context: {
+				historyMessagesStored: session.messages.length,
+				historyBudgetTokens,
+				mcpServers: mcpHost.getConnectedServerIds()
+			}
+		}
+	});
+}
+
+function applyProviderConfigToSession(session: ClientSession, config: ProviderConfigWithSecret): void {
+	if (config.apiKey !== undefined) {
+		session.deepseekApiKey = config.apiKey;
+	}
+
+	session.deepseekModel = config.model;
+	session.deepseekBaseUrl = config.baseUrl;
+
+	if (config.model !== undefined) {
+		session.modelProfile = resolveModelProfile(config.model);
+	}
+}
+
+async function ensureProviderConfigured(session: ClientSession): Promise<string | undefined> {
+	if (session.deepseekApiKey !== undefined) {
+		return session.deepseekApiKey;
+	}
+
+	const config: ProviderConfigWithSecret | null = await loadProviderConfigWithSecret();
+	if (config === null || config.apiKey === undefined) {
+		return undefined;
+	}
+
+	applyProviderConfigToSession(session, config);
+	return session.deepseekApiKey;
+}
+
 function canCallMcpToolDirectly(toolName: string): boolean {
 	const allowedTools: Set<string> = new Set([
 		"get_project_summary",
@@ -138,11 +320,15 @@ function canCallMcpToolDirectly(toolName: string): boolean {
 	return allowedTools.has(toolName);
 }
 
-function createSessionInfoResult(session: ClientSession, mcpHost: McpHost): Record<string, unknown> {
+function createSessionInfoResult(session: ClientSession, mcpHost: McpHost, historyTokensStored: number | null = null): Record<string, unknown> {
 	return {
 		providerConfigured: session.deepseekApiKey !== undefined,
 		model: session.deepseekModel ?? session.modelProfile.model,
 		historyMessagesStored: session.messages.length,
+		historyTokensStored,
+		summaryActive: session.summaryMessage !== undefined,
+		summaryLength: session.summaryMessage?.content.length ?? 0,
+		summaryCoveredMessageCount: session.summaryCoveredMessageCount ?? 0,
 		contextWindowTokens: session.modelProfile.contextWindowTokens,
 		maxOutputTokens: session.modelProfile.maxOutputTokens,
 		defaultOutputReserveTokens: session.modelProfile.defaultOutputReserveTokens,
@@ -509,6 +695,102 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 			});
 			break;
 
+		case "provider.config.get":
+			try {
+				const config: ProviderConfigWithSecret | null = await loadProviderConfigWithSecret();
+				if (config !== null && config.apiKey !== undefined) {
+					applyProviderConfigToSession(session, config);
+				}
+
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: true,
+					result: await getProviderConfigStatus()
+				});
+			} catch (error: unknown) {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: {
+						code: "provider_config_error",
+						message: error instanceof Error ? error.message : "Failed to read provider config"
+					}
+				});
+			}
+			break;
+
+		case "provider.config.set":
+			if (request.params.model !== undefined) {
+				try {
+					resolveModelProfile(request.params.model);
+				} catch (error: unknown) {
+					sendJson(socket, {
+						type: "response",
+						id: request.id,
+						ok: false,
+						error: {
+							code: "invalid_model",
+							message: error instanceof Error ? error.message : "Unknown model"
+						}
+					});
+					break;
+				}
+			}
+
+			try {
+				await saveProviderConfig(request.params);
+				const config: ProviderConfigWithSecret | null = await loadProviderConfigWithSecret();
+				if (config !== null && config.apiKey !== undefined) {
+					applyProviderConfigToSession(session, config);
+				}
+
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: true,
+					result: await getProviderConfigStatus()
+				});
+			} catch (error: unknown) {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: {
+						code: "provider_config_error",
+						message: error instanceof Error ? error.message : "Failed to save provider config"
+					}
+				});
+			}
+			break;
+
+		case "provider.config.clear":
+			try {
+				session.deepseekApiKey = undefined;
+				session.deepseekModel = undefined;
+				session.deepseekBaseUrl = undefined;
+				session.modelProfile = getDefaultModelProfile();
+
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: true,
+					result: await clearProviderConfig()
+				});
+			} catch (error: unknown) {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: {
+						code: "provider_config_error",
+						message: error instanceof Error ? error.message : "Failed to clear provider config"
+					}
+				});
+			}
+			break;
+
 		case "ai.chat": {
 			const slashCommandResult: SlashCommandResult = await handleSlashCommand(socket, request, session, mcpHost);
 			if (slashCommandResult.type === "handled") {
@@ -518,7 +800,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 			const params: AiChatParams = slashCommandResult.type === "ai"
 				? slashCommandResult.params
 				: request.params;
-			const apiKey: string | undefined = session.deepseekApiKey;
+			const apiKey: string | undefined = await ensureProviderConfigured(session);
 
 			if (!apiKey) {
 				sendJson(socket, {
@@ -527,7 +809,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 					ok: false,
 					error: {
 						code: "provider_not_configured",
-						message: "DeepSeek API key is not configured. Send provider.configure first."
+						message: "DeepSeek API key is not configured. Save it with provider.config.set first."
 					}
 				});
 				break;
@@ -554,32 +836,22 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 					systemPrompt,
 					skillPrompt + mcpSystemContext
 				);
-				const history: ChatMessage[] = await selectHistoryWithinBudget(session.messages, historyBudgetTokens);
+				const history: ChatMessage[] = await selectHistoryForModel(session, historyBudgetTokens);
 
-				const onToolEvent: OnToolEvent = (event): void => {
-					sendJson(socket, {
-						type: "event",
-						id: request.id,
-						event: event.type,
-						data: event
-					});
-				};
+				const onToolEvent: OnToolEvent = createToolEventForwarder(socket, request.id);
 
 				if (params.options?.stream === true) {
 					const agentResult: DeepSeekAgentResult = await runDeepSeekAgent(params, options, history, fullSystemPrompt, mcpHost, session.approvalGateway, allowedToolNames, onToolEvent);
 
 					if (agentResult.status === "approval_required") {
-						sendJson(socket, {
-							type: "event",
-							id: request.id,
-							event: "ai.paused",
-							data: {
-								reason: "approval_required",
-								approvalId: agentResult.approvalId,
-								toolName: agentResult.toolName,
-								message: `工具 ${agentResult.toolName} 需要审批：${agentResult.approvalId}`
-							}
-						});
+						session.pendingAiContinuations.set(agentResult.approvalId, createPendingAiContinuation(
+							params,
+							options,
+							agentResult.continuation,
+							allowedToolNames,
+							params.message
+						));
+						sendAiPaused(socket, request.id, agentResult);
 						break;
 					}
 
@@ -613,6 +885,13 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 					const agentResult: DeepSeekAgentResult = await runDeepSeekAgent(params, options, history, fullSystemPrompt, mcpHost, session.approvalGateway, allowedToolNames, onToolEvent);
 
 					if (agentResult.status === "approval_required") {
+						session.pendingAiContinuations.set(agentResult.approvalId, createPendingAiContinuation(
+							params,
+							options,
+							agentResult.continuation,
+							allowedToolNames,
+							params.message
+						));
 						sendJson(socket, {
 							type: "response",
 							id: request.id,
@@ -697,6 +976,8 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 
 		case "session.reset":
 			session.messages = [];
+			session.summaryMessage = undefined;
+			session.summaryCoveredMessageCount = undefined;
 			sendJson(socket, {
 				type: "response",
 				id: request.id,
@@ -713,7 +994,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 				type: "response",
 				id: request.id,
 				ok: true,
-				result: createSessionInfoResult(session, mcpHost)
+				result: createSessionInfoResult(session, mcpHost, await estimateMessagesTokens(session.messages))
 			});
 			break;
 
@@ -761,6 +1042,9 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 			);
 			session.sessionId = metadata.id;
 			session.sessionTitle = metadata.title;
+			session.messages = [];
+			session.summaryMessage = undefined;
+			session.summaryCoveredMessageCount = undefined;
 
 			if (workspace) {
 				session.activeWorkspace = workspace;
@@ -825,6 +1109,10 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 				session.sessionTitle = stored.metadata.title;
 				session.messages = stored.messages.map((message) => ({ role: message.role, content: message.content }));
 
+				const summary = await readSummary(request.params.sessionId);
+				session.summaryMessage = summary !== null ? createSummaryMessage(summary) : undefined;
+				session.summaryCoveredMessageCount = summary?.messageCount;
+
 				if (workspace) {
 					session.activeWorkspace = workspace;
 					session.godotProjectPath = workspace.rootPath;
@@ -845,7 +1133,8 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 					result: {
 						opened: true,
 						metadata: stored.metadata,
-						messageCount: stored.messages.length
+						messageCount: stored.messages.length,
+						messages: session.messages
 					}
 				});
 			} catch (error: unknown) {
@@ -899,6 +1188,8 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 				session.sessionId = undefined;
 				session.sessionTitle = undefined;
 				session.messages = [];
+				session.summaryMessage = undefined;
+				session.summaryCoveredMessageCount = undefined;
 			}
 			sendJson(socket, {
 				type: "response",
@@ -918,6 +1209,121 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 				id: request.id,
 				ok: true,
 				result: metadata
+			});
+			break;
+		}
+
+		case "session.compress": {
+			if (!session.sessionId) {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: { code: "no_session", message: "No active session" }
+				});
+				break;
+			}
+
+			const apiKey: string | undefined = await ensureProviderConfigured(session);
+			if (!apiKey) {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: { code: "no_api_key", message: "DeepSeek API key not configured" }
+				});
+				break;
+			}
+
+			try {
+				const keepRecent = request.params?.keepRecent ?? 8;
+				const allMessages: ChatMessage[] = session.messages;
+
+				if (allMessages.length <= keepRecent) {
+					sendJson(socket, {
+						type: "response",
+						id: request.id,
+						ok: true,
+						result: { compressed: false, reason: "Not enough messages", messageCount: allMessages.length }
+					});
+					break;
+				}
+
+				const oldMessages = allMessages.slice(0, allMessages.length - keepRecent);
+				const conversationText = oldMessages
+					.map((m) => `${m.role}: ${m.content.slice(0, 300)}`)
+					.join("\n");
+
+				const client = createDeepSeekClient(createDeepSeekChatOptions(session, apiKey));
+				const completion = await client.chat.completions.create({
+					model: session.deepseekModel ?? "deepseek-v4-flash",
+					messages: [
+						{
+							role: "system",
+							content: "你是一个会话摘要助手。请用 200-500 字中文总结以下对话的关键信息：用户做了什么、AI 做了什么、达成了什么结果、有哪些待办事项。只输出摘要，不要加前缀。"
+						},
+						{ role: "user", content: conversationText }
+					],
+					max_tokens: 800
+				});
+
+				const summaryContent: string = completion.choices[0]?.message?.content ?? "(empty summary)";
+
+				const summaryObj: SessionSummary = {
+					content: summaryContent,
+					messageCount: oldMessages.length,
+					tokenEstimate: Math.ceil(conversationText.length / 3),
+					generatedAt: new Date().toISOString()
+				};
+
+				await writeSummary(session.sessionId, summaryObj);
+				const recentMessages = allMessages.slice(allMessages.length - keepRecent);
+				session.summaryMessage = createSummaryMessage(summaryObj);
+				session.summaryCoveredMessageCount = summaryObj.messageCount;
+				session.messages = allMessages;
+
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: true,
+					result: {
+						compressed: true,
+						oldMessageCount: oldMessages.length,
+						keptMessageCount: recentMessages.length,
+						summaryLength: summaryContent.length
+					}
+				});
+			} catch (error: unknown) {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: {
+						code: "compress_error",
+						message: error instanceof Error ? error.message : "Compression failed"
+					}
+				});
+			}
+			break;
+		}
+
+		case "session.summary": {
+			if (!session.sessionId) {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: { code: "no_session", message: "No active session" }
+				});
+				break;
+			}
+
+			const summary = await readSummary(session.sessionId);
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: true,
+				result: summary ?? { content: null, reason: "No summary yet" }
 			});
 			break;
 		}
@@ -1075,11 +1481,21 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 				pathError = `Writing to ${relative.split("/")[0]}/ is not allowed`;
 			}
 
-			const allowedExtensions: Set<string> = new Set([".gd", ".tres", ".json", ".md", ".txt"]);
+			const allowedExtensions: Set<string> = new Set([".gd", ".tres", ".tscn", ".json", ".md", ".txt"]);
 			const ext: string = path.extname(resolvedPath);
 
 			if (!pathError && !allowedExtensions.has(ext)) {
 				pathError = `Extension not allowed: ${ext}. Allowed: ${Array.from(allowedExtensions).join(", ")}`;
+			}
+
+			// TSCN structure validation for .tscn files
+			if (!pathError && ext === ".tscn" && request.params.content.length > 0) {
+				const trimmedContent: string = request.params.content.trimStart();
+				if (!/^\[gd_scene\s/.test(trimmedContent)) {
+					pathError = "TSCN file must start with [gd_scene ...] header";
+				} else if (!/^\[node\s/m.test(trimmedContent)) {
+					pathError = "TSCN file must contain at least one [node ...] section (root node)";
+				}
 			}
 
 			if (pathError) {
@@ -1166,7 +1582,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 				break;
 			}
 
-			const allowedExtensions: Set<string> = new Set([".gd", ".tres", ".json", ".md", ".txt"]);
+			const allowedExtensions: Set<string> = new Set([".gd", ".tres", ".tscn", ".json", ".md", ".txt"]);
 			const ext: string = path.extname(resolvedPath);
 
 			if (!allowedExtensions.has(ext)) {
@@ -1177,6 +1593,28 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 					error: { code: "invalid_extension", message: `Extension not allowed: ${ext}` }
 				});
 				break;
+			}
+
+			// TSCN structure validation for .tscn files
+			if (ext === ".tscn" && request.params.content.length > 0) {
+				const trimmedContent: string = request.params.content.trimStart();
+				if (!/^\[gd_scene\s/.test(trimmedContent)) {
+					sendJson(socket, {
+						type: "response",
+						id: request.id,
+						ok: false,
+						error: { code: "invalid_content", message: "TSCN file must start with [gd_scene ...] header" }
+					});
+					break;
+				} else if (!/^\[node\s/m.test(trimmedContent)) {
+					sendJson(socket, {
+						type: "response",
+						id: request.id,
+						ok: false,
+						error: { code: "invalid_content", message: "TSCN file must contain at least one [node ...] section (root node)" }
+					});
+					break;
+				}
 			}
 
 			try {
@@ -1319,19 +1757,19 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 					break;
 				}
 
+				const pendingContinuation: PendingAiContinuation | undefined = session.pendingAiContinuations.get(request.params.approvalId);
 				const result = await session.approvalGateway.approve(request.params.approvalId, mcpHost);
-
-				// Inject tool result back into session so next ai.chat sees it
-				session.messages.push({
-					role: "system",
-					content: `[工具执行结果] ${pending.llmToolName} 已通过审批并执行完成：\n${result.content.slice(0, 2000)}`
-				});
 
 				sendJson(socket, {
 					type: "response",
 					id: request.id,
 					ok: true,
-					result: { approved: true, approvalId: request.params.approvalId, result }
+					result: {
+						approved: true,
+						approvalId: request.params.approvalId,
+						result,
+						continued: pendingContinuation !== undefined
+					}
 				});
 				sendJson(socket, {
 					type: "event",
@@ -1339,6 +1777,50 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 					event: "tool.approved",
 					data: { approvalId: request.params.approvalId, toolName: pending.llmToolName }
 				});
+				sendJson(socket, {
+					type: "event",
+					id: request.id,
+					event: "tool.result",
+					data: {
+						step: pendingContinuation?.continuation.nextStep ?? 0,
+						toolName: pending.llmToolName,
+						resultChars: result.content.length,
+						truncated: false
+					}
+				});
+
+				if (pendingContinuation === undefined) {
+					session.messages.push({
+						role: "system",
+						content: `[工具执行结果] ${pending.llmToolName} 已通过审批并执行完成：\n${result.content.slice(0, 2000)}`
+					});
+					break;
+				}
+
+				session.pendingAiContinuations.delete(request.params.approvalId);
+				const onToolEvent: OnToolEvent = createToolEventForwarder(socket, request.id);
+				const agentResult: DeepSeekAgentResult = await continueDeepSeekAgent(
+					pendingContinuation.params,
+					pendingContinuation.options,
+					pendingContinuation.continuation,
+					{
+						toolCallId: pending.toolCallId,
+						content: result.content
+					},
+					mcpHost,
+					session.approvalGateway,
+					pendingContinuation.allowedToolNames,
+					onToolEvent
+				);
+
+				await sendContinuedAgentResult(
+					socket,
+					request.id,
+					session,
+					mcpHost,
+					agentResult,
+					pendingContinuation
+				);
 			} catch (error: unknown) {
 				sendJson(socket, {
 					type: "response",
@@ -1490,7 +1972,8 @@ export function createServer(port: number, mcpHost: McpHost): WebSocketServer {
 			messages: [],
 			modelProfile: getDefaultModelProfile(),
 			approvalGateway: new ApprovalGateway(),
-			activeWorkspace: getDefaultWorkspace()
+			activeWorkspace: getDefaultWorkspace(),
+			pendingAiContinuations: new Map()
 		};
 		const remoteAddress: string = request.socket.remoteAddress ?? "unknown";
 		console.log(`Client connected: ${remoteAddress}`);

@@ -51,6 +51,29 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 	z.object({
 		type: z.literal("request"),
 		id: z.string(),
+		method: z.literal("provider.config.get"),
+		params: z.object({}).optional(),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("provider.config.set"),
+		params: z.object({
+			provider: z.literal("deepseek"),
+			apiKey: z.string().optional(),
+			model: z.string().min(1).optional(),
+			baseUrl: z.string().min(1).optional(),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("provider.config.clear"),
+		params: z.object({}).optional(),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
 		method: z.literal("ai.chat"),
 		params: aiChatParamsSchema,
 	}),
@@ -132,6 +155,20 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 			sessionId: z.string().min(1),
 			title: z.string().min(1),
 		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("session.compress"),
+		params: z.object({
+			keepRecent: z.number().int().min(2).max(50).optional(),
+		}).optional(),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("session.summary"),
+		params: z.object({}).optional(),
 	}),
 	z.object({
 		type: z.literal("request"),

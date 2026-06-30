@@ -27,7 +27,8 @@ const READ_TOOLS: string[] = [
 	"mcp_godot_list_scenes",
 	"mcp_godot_list_scripts",
 	"mcp_godot_read_text_file",
-	"mcp_godot_search_text"
+	"mcp_godot_search_text",
+	"mcp_godot_inspect_scene_tree"
 ];
 
 const FILE_CREATE_TOOLS: string[] = [
@@ -54,6 +55,20 @@ const FILE_EDIT_TOOLS: string[] = [
 	"mcp_godot_replace_text_in_file"
 ];
 
+const SCENE_PROPOSE_TOOLS: string[] = [
+	"mcp_godot_propose_create_scene",
+	"mcp_godot_propose_add_node_to_scene",
+	"mcp_godot_propose_attach_script_to_node",
+	"mcp_godot_propose_connect_signal_in_scene"
+];
+
+const SCENE_WRITE_TOOLS: string[] = [
+	"mcp_godot_create_scene",
+	"mcp_godot_add_node_to_scene",
+	"mcp_godot_attach_script_to_node",
+	"mcp_godot_connect_signal_in_scene"
+];
+
 const skills: Record<SkillId, Skill> = {
 	"godot.project_init": {
 		id: "godot.project_init",
@@ -69,7 +84,7 @@ const skills: Record<SkillId, Skill> = {
 		description: "Review GDScript for type safety, Godot lifecycle issues, signals, and style.",
 		promptPath: "src/skills/templates/gdscript-review.md",
 		defaultPromptId: "gdscript.reviewer",
-		allowedTools: [...READ_TOOLS, ...VERIFY_TOOLS]
+		allowedTools: [...READ_TOOLS, ...VERIFY_TOOLS, ...SCENE_PROPOSE_TOOLS, ...SCENE_WRITE_TOOLS]
 	},
 	"scene.builder": {
 		id: "scene.builder",
@@ -77,7 +92,7 @@ const skills: Record<SkillId, Skill> = {
 		description: "Plan Godot scene structures and node responsibilities.",
 		promptPath: "src/skills/templates/scene-builder.md",
 		defaultPromptId: "scene.architect",
-		allowedTools: [...READ_TOOLS, ...VERIFY_TOOLS]
+		allowedTools: [...READ_TOOLS, ...SCENE_PROPOSE_TOOLS, ...SCENE_WRITE_TOOLS, ...FILE_CREATE_TOOLS, ...VERIFY_TOOLS]
 	},
 	"file.creator": {
 		id: "file.creator",

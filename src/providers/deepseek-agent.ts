@@ -2,6 +2,8 @@ import OpenAI from "openai";
 import type {
 	ChatCompletionMessageParam,
 	ChatCompletionMessageToolCall,
+	ChatCompletionTool,
+	ChatCompletionToolMessageParam,
 	ChatCompletionCreateParamsNonStreaming
 } from "openai/resources/chat/completions";
 import type { AiChatParams, ChatMessage } from "../protocol/types.js";
@@ -25,7 +27,24 @@ const FINALIZE_AFTER_TOOL_LIMIT_PROMPT: string =
 
 export type DeepSeekAgentResult =
 	| { status: "completed"; text: string }
-	| { status: "approval_required"; approvalId: string; toolName: string; reason: string };
+	| {
+		status: "approval_required";
+		approvalId: string;
+		toolName: string;
+		reason: string;
+		continuation: DeepSeekAgentContinuation;
+	};
+
+export type DeepSeekAgentContinuation = {
+	messages: ChatCompletionMessageParam[];
+	nextStep: number;
+	totalToolResultChars: number;
+};
+
+export type ApprovedToolResult = {
+	toolCallId: string;
+	content: string;
+};
 
 function estimateTextChars(text: string): number {
 	return text.length;
@@ -77,26 +96,21 @@ async function createFinalAnswer(
 	return text;
 }
 
-export async function runDeepSeekAgent(
+async function runAgentLoop(
+	client: OpenAI,
 	params: AiChatParams,
 	options: DeepSeekChatOptions,
-	history: ChatMessage[],
-	systemPrompt: string,
+	messages: ChatCompletionMessageParam[],
 	mcpHost: McpHost,
 	gateway: ApprovalGateway,
-	allowedToolNames?: readonly string[] | undefined,
+	tools: ChatCompletionTool[],
+	startStep: number,
+	initialToolResultChars: number,
 	onEvent?: OnToolEvent
 ): Promise<DeepSeekAgentResult> {
-	const client: OpenAI = createDeepSeekClient(options);
-	const tools = allowedToolNames !== undefined
-		? getToolDefinitionsForNames(allowedToolNames)
-		: getToolDefinitions();
+	let totalToolResultChars: number = initialToolResultChars;
 
-	const messages: ChatCompletionMessageParam[] = createMessages(params, history, systemPrompt);
-
-	let totalToolResultChars: number = 0;
-
-	for (let step: number = 0; step < MAX_TOOL_STEPS; step += 1) {
+	for (let step: number = startStep; step < MAX_TOOL_STEPS; step += 1) {
 		const requestBody: ChatCompletionCreateParamsNonStreaming = {
 			model: options.model ?? process.env.DEEPSEEK_MODEL ?? DEFAULT_MODEL,
 			messages,
@@ -150,7 +164,12 @@ export async function runDeepSeekAgent(
 					status: "approval_required",
 					approvalId: error.pendingApproval.approvalId,
 					toolName: error.pendingApproval.llmToolName,
-					reason: error.pendingApproval.reason
+					reason: error.pendingApproval.reason,
+					continuation: {
+						messages: [...messages],
+						nextStep: step + 1,
+						totalToolResultChars
+					}
 				};
 			}
 
@@ -187,4 +206,75 @@ export async function runDeepSeekAgent(
 			`工具调用达到最大步数 ${MAX_TOOL_STEPS}，当前工具结果总量为 ${totalToolResultChars} 字符`
 		)
 	};
+}
+
+export async function runDeepSeekAgent(
+	params: AiChatParams,
+	options: DeepSeekChatOptions,
+	history: ChatMessage[],
+	systemPrompt: string,
+	mcpHost: McpHost,
+	gateway: ApprovalGateway,
+	allowedToolNames?: readonly string[] | undefined,
+	onEvent?: OnToolEvent
+): Promise<DeepSeekAgentResult> {
+	const client: OpenAI = createDeepSeekClient(options);
+	const tools = allowedToolNames !== undefined
+		? getToolDefinitionsForNames(allowedToolNames)
+		: getToolDefinitions();
+
+	const messages: ChatCompletionMessageParam[] = createMessages(params, history, systemPrompt);
+
+	return runAgentLoop(client, params, options, messages, mcpHost, gateway, tools, 0, 0, onEvent);
+}
+
+export async function continueDeepSeekAgent(
+	params: AiChatParams,
+	options: DeepSeekChatOptions,
+	continuation: DeepSeekAgentContinuation,
+	approvedToolResult: ApprovedToolResult,
+	mcpHost: McpHost,
+	gateway: ApprovalGateway,
+	allowedToolNames?: readonly string[] | undefined,
+	onEvent?: OnToolEvent
+): Promise<DeepSeekAgentResult> {
+	const client: OpenAI = createDeepSeekClient(options);
+	const tools = allowedToolNames !== undefined
+		? getToolDefinitionsForNames(allowedToolNames)
+		: getToolDefinitions();
+	const messages: ChatCompletionMessageParam[] = [...continuation.messages];
+	const toolMessage: ChatCompletionToolMessageParam = {
+		role: "tool",
+		tool_call_id: approvedToolResult.toolCallId,
+		content: approvedToolResult.content
+	};
+	const totalToolResultChars: number = continuation.totalToolResultChars + estimateTextChars(approvedToolResult.content);
+
+	messages.push(toolMessage);
+
+	if (totalToolResultChars >= MAX_TOTAL_TOOL_RESULT_CHARS) {
+		return {
+			status: "completed",
+			text: await createFinalAnswer(
+				client,
+				params,
+				options,
+				messages,
+				`工具结果总量达到 ${totalToolResultChars} 字符，上限为 ${MAX_TOTAL_TOOL_RESULT_CHARS} 字符`
+			)
+		};
+	}
+
+	return runAgentLoop(
+		client,
+		params,
+		options,
+		messages,
+		mcpHost,
+		gateway,
+		tools,
+		continuation.nextStep,
+		totalToolResultChars,
+		onEvent
+	);
 }

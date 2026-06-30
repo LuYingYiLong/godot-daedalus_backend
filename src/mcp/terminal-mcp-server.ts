@@ -64,6 +64,13 @@ const COMMAND_PRESETS: CommandPreset[] = [
 		command: [GODOT_EXECUTABLE, "--headless", "--disable-crash-handler", "--path", GODOT_PROJECT, "--check-only", "--quit"],
 		workingDirectory: GODOT_PROJECT || BACKEND_DIR,
 		risk: "verify"
+	},
+	{
+		name: "godot.validate_scene",
+		description: "验证指定场景文件的语法正确性 (只读)。运行 Godot headless 检查。",
+		command: [GODOT_EXECUTABLE, "--headless", "--disable-crash-handler", "--path", GODOT_PROJECT, "--check-only", "--quit"],
+		workingDirectory: GODOT_PROJECT || BACKEND_DIR,
+		risk: "verify"
 	}
 ];
 

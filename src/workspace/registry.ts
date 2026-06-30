@@ -1,17 +1,15 @@
-import { readFileSync, existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { getDefaultWorkspaceConfigPath } from "../app-paths.js";
 import type { WorkspaceConfig } from "./types.js";
-
-const DEFAULT_CONFIG_PATH: string = resolve("config/workspaces.json");
 
 let workspaceCache: WorkspaceConfig[] | null = null;
 
-export function loadWorkspaces(configPath?: string): WorkspaceConfig[] {
+export function loadWorkspaces(): WorkspaceConfig[] {
 	if (workspaceCache) {
 		return workspaceCache;
 	}
 
-	const path: string = configPath ?? process.env.WORKSPACES_CONFIG_PATH ?? DEFAULT_CONFIG_PATH;
+	const path: string = getDefaultWorkspaceConfigPath();
 
 	if (!existsSync(path)) {
 		console.warn(`[workspace] Config file not found: ${path}`);
