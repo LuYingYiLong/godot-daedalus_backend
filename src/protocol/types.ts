@@ -12,6 +12,7 @@ export type SkillId = z.infer<typeof skillIdSchema>;
 export type ChatMessage = {
 	role: "system" | "user" | "assistant";
 	content: string;
+	requestId?: string | undefined;
 };
 
 export type ServerResponse =

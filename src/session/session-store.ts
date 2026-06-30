@@ -23,9 +23,18 @@ export type StoredMessage = ChatMessage & {
 	createdAt: string;
 };
 
+export type StoredSessionEvent = {
+	id: string;
+	requestId: string;
+	event: string;
+	data: unknown;
+	createdAt: string;
+};
+
 export type StoredSession = {
 	metadata: SessionMetadata;
 	messages: StoredMessage[];
+	events: StoredSessionEvent[];
 };
 
 export type SessionSummary = {
@@ -72,6 +81,10 @@ function messagesPath(sessionId: string): string {
 	return join(getSessionDir(sessionId), "messages.jsonl");
 }
 
+function eventsPath(sessionId: string): string {
+	return join(getSessionDir(sessionId), "events.jsonl");
+}
+
 export async function createSession(title: string, workspaceId?: string, skillId?: string): Promise<SessionMetadata> {
 	const timestamp: string = new Date().toISOString();
 	const dateStr: string = timestamp.slice(0, 10).replace(/-/g, "");
@@ -89,8 +102,28 @@ export async function createSession(title: string, workspaceId?: string, skillId
 	const dir: string = await createSessionDir(id);
 	await writeFile(join(dir, "metadata.json"), JSON.stringify(metadata, null, 2), "utf8");
 	await writeFile(join(dir, "messages.jsonl"), "", "utf8");
+	await writeFile(join(dir, "events.jsonl"), "", "utf8");
 
 	return metadata;
+}
+
+function parseJsonLines<T>(rawLines: string): T[] {
+	const items: T[] = [];
+
+	for (const line of rawLines.split("\n")) {
+		const trimmed: string = line.trim();
+		if (trimmed.length === 0) {
+			continue;
+		}
+
+		try {
+			items.push(JSON.parse(trimmed) as T);
+		} catch {
+			// Skip corrupted lines
+		}
+	}
+
+	return items;
 }
 
 export async function openSession(sessionId: string): Promise<StoredSession> {
@@ -107,28 +140,25 @@ export async function openSession(sessionId: string): Promise<StoredSession> {
 		throw new Error(`Session not found: ${sessionId}`);
 	}
 
-	const messages: StoredMessage[] = [];
+	let messages: StoredMessage[] = [];
 
 	try {
 		const rawLines: string = await readFile(msgFile, "utf8");
-
-		for (const line of rawLines.split("\n")) {
-			const trimmed: string = line.trim();
-			if (trimmed.length === 0) {
-				continue;
-			}
-
-			try {
-				messages.push(JSON.parse(trimmed) as StoredMessage);
-			} catch {
-				// Skip corrupted lines
-			}
-		}
+		messages = parseJsonLines<StoredMessage>(rawLines);
 	} catch {
 		// No messages yet
 	}
 
-	return { metadata, messages };
+	let events: StoredSessionEvent[] = [];
+
+	try {
+		const rawLines: string = await readFile(eventsPath(sessionId), "utf8");
+		events = parseJsonLines<StoredSessionEvent>(rawLines);
+	} catch {
+		// No timeline events yet
+	}
+
+	return { metadata, messages, events };
 }
 
 export async function saveSession(sessionId: string, messages: ChatMessage[], metadata?: Partial<SessionMetadata>): Promise<void> {
@@ -158,6 +188,26 @@ export async function appendMessage(sessionId: string, message: ChatMessage): Pr
 	const msgFile: string = messagesPath(sessionId);
 	const line: string = JSON.stringify({ ...message, createdAt: new Date().toISOString() }) + "\n";
 	await writeFile(msgFile, line, { encoding: "utf8", flag: "a" });
+}
+
+export async function appendSessionEvent(sessionId: string, requestId: string, event: string, data: unknown): Promise<void> {
+	await ensureSessionsDir();
+	const eventFile: string = eventsPath(sessionId);
+	const timestamp: string = new Date().toISOString();
+	const record: StoredSessionEvent = {
+		id: `event-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+		requestId,
+		event,
+		data,
+		createdAt: timestamp
+	};
+	const line: string = JSON.stringify(record) + "\n";
+	await writeFile(eventFile, line, { encoding: "utf8", flag: "a" });
+}
+
+export async function clearSessionEvents(sessionId: string): Promise<void> {
+	await ensureSessionsDir();
+	await writeFile(eventsPath(sessionId), "", "utf8");
 }
 
 export async function listSessions(): Promise<SessionMetadata[]> {

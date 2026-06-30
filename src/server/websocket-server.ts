@@ -1,10 +1,12 @@
 import WebSocket, { WebSocketServer } from "ws";
 import { composeSystemPrompt, listPromptTemplates } from "../prompts/registry.js";
 import { clientRequestSchema } from "../protocol/schema.js";
-import type { AiChatParams, ChatMessage, ClientRequest, ModelProfile } from "../protocol/types.js";
+import type { AiChatParams, ChatMessage, ClientRequest, ModelProfile, ServerEvent } from "../protocol/types.js";
 import {
 	continueDeepSeekAgent,
+	continueDeepSeekAgentStreaming,
 	runDeepSeekAgent,
+	runDeepSeekAgentStreaming,
 	type DeepSeekAgentContinuation,
 	type DeepSeekAgentResult
 } from "../providers/deepseek-agent.js";
@@ -33,6 +35,7 @@ import {
 	createSession, openSession, saveSession, listSessions,
 	deleteSession, renameSession,
 	readSummary, writeSummary,
+	appendSessionEvent, clearSessionEvents,
 	type SessionMetadata,
 	type SessionSummary
 } from "../session/session-store.js";
@@ -46,9 +49,22 @@ import {
 } from "../providers/provider-config-store.js";
 
 const tokenCounterPromise: Promise<TokenCounter> = createTokenCounter();
+let sessionCompressorPromptCache: string | undefined;
 
 async function getTokenCounter(): Promise<TokenCounter> {
 	return tokenCounterPromise;
+}
+
+async function loadSessionCompressorPrompt(): Promise<string> {
+	if (sessionCompressorPromptCache !== undefined) {
+		return sessionCompressorPromptCache;
+	}
+
+	const promptPath: string = path.resolve(process.cwd(), "src/prompts/templates/session-compressor.md");
+	const content: string = await fs.readFile(promptPath, "utf8");
+	const trimmedContent: string = content.trim();
+	sessionCompressorPromptCache = trimmedContent;
+	return trimmedContent;
 }
 
 type ClientSession = {
@@ -75,6 +91,7 @@ type PendingAiContinuation = {
 	continuation: DeepSeekAgentContinuation;
 	allowedToolNames?: readonly string[] | undefined;
 	userMessage: string;
+	stream: boolean;
 };
 
 type SlashCommandResult =
@@ -139,12 +156,13 @@ async function appendChatTurnToSession(
 	session: ClientSession,
 	_history: ChatMessage[],
 	userMessage: string,
-	assistantMessage: string
+	assistantMessage: string,
+	requestId: string
 ): Promise<void> {
 	const nextMessages: ChatMessage[] = [
 		...session.messages,
-		{ role: "user", content: userMessage },
-		{ role: "assistant", content: assistantMessage }
+		{ role: "user", content: userMessage, requestId },
+		{ role: "assistant", content: assistantMessage, requestId }
 	];
 	session.messages = nextMessages;
 }
@@ -190,14 +208,30 @@ function createDeepSeekChatOptions(session: ClientSession, apiKey: string): Deep
 	return options;
 }
 
-function createToolEventForwarder(socket: WebSocket, requestId: string): OnToolEvent {
+function shouldPersistSessionEvent(eventName: ServerEvent["event"]): boolean {
+	return eventName.startsWith("tool.") || eventName.startsWith("ai.thinking.");
+}
+
+function sendSessionEvent(socket: WebSocket, requestId: string, session: ClientSession, eventName: ServerEvent["event"], data: unknown): void {
+	sendJson(socket, {
+		type: "event",
+		id: requestId,
+		event: eventName,
+		data
+	});
+
+	if (!session.sessionId || !shouldPersistSessionEvent(eventName)) {
+		return;
+	}
+
+	appendSessionEvent(session.sessionId, requestId, eventName, data).catch((error: unknown): void => {
+		console.error("Failed to persist session event:", error);
+	});
+}
+
+function createToolEventForwarder(socket: WebSocket, requestId: string, session: ClientSession): OnToolEvent {
 	return (event): void => {
-		sendJson(socket, {
-			type: "event",
-			id: requestId,
-			event: event.type,
-			data: event
-		});
+		sendSessionEvent(socket, requestId, session, event.type, event);
 	};
 }
 
@@ -206,13 +240,15 @@ function createPendingAiContinuation(
 	options: DeepSeekChatOptions,
 	continuation: DeepSeekAgentContinuation,
 	allowedToolNames: readonly string[] | undefined,
-	userMessage: string
+	userMessage: string,
+	stream: boolean
 ): PendingAiContinuation {
 	const pendingContinuation: PendingAiContinuation = {
 		params,
 		options,
 		continuation,
-		userMessage
+		userMessage,
+		stream
 	};
 
 	if (allowedToolNames !== undefined) {
@@ -251,7 +287,8 @@ async function sendContinuedAgentResult(
 			pendingContinuation.options,
 			agentResult.continuation,
 			pendingContinuation.allowedToolNames,
-			pendingContinuation.userMessage
+			pendingContinuation.userMessage,
+			pendingContinuation.stream
 		);
 		session.pendingAiContinuations.set(agentResult.approvalId, nextPendingContinuation);
 		sendAiPaused(socket, requestId, agentResult);
@@ -260,16 +297,18 @@ async function sendContinuedAgentResult(
 
 	const text: string = agentResult.text;
 
-	for (let index: number = 0; index < text.length; index += 1) {
-		sendJson(socket, {
-			type: "event",
-			id: requestId,
-			event: "ai.delta",
-			data: { text: text[index] }
-		});
+	if (!pendingContinuation.stream) {
+		for (let index: number = 0; index < text.length; index += 1) {
+			sendJson(socket, {
+				type: "event",
+				id: requestId,
+				event: "ai.delta",
+				data: { text: text[index] }
+			});
+		}
 	}
 
-	await appendChatTurnToSession(session, [], pendingContinuation.userMessage, text);
+	await appendChatTurnToSession(session, [], pendingContinuation.userMessage, text, requestId);
 	sendJson(socket, {
 		type: "event",
 		id: requestId,
@@ -541,6 +580,13 @@ async function handleSlashCommand(
 	return { type: "handled" };
 }
 
+function createSafeMarkdownFence(content: string, language: string = "text"): string {
+	const backtickRuns: RegExpMatchArray | null = content.match(/`+/g);
+	const longestRun: number = backtickRuns?.reduce((maxLength: number, run: string): number => Math.max(maxLength, run.length), 0) ?? 0;
+	const fence: string = "`".repeat(Math.max(3, longestRun + 1));
+	return `${fence}${language}\n${content}\n${fence}`;
+}
+
 async function createMcpSystemContext(mcpHost: McpHost, session: ClientSession): Promise<string> {
 	const serverIds: string[] = mcpHost.getConnectedServerIds();
 	const sections: string[] = [];
@@ -588,7 +634,7 @@ async function createMcpSystemContext(mcpHost: McpHost, session: ClientSession):
 					sections.push("## 项目指令文件");
 					sections.push(`以下内容来自项目根目录的 \`${fileName}\`，是可信的项目级规范。其中规则优先于本提示词的默认规范：`);
 					sections.push("");
-					sections.push(firstContent.text);
+					sections.push(createSafeMarkdownFence(firstContent.text));
 					sections.push("");
 				}
 				break; // Only read the first one found
@@ -641,9 +687,7 @@ async function createMcpSystemContext(mcpHost: McpHost, session: ClientSession):
 						const projectContent = projectResource.contents[0];
 						if (projectContent !== undefined && "text" in projectContent) {
 							sections.push("当前 Godot 项目摘要：");
-							sections.push("```json");
-							sections.push(projectContent.text);
-							sections.push("```");
+							sections.push(createSafeMarkdownFence(projectContent.text, "json"));
 						}
 					} catch (error: unknown) {
 						const message: string = error instanceof Error ? error.message : "unknown error";
@@ -844,10 +888,10 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 				);
 				const history: ChatMessage[] = await selectHistoryForModel(session, historyBudgetTokens);
 
-				const onToolEvent: OnToolEvent = createToolEventForwarder(socket, request.id);
+				const onToolEvent: OnToolEvent = createToolEventForwarder(socket, request.id, session);
 
 				if (params.options?.stream === true) {
-					const agentResult: DeepSeekAgentResult = await runDeepSeekAgent(params, options, history, fullSystemPrompt, mcpHost, session.approvalGateway, allowedToolNames, onToolEvent);
+					const agentResult: DeepSeekAgentResult = await runDeepSeekAgentStreaming(params, options, history, fullSystemPrompt, mcpHost, session.approvalGateway, allowedToolNames, onToolEvent);
 
 					if (agentResult.status === "approval_required") {
 						session.pendingAiContinuations.set(agentResult.approvalId, createPendingAiContinuation(
@@ -855,7 +899,8 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 							options,
 							agentResult.continuation,
 							allowedToolNames,
-							params.message
+							params.message,
+							true
 						));
 						sendAiPaused(socket, request.id, agentResult);
 						break;
@@ -863,16 +908,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 
 					const text: string = agentResult.text;
 
-					for (let index: number = 0; index < text.length; index += 1) {
-						sendJson(socket, {
-							type: "event",
-							id: request.id,
-							event: "ai.delta",
-							data: { text: text[index] }
-						});
-					}
-
-					await appendChatTurnToSession(session, history, params.message, text);
+					await appendChatTurnToSession(session, history, params.message, text, request.id);
 					sendJson(socket, {
 						type: "event",
 						id: request.id,
@@ -896,7 +932,8 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 							options,
 							agentResult.continuation,
 							allowedToolNames,
-							params.message
+							params.message,
+							false
 						));
 						sendJson(socket, {
 							type: "response",
@@ -914,7 +951,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 					}
 
 					const text: string = agentResult.text;
-					await appendChatTurnToSession(session, history, params.message, text);
+					await appendChatTurnToSession(session, history, params.message, text, request.id);
 
 					sendJson(socket, {
 						type: "response",
@@ -984,6 +1021,9 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 			session.messages = [];
 			session.summaryMessage = undefined;
 			session.summaryCoveredMessageCount = undefined;
+			if (session.sessionId) {
+				await clearSessionEvents(session.sessionId);
+			}
 			sendJson(socket, {
 				type: "response",
 				id: request.id,
@@ -1113,7 +1153,13 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 
 				session.sessionId = stored.metadata.id;
 				session.sessionTitle = stored.metadata.title;
-				session.messages = stored.messages.map((message) => ({ role: message.role, content: message.content }));
+				session.messages = stored.messages.map((message) => {
+					const chatMessage: ChatMessage = { role: message.role, content: message.content };
+					if (message.requestId !== undefined) {
+						chatMessage.requestId = message.requestId;
+					}
+					return chatMessage;
+				});
 
 				const summary = await readSummary(request.params.sessionId);
 				session.summaryMessage = summary !== null ? createSummaryMessage(summary) : undefined;
@@ -1140,7 +1186,8 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 						opened: true,
 						metadata: stored.metadata,
 						messageCount: stored.messages.length,
-						messages: session.messages
+						messages: session.messages,
+						events: stored.events
 					}
 				});
 			} catch (error: unknown) {
@@ -1261,12 +1308,13 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 					.join("\n");
 
 				const client = createDeepSeekClient(createDeepSeekChatOptions(session, apiKey));
+				const compressorPrompt: string = await loadSessionCompressorPrompt();
 				const completion = await client.chat.completions.create({
 					model: session.deepseekModel ?? "deepseek-v4-flash",
 					messages: [
 						{
 							role: "system",
-							content: "你是一个会话摘要助手。请用 200-500 字中文总结以下对话的关键信息：用户做了什么、AI 做了什么、达成了什么结果、有哪些待办事项。只输出摘要，不要加前缀。"
+							content: compressorPrompt
 						},
 						{ role: "user", content: conversationText }
 					],
@@ -1777,23 +1825,18 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 						continued: pendingContinuation !== undefined
 					}
 				});
-				sendJson(socket, {
-					type: "event",
-					id: request.id,
-					event: "tool.approved",
-					data: { approvalId: request.params.approvalId, toolName: pending.llmToolName }
+				sendSessionEvent(socket, request.id, session, "tool.approved", {
+					type: "tool.approved",
+					approvalId: request.params.approvalId,
+					toolName: pending.llmToolName
 				});
-				sendJson(socket, {
-					type: "event",
-					id: request.id,
-					event: "tool.result",
-					data: {
-						step: pendingContinuation?.continuation.nextStep ?? 0,
-						toolCallId: pending.toolCallId,
-						toolName: pending.llmToolName,
-						resultChars: result.content.length,
-						truncated: false
-					}
+				sendSessionEvent(socket, request.id, session, "tool.result", {
+					type: "tool.result",
+					step: pendingContinuation?.continuation.nextStep ?? 0,
+					toolCallId: pending.toolCallId,
+					toolName: pending.llmToolName,
+					resultChars: result.content.length,
+					truncated: false
 				});
 
 				if (pendingContinuation === undefined) {
@@ -1805,20 +1848,34 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 				}
 
 				session.pendingAiContinuations.delete(request.params.approvalId);
-				const onToolEvent: OnToolEvent = createToolEventForwarder(socket, request.id);
-				const agentResult: DeepSeekAgentResult = await continueDeepSeekAgent(
-					pendingContinuation.params,
-					pendingContinuation.options,
-					pendingContinuation.continuation,
-					{
-						toolCallId: pending.toolCallId,
-						content: result.content
-					},
-					mcpHost,
-					session.approvalGateway,
-					pendingContinuation.allowedToolNames,
-					onToolEvent
-				);
+				const onToolEvent: OnToolEvent = createToolEventForwarder(socket, request.id, session);
+				const agentResult: DeepSeekAgentResult = pendingContinuation.stream
+					? await continueDeepSeekAgentStreaming(
+						pendingContinuation.params,
+						pendingContinuation.options,
+						pendingContinuation.continuation,
+						{
+							toolCallId: pending.toolCallId,
+							content: result.content
+						},
+						mcpHost,
+						session.approvalGateway,
+						pendingContinuation.allowedToolNames,
+						onToolEvent
+					)
+					: await continueDeepSeekAgent(
+						pendingContinuation.params,
+						pendingContinuation.options,
+						pendingContinuation.continuation,
+						{
+							toolCallId: pending.toolCallId,
+							content: result.content
+						},
+						mcpHost,
+						session.approvalGateway,
+						pendingContinuation.allowedToolNames,
+						onToolEvent
+					);
 
 				await sendContinuedAgentResult(
 					socket,
@@ -1851,11 +1908,10 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 					ok: true,
 					result: { rejected: true, approvalId: request.params.approvalId, toolName: rejected.llmToolName }
 				});
-				sendJson(socket, {
-					type: "event",
-					id: request.id,
-					event: "tool.rejected",
-					data: { approvalId: request.params.approvalId, toolName: rejected.llmToolName }
+				sendSessionEvent(socket, request.id, session, "tool.rejected", {
+					type: "tool.rejected",
+					approvalId: request.params.approvalId,
+					toolName: rejected.llmToolName
 				});
 			} catch (error: unknown) {
 				sendJson(socket, {
