@@ -168,6 +168,48 @@ function asJsonTextResult(value: unknown): { content: Array<{ type: "text"; text
 	};
 }
 
+function parseJsonObjectsFromOutput(output: string): unknown[] {
+	const lines: string[] = output
+		.split(/\r?\n/)
+		.map((line: string): string => line.trim())
+		.filter((line: string): boolean => line.startsWith("{") && line.endsWith("}"));
+	const values: unknown[] = [];
+
+	for (const line of lines) {
+		try {
+			values.push(JSON.parse(line));
+		} catch {
+			continue;
+		}
+	}
+
+	return values;
+}
+
+function selectGodotOperationResult(values: unknown[]): unknown {
+	const objectValues: Array<Record<string, unknown>> = values.filter(
+		(value: unknown): value is Record<string, unknown> =>
+			typeof value === "object" && value !== null && !Array.isArray(value)
+	);
+
+	const changedValue: Record<string, unknown> | undefined = objectValues.find(
+		(value: Record<string, unknown>): boolean =>
+			value.ok === true && (value.created === true || value.modified === true)
+	);
+	if (changedValue !== undefined) {
+		return changedValue;
+	}
+
+	const okValue: Record<string, unknown> | undefined = objectValues.find(
+		(value: Record<string, unknown>): boolean => value.ok === true
+	);
+	if (okValue !== undefined) {
+		return okValue;
+	}
+
+	return objectValues.at(-1) ?? null;
+}
+
 function isPathInsideRoot(candidatePath: string, rootPath: string): boolean {
 	const relativePath: string = path.relative(rootPath, candidatePath);
 	return relativePath.length === 0 || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath));
@@ -306,6 +348,67 @@ async function main(): Promise<void> {
 				stderr: result.stderr,
 				durationMs: result.durationMs,
 				truncated: result.truncated
+			});
+		}
+	);
+
+	server.registerTool(
+		"run_godot_scene_script",
+		{
+			title: "Run Godot Scene Script",
+			description: "通过 Godot headless 模式调用 scene_operator.gd 执行场景操作（创建场景、添加节点、挂载脚本、连接信号、查看场景树）。操作通过审批后实际写入磁盘。接受的 operation JSON 格式示例：{\"operation\":\"create_scene\",\"path\":\"scenes/foo.tscn\",\"root_type\":\"Node2D\",\"root_name\":\"Main\"}。支持的操作：create_scene、add_node、attach_script、connect_signal、inspect。",
+			inputSchema: z.object({
+				operationJson: z.string().min(1).describe("JSON 格式的场景操作，包含 operation 字段和对应参数")
+			})
+		},
+		async ({ operationJson }) => {
+			let parsed: unknown;
+			try {
+				parsed = JSON.parse(operationJson);
+			} catch {
+				return asJsonTextResult({ ok: false, error: "Invalid JSON: operationJson must be valid JSON" });
+			}
+
+			if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+				return asJsonTextResult({ ok: false, error: "operationJson must be a JSON object" });
+			}
+
+			const op = parsed as Record<string, unknown>;
+			if (typeof op.operation !== "string" || op.operation.length === 0) {
+				return asJsonTextResult({ ok: false, error: "Missing required field: operation" });
+			}
+
+			const scriptPath: string = "res://addons/godot_daedalus/tools/scene_operator.gd";
+			const command: string[] = [
+				GODOT_EXECUTABLE,
+				"--headless",
+				"--disable-crash-handler",
+				"--path", GODOT_PROJECT,
+				"--script", scriptPath,
+				"--", operationJson
+			];
+
+			const cwd: string = GODOT_PROJECT.length > 0 ? path.resolve(GODOT_PROJECT) : BACKEND_DIR;
+
+			if (!isPathInsideRoot(cwd, ALLOWED_WORKING_ROOTS[0] ?? BACKEND_DIR) && !(ALLOWED_WORKING_ROOTS.length > 1 && isPathInsideRoot(cwd, ALLOWED_WORKING_ROOTS[1]!))) {
+				return asJsonTextResult({ ok: false, error: "Godot project path is outside allowed roots" });
+			}
+
+			const result = await runCommand(command, cwd);
+
+			// Godot may print banners or warnings before/after the script result.
+			const parsedEvents: unknown[] = parseJsonObjectsFromOutput(result.stdout);
+			const parsedOutput: unknown = selectGodotOperationResult(parsedEvents);
+
+			return asJsonTextResult({
+				ok: result.exitCode === 0 && parsedOutput !== null && typeof parsedOutput === "object" && (parsedOutput as Record<string, unknown>).ok === true,
+				exitCode: result.exitCode,
+				stdout: result.stdout,
+				stderr: result.stderr,
+				durationMs: result.durationMs,
+				truncated: result.truncated,
+				parsed: parsedOutput,
+				parsedEvents
 			});
 		}
 	);

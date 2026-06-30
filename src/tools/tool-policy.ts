@@ -29,9 +29,12 @@ const TOOL_POLICIES: Record<string, ToolPolicy> = {
 	"mcp_godot_attach_script_to_node": { risk: "write" },
 	"mcp_godot_propose_connect_signal_in_scene": { risk: "propose" },
 	"mcp_godot_connect_signal_in_scene": { risk: "write" },
+	"mcp_godot_propose_apply_scene_patch": { risk: "propose" },
+	"mcp_godot_apply_scene_patch": { risk: "write" },
 	"mcp_terminal_get_capabilities": { risk: "read" },
 	"mcp_terminal_run_safe_preset": { risk: "verify" },
 	"mcp_terminal_run_write_preset": { risk: "write" },
+	"mcp_terminal_run_godot_scene_script": { risk: "write" },
 };
 
 export function getToolPolicy(toolName: string): ToolPolicy | undefined {

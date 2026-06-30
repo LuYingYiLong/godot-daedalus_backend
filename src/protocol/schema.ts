@@ -27,6 +27,7 @@ export const aiChatParamsSchema = z.object({
 		stop: z.union([z.string(), z.array(z.string())]).optional(),
 		responseFormat: z.union([z.literal("text"), z.literal("json")]).optional(),
 		stream: z.boolean().optional(),
+		toolBudget: z.enum(["simple", "normal", "codegen", "project_edit"]).optional(),
 	}).optional()
 });
 

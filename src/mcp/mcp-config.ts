@@ -3,12 +3,25 @@ import { getDefaultWorkspace } from "../workspace/registry.js";
 import type { WorkspaceConfig } from "../workspace/types.js";
 
 const defaultWs = getDefaultWorkspace();
-const DEFAULT_GODOT_PROJECT_PATH: string = process.env.GODOT_PROJECT_PATH ?? defaultWs?.rootPath ?? "D:\\GodotProjects\\example";
-const DEFAULT_GODOT_EXECUTABLE_PATH: string = process.env.GODOT_EXECUTABLE_PATH ?? defaultWs?.godotExecutablePath ?? "D:\\Godot_v4.7-stable_win64.exe\\Godot_v4.7-stable_win64.exe";
+const DEFAULT_GODOT_PROJECT_PATH: string | undefined = process.env.GODOT_PROJECT_PATH ?? defaultWs?.rootPath;
+const DEFAULT_GODOT_EXECUTABLE_PATH: string | undefined = process.env.GODOT_EXECUTABLE_PATH ?? defaultWs?.godotExecutablePath;
 
 export function buildMcpServerConfigs(workspace?: WorkspaceConfig): McpServerConfig[] {
-	const projectPath: string = workspace?.rootPath ?? DEFAULT_GODOT_PROJECT_PATH;
-	const godotPath: string = workspace?.godotExecutablePath ?? DEFAULT_GODOT_EXECUTABLE_PATH;
+	const projectPath: string | undefined = workspace?.rootPath ?? DEFAULT_GODOT_PROJECT_PATH;
+	const godotPath: string | undefined = workspace?.godotExecutablePath ?? DEFAULT_GODOT_EXECUTABLE_PATH;
+
+	if (!projectPath) {
+		return [];
+	}
+
+	const terminalEnv: Record<string, string> = {
+		BACKEND_DIR: process.cwd(),
+		GODOT_PROJECT_PATH: projectPath
+	};
+
+	if (godotPath) {
+		terminalEnv.GODOT_EXECUTABLE_PATH = godotPath;
+	}
 
 	return [
 		{
@@ -25,11 +38,7 @@ export function buildMcpServerConfigs(workspace?: WorkspaceConfig): McpServerCon
 			name: "Terminal MCP",
 			command: "npx",
 			args: ["tsx", "src/mcp/terminal-mcp-server.ts"],
-			env: {
-				BACKEND_DIR: process.cwd(),
-				GODOT_EXECUTABLE_PATH: godotPath,
-				GODOT_PROJECT_PATH: projectPath
-			}
+			env: terminalEnv
 		}
 	];
 }

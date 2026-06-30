@@ -21,7 +21,13 @@ import { computeInputBudget, selectMessagesWithinBudget } from "../session/sessi
 import { ApprovalGateway } from "../tools/approval-gateway.js";
 import { composeSkillPrompt, getSkill, isSkillId, listSkills } from "../skills/registry.js";
 import type { SkillId } from "../skills/registry.js";
-import { loadWorkspaces, findWorkspace, getDefaultWorkspace } from "../workspace/registry.js";
+import {
+	createRuntimeWorkspace,
+	loadWorkspaces,
+	findWorkspace,
+	getDefaultWorkspace,
+	upsertRuntimeWorkspace
+} from "../workspace/registry.js";
 import type { WorkspaceConfig } from "../workspace/types.js";
 import {
 	createSession, openSession, saveSession, listSessions,
@@ -1783,6 +1789,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 					event: "tool.result",
 					data: {
 						step: pendingContinuation?.continuation.nextStep ?? 0,
+						toolCallId: pending.toolCallId,
 						toolName: pending.llmToolName,
 						resultChars: result.content.length,
 						truncated: false
@@ -1873,6 +1880,31 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 				session.godotProjectPath = request.params.godotProjectPath;
 			}
 
+			if (session.godotProjectPath) {
+				const workspace: WorkspaceConfig = upsertRuntimeWorkspace(createRuntimeWorkspace(
+					session.godotProjectPath,
+					session.godotExecutablePath
+				));
+
+				try {
+					await mcpHost.switchWorkspace(workspace);
+					session.activeWorkspace = workspace;
+					session.godotProjectPath = workspace.rootPath;
+					session.godotExecutablePath = workspace.godotExecutablePath ?? session.godotExecutablePath;
+				} catch (error: unknown) {
+					sendJson(socket, {
+						type: "response",
+						id: request.id,
+						ok: false,
+						error: {
+							code: "workspace_switch_failed",
+							message: error instanceof Error ? error.message : "Failed to configure runtime workspace"
+						}
+					});
+					break;
+				}
+			}
+
 			sendJson(socket, {
 				type: "response",
 				id: request.id,
@@ -1880,7 +1912,8 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 				result: {
 					configured: true,
 					godotExecutablePath: session.godotExecutablePath ?? null,
-					godotProjectPath: session.godotProjectPath ?? null
+					godotProjectPath: session.godotProjectPath ?? null,
+					workspace: session.activeWorkspace ?? null
 				}
 			});
 			break;
@@ -1892,7 +1925,8 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 				ok: true,
 				result: {
 					workspaces: loadWorkspaces(),
-					active: session.activeWorkspace?.id ?? null
+					active: session.activeWorkspace?.id ?? mcpHost.getActiveWorkspaceId() ?? null,
+					connected: mcpHost.getConnectedWorkspaceIds()
 				}
 			});
 			break;

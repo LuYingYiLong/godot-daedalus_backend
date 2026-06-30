@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import type {
 	ChatCompletionMessageParam,
 	ChatCompletionMessageToolCall,
+	ChatCompletionMessageFunctionToolCall,
 	ChatCompletionTool,
 	ChatCompletionToolMessageParam,
 	ChatCompletionCreateParamsNonStreaming
@@ -14,7 +15,7 @@ import {
 	type DeepSeekChatOptions
 } from "../providers/deepseek-client.js";
 import type { McpHost } from "../mcp/mcp-host.js";
-import { getToolDefinitions, getToolDefinitionsForNames, MAX_TOOL_STEPS, MAX_TOTAL_TOOL_RESULT_CHARS } from "../tools/llm-tools.js";
+import { getToolDefinitions, getToolDefinitionsForNames, DEFAULT_TOOL_STEPS, resolveToolBudget, MAX_TOTAL_TOOL_RESULT_CHARS } from "../tools/llm-tools.js";
 import { dispatchToolCalls, ToolApprovalRequiredError, type OnToolEvent } from "../tools/tool-dispatcher.js";
 import { ApprovalGateway } from "../tools/approval-gateway.js";
 import { containsDsmlToolCalls, parseDsmlToolCalls, stripDsmlToolCalls } from "./deepseek-dsml-tools.js";
@@ -65,6 +66,28 @@ function extractTextContent(content: ChatCompletionMessageParam["content"]): str
 	return "";
 }
 
+function isFunctionToolCall(toolCall: ChatCompletionMessageToolCall): toolCall is ChatCompletionMessageFunctionToolCall {
+	return toolCall.type === "function";
+}
+
+function createDsmlLeakFallback(text: string, reason: string): string {
+	const strippedText: string = stripDsmlToolCalls(text);
+	const parsedToolCalls: ChatCompletionMessageToolCall[] = parseDsmlToolCalls(text, "blocked-dsml");
+	const toolNames: string[] = parsedToolCalls
+		.filter(isFunctionToolCall)
+		.map((toolCall: ChatCompletionMessageFunctionToolCall): string => toolCall.function.name);
+	const toolText: string = toolNames.length > 0 ? `\n\n模型还尝试调用工具：${toolNames.map((name: string): string => `\`${name}\``).join(", ")}。` : "";
+	const prefix: string = strippedText.length > 0 ? `${strippedText}\n\n` : "";
+
+	return [
+		prefix.trimEnd(),
+		"工具调用没有继续执行，因为当前回复已经进入收束阶段。",
+		`原因：${reason}`,
+		"我已隐藏模型输出中的 DSML 工具调用文本，避免把内部工具协议直接显示给你。",
+		toolText.trim()
+	].filter((part: string): boolean => part.length > 0).join("\n");
+}
+
 async function createFinalAnswer(
 	client: OpenAI,
 	params: AiChatParams,
@@ -93,6 +116,10 @@ async function createFinalAnswer(
 		throw new Error("LLM returned empty final response after tool limit");
 	}
 
+	if (containsDsmlToolCalls(text)) {
+		return createDsmlLeakFallback(text, reason);
+	}
+
 	return text;
 }
 
@@ -105,12 +132,13 @@ async function runAgentLoop(
 	gateway: ApprovalGateway,
 	tools: ChatCompletionTool[],
 	startStep: number,
+	maxSteps: number,
 	initialToolResultChars: number,
 	onEvent?: OnToolEvent
 ): Promise<DeepSeekAgentResult> {
 	let totalToolResultChars: number = initialToolResultChars;
 
-	for (let step: number = startStep; step < MAX_TOOL_STEPS; step += 1) {
+	for (let step: number = startStep; step < maxSteps; step += 1) {
 		const requestBody: ChatCompletionCreateParamsNonStreaming = {
 			model: options.model ?? process.env.DEEPSEEK_MODEL ?? DEFAULT_MODEL,
 			messages,
@@ -160,13 +188,26 @@ async function runAgentLoop(
 			toolResults = await dispatchToolCalls(mcpHost, toolCalls, step, gateway, onEvent);
 		} catch (error: unknown) {
 			if (error instanceof ToolApprovalRequiredError) {
+				const pendingToolCall: ChatCompletionMessageToolCall | undefined = toolCalls.find(
+					(toolCall: ChatCompletionMessageToolCall): boolean => toolCall.id === error.pendingApproval.toolCallId
+				);
+				const continuationMessages: ChatCompletionMessageParam[] = [...messages];
+
+				if (pendingToolCall !== undefined) {
+					continuationMessages[continuationMessages.length - 1] = {
+						role: "assistant",
+						content: containsDsmlToolCalls(contentText) ? stripDsmlToolCalls(contentText ?? "") : contentText,
+						tool_calls: [pendingToolCall]
+					} as ChatCompletionMessageParam;
+				}
+
 				return {
 					status: "approval_required",
 					approvalId: error.pendingApproval.approvalId,
 					toolName: error.pendingApproval.llmToolName,
 					reason: error.pendingApproval.reason,
 					continuation: {
-						messages: [...messages],
+						messages: continuationMessages,
 						nextStep: step + 1,
 						totalToolResultChars
 					}
@@ -203,7 +244,7 @@ async function runAgentLoop(
 			params,
 			options,
 			messages,
-			`工具调用达到最大步数 ${MAX_TOOL_STEPS}，当前工具结果总量为 ${totalToolResultChars} 字符`
+			`工具调用达到最大步数 ${maxSteps}，当前工具结果总量为 ${totalToolResultChars} 字符`
 		)
 	};
 }
@@ -223,9 +264,14 @@ export async function runDeepSeekAgent(
 		? getToolDefinitionsForNames(allowedToolNames)
 		: getToolDefinitions();
 
+	const maxSteps: number = resolveToolBudget(
+		(params.options as Record<string, unknown> | undefined)?.["toolBudget"] as string | undefined,
+		params.skillId
+	);
+
 	const messages: ChatCompletionMessageParam[] = createMessages(params, history, systemPrompt);
 
-	return runAgentLoop(client, params, options, messages, mcpHost, gateway, tools, 0, 0, onEvent);
+	return runAgentLoop(client, params, options, messages, mcpHost, gateway, tools, 0, maxSteps, 0, onEvent);
 }
 
 export async function continueDeepSeekAgent(
@@ -265,6 +311,11 @@ export async function continueDeepSeekAgent(
 		};
 	}
 
+	const maxSteps: number = resolveToolBudget(
+		(params.options as Record<string, unknown> | undefined)?.["toolBudget"] as string | undefined,
+		params.skillId
+	);
+
 	return runAgentLoop(
 		client,
 		params,
@@ -274,6 +325,7 @@ export async function continueDeepSeekAgent(
 		gateway,
 		tools,
 		continuation.nextStep,
+		maxSteps,
 		totalToolResultChars,
 		onEvent
 	);

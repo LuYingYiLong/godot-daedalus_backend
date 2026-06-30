@@ -2,12 +2,13 @@ import type { ChatCompletionMessageToolCall, ChatCompletionToolMessageParam } fr
 import type { McpHost } from "../mcp/mcp-host.js";
 import { MAX_TOOL_RESULT_CHARS, resolveToolMapping } from "./llm-tools.js";
 import { type ApprovalGateway, type PendingApproval } from "./approval-gateway.js";
+import { describeToolEvent, type ToolEventDisplay } from "./tool-event-describer.js";
 
 export type ToolEvent =
-	| { type: "tool.call"; step: number; toolName: string; args: Record<string, unknown> }
-	| { type: "tool.result"; step: number; toolName: string; resultChars: number; truncated: boolean }
-	| { type: "tool.error"; step: number; toolName: string; message: string }
-	| { type: "tool.approval_required"; step: number; toolName: string; approvalId: string; reason: string; args: Record<string, unknown> };
+	| ({ type: "tool.call"; step: number; toolCallId: string; toolName: string; args: Record<string, unknown> } & ToolEventDisplay)
+	| { type: "tool.result"; step: number; toolCallId: string; toolName: string; resultChars: number; truncated: boolean }
+	| { type: "tool.error"; step: number; toolCallId: string; toolName: string; message: string }
+	| ({ type: "tool.approval_required"; step: number; toolCallId: string; toolName: string; approvalId: string; reason: string; args: Record<string, unknown> } & ToolEventDisplay);
 
 export type OnToolEvent = (event: ToolEvent) => void;
 
@@ -56,7 +57,7 @@ async function executeSingleToolCall(
 		argsParsed = JSON.parse(toolCall.function.arguments) as Record<string, unknown>;
 	} catch {
 		const message: string = `Invalid JSON arguments: ${toolCall.function.arguments}`;
-		onEvent?.({ type: "tool.error", step, toolName: functionName, message });
+		onEvent?.({ type: "tool.error", step, toolCallId: toolCall.id, toolName: functionName, message });
 		return {
 			role: "tool",
 			tool_call_id: toolCall.id,
@@ -67,7 +68,7 @@ async function executeSingleToolCall(
 	const decision = await gateway.evaluate(functionName, argsParsed, toolCall.id);
 
 	if (decision.action === "deny") {
-		onEvent?.({ type: "tool.error", step, toolName: functionName, message: decision.reason });
+		onEvent?.({ type: "tool.error", step, toolCallId: toolCall.id, toolName: functionName, message: decision.reason });
 		return {
 			role: "tool",
 			tool_call_id: toolCall.id,
@@ -80,17 +81,26 @@ async function executeSingleToolCall(
 		onEvent?.({
 			type: "tool.approval_required",
 			step,
+			toolCallId: toolCall.id,
 			toolName: functionName,
 			approvalId: pending.approvalId,
 			reason: decision.reason,
-			args: argsParsed
+			args: argsParsed,
+			...describeToolEvent(functionName, argsParsed)
 		});
 
 		throw new ToolApprovalRequiredError(pending);
 	}
 
 	if (onEvent) {
-		onEvent({ type: "tool.call", step, toolName: functionName, args: argsParsed });
+		onEvent({
+			type: "tool.call",
+			step,
+			toolCallId: toolCall.id,
+			toolName: functionName,
+			args: argsParsed,
+			...describeToolEvent(functionName, argsParsed)
+		});
 	}
 
 	try {
@@ -115,6 +125,7 @@ async function executeSingleToolCall(
 			onEvent({
 				type: "tool.result",
 				step,
+				toolCallId: toolCall.id,
 				toolName: functionName,
 				resultChars: textResult.length,
 				truncated
@@ -130,7 +141,7 @@ async function executeSingleToolCall(
 		const message: string = error instanceof Error ? error.message : "MCP tool call failed";
 
 		if (onEvent) {
-			onEvent({ type: "tool.error", step, toolName: functionName, message });
+			onEvent({ type: "tool.error", step, toolCallId: toolCall.id, toolName: functionName, message });
 		}
 
 		return {

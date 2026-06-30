@@ -1,17 +1,17 @@
 import type { ChatCompletionMessageToolCall } from "openai/resources/chat/completions";
 
 const DSML_PREFIX_PATTERN: string = "[｜|]+\\s*DSML\\s*[｜|]+";
-const TOOL_CALLS_START_PATTERN: RegExp = new RegExp(`<\\s*${DSML_PREFIX_PATTERN}tool_calls\\s*>`, "i");
+const TOOL_CALLS_START_PATTERN: RegExp = new RegExp(`<\\s*${DSML_PREFIX_PATTERN}\\s*tool_calls\\s*>`, "i");
 const TOOL_CALLS_BLOCK_PATTERN: RegExp = new RegExp(
-	`<\\s*${DSML_PREFIX_PATTERN}tool_calls\\s*>([\\s\\S]*?)(?:<\\/\\s*${DSML_PREFIX_PATTERN}tool_calls\\s*>|$)`,
+	`<\\s*${DSML_PREFIX_PATTERN}\\s*tool_calls\\s*>([\\s\\S]*?)(?:<\\/\\s*${DSML_PREFIX_PATTERN}\\s*tool_calls\\s*>|$)`,
 	"gi"
 );
 const INVOKE_PATTERN: RegExp = new RegExp(
-	`<\\s*${DSML_PREFIX_PATTERN}invoke\\s+name="([^"]+)"\\s*>([\\s\\S]*?)<\\/\\s*${DSML_PREFIX_PATTERN}invoke\\s*>`,
+	`<\\s*${DSML_PREFIX_PATTERN}\\s*invoke\\s+name="([^"]+)"\\s*>([\\s\\S]*?)<\\/\\s*${DSML_PREFIX_PATTERN}\\s*invoke\\s*>`,
 	"gi"
 );
 const PARAMETER_PATTERN: RegExp = new RegExp(
-	`<\\s*${DSML_PREFIX_PATTERN}parameter\\s+name="([^"]+)"(?:\\s+string="([^"]+)")?\\s*>([\\s\\S]*?)<\\/\\s*${DSML_PREFIX_PATTERN}parameter\\s*>`,
+	`<\\s*${DSML_PREFIX_PATTERN}\\s*parameter\\s+name="([^"]+)"(?:\\s+string="([^"]+)")?\\s*>([\\s\\S]*?)<\\/\\s*${DSML_PREFIX_PATTERN}\\s*parameter\\s*>`,
 	"gi"
 );
 

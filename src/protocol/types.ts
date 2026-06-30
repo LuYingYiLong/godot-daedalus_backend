@@ -34,7 +34,7 @@ export type ServerResponse =
 export type ServerEvent = {
 	type: "event";
 	id: string;
-	event: "ai.delta" | "ai.done" | "ai.paused" | "tool.call" | "tool.result" | "tool.error" | "tool.approval_required" | "tool.approved" | "tool.rejected";
+	event: "ai.delta" | "ai.done" | "ai.paused" | "ai.thinking.delta" | "ai.thinking.done" | "tool.call" | "tool.result" | "tool.error" | "tool.approval_required" | "tool.approved" | "tool.rejected";
 	data?: unknown;
 };
 

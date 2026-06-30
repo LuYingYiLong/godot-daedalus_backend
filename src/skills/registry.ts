@@ -42,7 +42,8 @@ const VERIFY_TOOLS: string[] = [
 ];
 
 const TERMINAL_WRITE_TOOLS: string[] = [
-	"mcp_terminal_run_write_preset"
+	"mcp_terminal_run_write_preset",
+	"mcp_terminal_run_godot_scene_script"
 ];
 
 const PROPOSE_EDIT_TOOLS: string[] = [
@@ -59,14 +60,16 @@ const SCENE_PROPOSE_TOOLS: string[] = [
 	"mcp_godot_propose_create_scene",
 	"mcp_godot_propose_add_node_to_scene",
 	"mcp_godot_propose_attach_script_to_node",
-	"mcp_godot_propose_connect_signal_in_scene"
+	"mcp_godot_propose_connect_signal_in_scene",
+	"mcp_godot_propose_apply_scene_patch"
 ];
 
 const SCENE_WRITE_TOOLS: string[] = [
 	"mcp_godot_create_scene",
 	"mcp_godot_add_node_to_scene",
 	"mcp_godot_attach_script_to_node",
-	"mcp_godot_connect_signal_in_scene"
+	"mcp_godot_connect_signal_in_scene",
+	"mcp_godot_apply_scene_patch"
 ];
 
 const skills: Record<SkillId, Skill> = {

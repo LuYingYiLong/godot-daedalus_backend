@@ -1,6 +1,39 @@
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
 
-export const MAX_TOOL_STEPS: number = 4;
+export const DEFAULT_TOOL_STEPS: number = 10;
+
+export type ToolBudgetLevel = "simple" | "normal" | "codegen" | "project_edit";
+
+const TOOL_BUDGET_MAP: Record<ToolBudgetLevel, number> = {
+	simple: 4,
+	normal: 10,
+	codegen: 20,
+	project_edit: 30
+};
+
+const SKILL_BUDGET_MAP: Record<string, number> = {
+	"gdscript.review": 8,
+	"godot.project_init": 12,
+	"file.creator": 16,
+	"scene.builder": 20,
+	"backend.helper": 10
+};
+
+export function resolveToolBudget(
+	budgetLevel?: ToolBudgetLevel | string,
+	skillId?: string
+): number {
+	if (budgetLevel && TOOL_BUDGET_MAP[budgetLevel as ToolBudgetLevel]) {
+		return TOOL_BUDGET_MAP[budgetLevel as ToolBudgetLevel];
+	}
+
+	if (skillId && SKILL_BUDGET_MAP[skillId]) {
+		return SKILL_BUDGET_MAP[skillId];
+	}
+
+	return DEFAULT_TOOL_STEPS;
+}
+
 export const MAX_TOOL_RESULT_CHARS: number = 12000;
 export const MAX_TOTAL_TOOL_RESULT_CHARS: number = 48000;
 
@@ -109,6 +142,18 @@ const TOOL_MAP: Record<string, ToolMapping> = {
 	"mcp_godot_connect_signal_in_scene": {
 		serverId: "godot",
 		toolName: "connect_signal_in_scene"
+	},
+	"mcp_godot_propose_apply_scene_patch": {
+		serverId: "godot",
+		toolName: "propose_apply_scene_patch"
+	},
+	"mcp_godot_apply_scene_patch": {
+		serverId: "godot",
+		toolName: "apply_scene_patch"
+	},
+	"mcp_terminal_run_godot_scene_script": {
+		serverId: "terminal",
+		toolName: "run_godot_scene_script"
 	}
 };
 
@@ -378,6 +423,23 @@ const TOOL_DEFINITIONS: ChatCompletionTool[] = [
 	{
 		type: "function",
 		function: {
+			name: "mcp_terminal_run_godot_scene_script",
+			description: "通过 Godot headless 模式调用 scene_operator.gd 执行场景创建/编辑操作。支持 create_scene（创建场景）、add_node（添加节点）、attach_script（挂载脚本）、connect_signal（连接信号）、inspect（查看场景树）。传入 JSON 格式的 operationJson 参数。此工具需要用户审批。",
+			parameters: {
+				type: "object",
+				properties: {
+					operationJson: {
+						type: "string",
+						description: "JSON 格式的场景操作。create_scene: {\"operation\":\"create_scene\",\"path\":\"scenes/foo.tscn\",\"root_type\":\"Node2D\",\"root_name\":\"Main\"}。add_node: {\"operation\":\"add_node\",\"scene_path\":\"...\",\"parent_path\":\".\",\"node_type\":\"Label\",\"node_name\":\"Hello\",\"properties\":{}}。attach_script: {\"operation\":\"attach_script\",\"scene_path\":\"...\",\"node_path\":\"Main\",\"script_path\":\"res://scripts/main.gd\"}。connect_signal: {\"operation\":\"connect_signal\",\"scene_path\":\"...\",\"signal\":\"pressed\",\"from\":\"Button\",\"to\":\".\",\"method\":\"_on_pressed\"}。inspect: {\"operation\":\"inspect\",\"scene_path\":\"...\"}"
+					}
+				},
+				required: ["operationJson"]
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
 			name: "mcp_terminal_run_write_preset",
 			description: "执行写操作（write 风险）终端预设命令，需要通过审批系统批准。可用的写预设：git.init。此工具调用后不会立即执行，需要用户在 Godot 客户端批准。",
 			parameters: {
@@ -389,6 +451,132 @@ const TOOL_DEFINITIONS: ChatCompletionTool[] = [
 					}
 				},
 				required: ["presetName"]
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_godot_propose_apply_scene_patch",
+			description: "提出批量修改已有 Godot .tscn 场景的提案，不会实际写入。支持一次添加多个节点、挂载脚本、连接信号。创建复杂 UI 或小游戏场景时，应优先使用本工具减少碎片化 add_node 调用。",
+			parameters: {
+				type: "object",
+				properties: {
+					scenePath: {
+						type: "string",
+						description: "已有场景文件路径，例如 'scenes/guess_number.tscn'"
+					},
+					operations: {
+						type: "array",
+						description: "按顺序执行的场景操作列表。节点属性值必须是 .tscn 表达式字符串，例如 text 写成 '\"Hello\"'，数值可写成 '15'。",
+						items: {
+							oneOf: [
+								{
+									type: "object",
+									properties: {
+										type: { const: "add_node" },
+										parentPath: { type: "string" },
+										nodeType: { type: "string" },
+										nodeName: { type: "string" },
+										properties: {
+											type: "object",
+											additionalProperties: { type: "string" }
+										}
+									},
+									required: ["type", "parentPath", "nodeType", "nodeName"]
+								},
+								{
+									type: "object",
+									properties: {
+										type: { const: "attach_script" },
+										nodePath: { type: "string" },
+										scriptPath: { type: "string" }
+									},
+									required: ["type", "nodePath", "scriptPath"]
+								},
+								{
+									type: "object",
+									properties: {
+										type: { const: "connect_signal" },
+										signal: { type: "string" },
+										fromNode: { type: "string" },
+										toNode: { type: "string" },
+										method: { type: "string" },
+										flags: { type: "integer" },
+										binds: { type: "string" }
+									},
+									required: ["type", "signal", "fromNode", "toNode", "method"]
+								}
+							]
+						},
+						minItems: 1,
+						maxItems: 50
+					}
+				},
+				required: ["scenePath", "operations"]
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_godot_apply_scene_patch",
+			description: "批量修改已有 Godot .tscn 场景，会实际写入磁盘并触发用户审批。支持一次添加多个节点、挂载脚本、连接信号。创建复杂 UI 或小游戏场景时，应优先使用本工具，不要逐个调用 add_node_to_scene。",
+			parameters: {
+				type: "object",
+				properties: {
+					scenePath: {
+						type: "string",
+						description: "已有场景文件路径，例如 'scenes/guess_number.tscn'"
+					},
+					operations: {
+						type: "array",
+						description: "按顺序执行的场景操作列表。节点属性值必须是 .tscn 表达式字符串，例如 text 写成 '\"Hello\"'，数值可写成 '15'。",
+						items: {
+							oneOf: [
+								{
+									type: "object",
+									properties: {
+										type: { const: "add_node" },
+										parentPath: { type: "string" },
+										nodeType: { type: "string" },
+										nodeName: { type: "string" },
+										properties: {
+											type: "object",
+											additionalProperties: { type: "string" }
+										}
+									},
+									required: ["type", "parentPath", "nodeType", "nodeName"]
+								},
+								{
+									type: "object",
+									properties: {
+										type: { const: "attach_script" },
+										nodePath: { type: "string" },
+										scriptPath: { type: "string" }
+									},
+									required: ["type", "nodePath", "scriptPath"]
+								},
+								{
+									type: "object",
+									properties: {
+										type: { const: "connect_signal" },
+										signal: { type: "string" },
+										fromNode: { type: "string" },
+										toNode: { type: "string" },
+										method: { type: "string" },
+										flags: { type: "integer" },
+										binds: { type: "string" }
+									},
+									required: ["type", "signal", "fromNode", "toNode", "method"]
+								}
+							]
+						},
+						minItems: 1,
+						maxItems: 50
+					}
+				},
+				required: ["scenePath", "operations"]
 			}
 		}
 	}

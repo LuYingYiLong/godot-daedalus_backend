@@ -277,6 +277,29 @@ type TscnData = {
 	connections: TscnConnection[];
 };
 
+type ScenePatchOperation =
+	| {
+		type: "add_node";
+		parentPath: string;
+		nodeType: string;
+		nodeName: string;
+		properties?: Record<string, string>;
+	}
+	| {
+		type: "attach_script";
+		nodePath: string;
+		scriptPath: string;
+	}
+	| {
+		type: "connect_signal";
+		signal: string;
+		fromNode: string;
+		toNode: string;
+		method: string;
+		flags?: number;
+		binds?: string;
+	};
+
 function parseSectionHeader(line: string): TscnSection | null {
 	const match = line.match(/^\[([^\]]+)\](.*)$/);
 	if (match === null) return null;
@@ -720,6 +743,61 @@ function connectSignalInSceneTscn(content: string, signal: string, fromNode: str
 	}
 
 	return lines.join("\n").replace(/\n\n+$/, "\n");
+}
+
+function applyScenePatchToTscn(content: string, operations: ScenePatchOperation[]): {
+	content: string;
+	applied: Array<Record<string, unknown>>;
+} {
+	let nextContent: string = content;
+	const applied: Array<Record<string, unknown>> = [];
+
+	for (const operation of operations) {
+		if (operation.type === "add_node") {
+			nextContent = addNodeToSceneTscn(
+				nextContent,
+				operation.parentPath,
+				operation.nodeType,
+				operation.nodeName,
+				operation.properties ?? {}
+			);
+			applied.push({
+				type: operation.type,
+				parentPath: operation.parentPath,
+				nodeType: operation.nodeType,
+				nodeName: operation.nodeName
+			});
+		} else if (operation.type === "attach_script") {
+			nextContent = attachScriptToSceneTscn(nextContent, operation.nodePath, operation.scriptPath);
+			applied.push({
+				type: operation.type,
+				nodePath: operation.nodePath,
+				scriptPath: operation.scriptPath
+			});
+		} else if (operation.type === "connect_signal") {
+			nextContent = connectSignalInSceneTscn(
+				nextContent,
+				operation.signal,
+				operation.fromNode,
+				operation.toNode,
+				operation.method,
+				operation.flags,
+				operation.binds
+			);
+			applied.push({
+				type: operation.type,
+				signal: operation.signal,
+				fromNode: operation.fromNode,
+				toNode: operation.toNode,
+				method: operation.method
+			});
+		} else {
+			const unreachable: never = operation;
+			throw new Error(`Unsupported scene patch operation: ${JSON.stringify(unreachable)}`);
+		}
+	}
+
+	return { content: nextContent, applied };
 }
 
 async function assertWritablePath(relativePath: string): Promise<string> {
@@ -1576,6 +1654,102 @@ async function main(): Promise<void> {
 			const newContent = connectSignalInSceneTscn(oldContent, signal, fromNode, toNode, method, flags, binds);
 			await fs.writeFile(fullPath, newContent, "utf8");
 			return asJsonTextResult({ modified: true, scenePath, signal, fromNode, toNode, method });
+		}
+	);
+
+	const scenePatchOperationSchema = z.discriminatedUnion("type", [
+		z.object({
+			type: z.literal("add_node"),
+			parentPath: z.string().min(1).describe("父节点路径，根节点用 . 表示"),
+			nodeType: z.string().min(1).describe("节点类型，例如 VBoxContainer、Label、Button"),
+			nodeName: z.string().min(1).describe("节点名称"),
+			properties: z.record(z.string(), z.string()).optional().describe("节点属性，值必须是 .tscn 表达式字符串，例如 text 用 '\"Hello\"'")
+		}),
+		z.object({
+			type: z.literal("attach_script"),
+			nodePath: z.string().min(1).describe("目标节点路径"),
+			scriptPath: z.string().min(1).describe("脚本资源路径，例如 res://scripts/main.gd")
+		}),
+		z.object({
+			type: z.literal("connect_signal"),
+			signal: z.string().min(1).describe("信号名称，例如 pressed"),
+			fromNode: z.string().min(1).describe("发送信号的节点路径"),
+			toNode: z.string().min(1).describe("接收信号的节点路径"),
+			method: z.string().min(1).describe("回调方法名称"),
+			flags: z.number().int().optional().describe("连接标志"),
+			binds: z.string().optional().describe("绑定参数表达式")
+		})
+	]);
+
+	server.registerTool(
+		"propose_apply_scene_patch",
+		{
+			title: "Propose Apply Scene Patch",
+			description: "提出批量修改已有 Godot .tscn 场景的提案。不会写入磁盘。支持一次性添加多个节点、挂载脚本、连接信号，适合减少碎片化工具调用。",
+			inputSchema: z.object({
+				scenePath: z.string().min(1).describe("已有场景文件的相对路径"),
+				operations: z.array(scenePatchOperationSchema).min(1).max(50).describe("按顺序执行的场景操作列表")
+			})
+		},
+		async ({ scenePath, operations }) => {
+			try {
+				const fullPath = await resolveProjectPath(scenePath);
+				if (path.extname(fullPath) !== ".tscn") {
+					return asJsonTextResult({ valid: false, scenePath, errors: ["File is not a .tscn scene file"] });
+				}
+
+				const oldContent = await fs.readFile(fullPath, "utf8");
+				const patchResult = applyScenePatchToTscn(oldContent, operations as ScenePatchOperation[]);
+				const validationErrors: string[] = validateTscnContent(patchResult.content);
+				if (validationErrors.length > 0) {
+					return asJsonTextResult({ valid: false, scenePath, errors: validationErrors });
+				}
+
+				return asJsonTextResult({
+					valid: true,
+					scenePath,
+					operationCount: patchResult.applied.length,
+					applied: patchResult.applied,
+					oldSize: oldContent.length,
+					newSize: patchResult.content.length,
+					preview: patchResult.content.slice(0, 1200) + (patchResult.content.length > 1200 ? "\n..." : "")
+				});
+			} catch (error: unknown) {
+				return asJsonTextResult({ valid: false, scenePath, errors: [error instanceof Error ? error.message : "Failed to preview scene patch"] });
+			}
+		}
+	);
+
+	server.registerTool(
+		"apply_scene_patch",
+		{
+			title: "Apply Scene Patch",
+			description: "批量修改已有 Godot .tscn 场景，会实际写入磁盘并需要用户审批。支持一次性添加多个节点、挂载脚本、连接信号，适合创建复杂 UI/小游戏场景。",
+			inputSchema: z.object({
+				scenePath: z.string().min(1).describe("已有场景文件的相对路径"),
+				operations: z.array(scenePatchOperationSchema).min(1).max(50).describe("按顺序执行的场景操作列表")
+			})
+		},
+		async ({ scenePath, operations }) => {
+			const fullPath = await resolveProjectPath(scenePath);
+			if (path.extname(fullPath) !== ".tscn") {
+				throw new Error("File is not a .tscn scene file");
+			}
+
+			const oldContent = await fs.readFile(fullPath, "utf8");
+			const patchResult = applyScenePatchToTscn(oldContent, operations as ScenePatchOperation[]);
+			const validationErrors: string[] = validateTscnContent(patchResult.content);
+			if (validationErrors.length > 0) {
+				throw new Error(`TSCN validation failed: ${validationErrors.join("; ")}`);
+			}
+
+			await fs.writeFile(fullPath, patchResult.content, "utf8");
+			return asJsonTextResult({
+				modified: true,
+				scenePath,
+				operationCount: patchResult.applied.length,
+				applied: patchResult.applied
+			});
 		}
 	);
 
