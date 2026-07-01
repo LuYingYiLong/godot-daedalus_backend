@@ -37,7 +37,9 @@ import {
 	readSummary, writeSummary,
 	appendSessionEvent, clearSessionEvents,
 	type SessionMetadata,
-	type SessionSummary
+	type SessionSummary,
+	type StoredMessage,
+	type StoredSessionEvent
 } from "../session/session-store.js";
 import { createDeepSeekClient } from "../providers/deepseek-client.js";
 import {
@@ -50,6 +52,12 @@ import {
 
 const tokenCounterPromise: Promise<TokenCounter> = createTokenCounter();
 let sessionCompressorPromptCache: string | undefined;
+const DEFAULT_SESSION_OPEN_MESSAGE_LIMIT: number = 200;
+const MAX_SESSION_OPEN_MESSAGE_LIMIT: number = 500;
+const DEFAULT_SESSION_OPEN_EVENT_LIMIT: number = 80;
+const MAX_SESSION_OPEN_EVENT_LIMIT: number = 160;
+const SESSION_OPEN_PREVIEW_STRING_LIMIT: number = 1200;
+const SESSION_OPEN_PREVIEW_ARRAY_LIMIT: number = 80;
 
 async function getTokenCounter(): Promise<TokenCounter> {
 	return tokenCounterPromise;
@@ -194,6 +202,129 @@ function createSummaryMessage(summary: SessionSummary): ChatMessage {
 
 function getSessionProjectPath(session: ClientSession): string {
 	return session.activeWorkspace?.rootPath ?? session.godotProjectPath ?? process.env.GODOT_PROJECT_PATH ?? "";
+}
+
+function toChatMessage(message: StoredMessage): ChatMessage {
+	const chatMessage: ChatMessage = {
+		role: message.role,
+		content: message.content
+	};
+
+	if (message.requestId !== undefined) {
+		chatMessage.requestId = message.requestId;
+	}
+
+	return chatMessage;
+}
+
+function clampSessionOpenMessageLimit(limit: number | undefined): number {
+	if (limit === undefined) {
+		return DEFAULT_SESSION_OPEN_MESSAGE_LIMIT;
+	}
+
+	return Math.min(MAX_SESSION_OPEN_MESSAGE_LIMIT, Math.max(1, Math.floor(limit)));
+}
+
+function createPreviewValue(value: unknown, depth: number = 0): unknown {
+	if (typeof value === "string") {
+		if (value.length <= SESSION_OPEN_PREVIEW_STRING_LIMIT) {
+			return value;
+		}
+
+		return [
+			value.slice(0, SESSION_OPEN_PREVIEW_STRING_LIMIT),
+			`\n\n[历史事件内容已截断，原始长度 ${value.length} 字符]`
+		].join("");
+	}
+
+	if (value === null || typeof value !== "object") {
+		return value;
+	}
+
+	if (depth >= 6) {
+		return "[历史事件嵌套内容已截断]";
+	}
+
+	if (Array.isArray(value)) {
+		const previewItems: unknown[] = value
+			.slice(0, SESSION_OPEN_PREVIEW_ARRAY_LIMIT)
+			.map((item: unknown): unknown => createPreviewValue(item, depth + 1));
+
+		if (value.length > SESSION_OPEN_PREVIEW_ARRAY_LIMIT) {
+			previewItems.push(`[历史事件数组已截断，原始长度 ${value.length}]`);
+		}
+
+		return previewItems;
+	}
+
+	const source: Record<string, unknown> = value as Record<string, unknown>;
+	const preview: Record<string, unknown> = {};
+
+	for (const [key, item] of Object.entries(source)) {
+		preview[key] = createPreviewValue(item, depth + 1);
+	}
+
+	return preview;
+}
+
+function createSessionEventPreview(event: StoredSessionEvent): StoredSessionEvent {
+	return {
+		...event,
+		data: createPreviewValue(event.data)
+	};
+}
+
+function selectSessionOpenTimeline(
+	messages: StoredMessage[],
+	events: StoredSessionEvent[],
+	messageLimit: number
+): {
+	messages: StoredMessage[];
+	events: StoredSessionEvent[];
+	messagesOffset: number;
+	hasMoreBefore: boolean;
+	eventLimit: number;
+} {
+	const messagesOffset: number = Math.max(0, messages.length - messageLimit);
+	const visibleMessages: StoredMessage[] = messages.slice(messagesOffset);
+	const requestIds: Set<string> = new Set();
+
+	for (const message of visibleMessages) {
+		if (message.requestId !== undefined && message.requestId.length > 0) {
+			requestIds.add(message.requestId);
+		}
+	}
+
+	const eventLimit: number = Math.min(
+		MAX_SESSION_OPEN_EVENT_LIMIT,
+		Math.max(DEFAULT_SESSION_OPEN_EVENT_LIMIT, messageLimit * 2)
+	);
+	const selectedEventsById: Map<string, StoredSessionEvent> = new Map();
+
+	for (const event of events) {
+		if (requestIds.has(event.requestId)) {
+			selectedEventsById.set(event.id, event);
+		}
+	}
+
+	for (const event of events.slice(Math.max(0, events.length - eventLimit))) {
+		selectedEventsById.set(event.id, event);
+	}
+
+	let selectedEvents: StoredSessionEvent[] = Array.from(selectedEventsById.values())
+		.sort((left: StoredSessionEvent, right: StoredSessionEvent): number => left.createdAt.localeCompare(right.createdAt));
+
+	if (selectedEvents.length > MAX_SESSION_OPEN_EVENT_LIMIT) {
+		selectedEvents = selectedEvents.slice(selectedEvents.length - MAX_SESSION_OPEN_EVENT_LIMIT);
+	}
+
+	return {
+		messages: visibleMessages,
+		events: selectedEvents.map(createSessionEventPreview),
+		messagesOffset,
+		hasMoreBefore: messagesOffset > 0,
+		eventLimit
+	};
 }
 
 function createDeepSeekChatOptions(session: ClientSession, apiKey: string): DeepSeekChatOptions {
@@ -1118,48 +1249,28 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 			try {
 				const stored = await openSession(request.params.sessionId);
 				let workspace: WorkspaceConfig | undefined;
+				let workspaceWarning: string | undefined;
 
 				if (stored.metadata.workspaceId) {
 					workspace = findWorkspace(stored.metadata.workspaceId);
 
 					if (!workspace) {
-						sendJson(socket, {
-							type: "response",
-							id: request.id,
-							ok: false,
-							error: {
-								code: "workspace_not_found",
-								message: `Session workspace not found: ${stored.metadata.workspaceId}`
-							}
-						});
-						break;
-					}
-
-					try {
-						await mcpHost.switchWorkspace(workspace);
-					} catch (error: unknown) {
-						sendJson(socket, {
-							type: "response",
-							id: request.id,
-							ok: false,
-							error: {
-								code: "workspace_switch_failed",
-								message: error instanceof Error ? error.message : "Failed to switch MCP workspace"
-							}
-						});
-						break;
+						workspaceWarning = `Session workspace not found: ${stored.metadata.workspaceId}`;
+						console.warn(`[session] ${workspaceWarning}`);
+					} else {
+						try {
+							await mcpHost.switchWorkspace(workspace);
+						} catch (error: unknown) {
+							workspaceWarning = error instanceof Error ? error.message : "Failed to switch MCP workspace";
+							console.warn(`[session] Failed to switch workspace for ${stored.metadata.id}:`, workspaceWarning);
+							workspace = undefined;
+						}
 					}
 				}
 
 				session.sessionId = stored.metadata.id;
 				session.sessionTitle = stored.metadata.title;
-				session.messages = stored.messages.map((message) => {
-					const chatMessage: ChatMessage = { role: message.role, content: message.content };
-					if (message.requestId !== undefined) {
-						chatMessage.requestId = message.requestId;
-					}
-					return chatMessage;
-				});
+				session.messages = stored.messages.map(toChatMessage);
 
 				const summary = await readSummary(request.params.sessionId);
 				session.summaryMessage = summary !== null ? createSummaryMessage(summary) : undefined;
@@ -1178,6 +1289,9 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 					? stored.metadata.activeSkillId
 					: undefined;
 
+				const openMessageLimit: number = clampSessionOpenMessageLimit(request.params.limit);
+				const timeline = selectSessionOpenTimeline(stored.messages, stored.events, openMessageLimit);
+
 				sendJson(socket, {
 					type: "response",
 					id: request.id,
@@ -1186,8 +1300,15 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 						opened: true,
 						metadata: stored.metadata,
 						messageCount: stored.messages.length,
-						messages: session.messages,
-						events: stored.events
+						eventCount: stored.events.length,
+						messagesOffset: timeline.messagesOffset,
+						eventsIncluded: timeline.events.length,
+						limit: openMessageLimit,
+						eventLimit: timeline.eventLimit,
+						hasMoreBefore: timeline.hasMoreBefore,
+						messages: timeline.messages.map(toChatMessage),
+						events: timeline.events,
+						workspaceWarning: workspaceWarning ?? null
 					}
 				});
 			} catch (error: unknown) {

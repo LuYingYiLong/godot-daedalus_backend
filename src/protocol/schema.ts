@@ -126,6 +126,7 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		method: z.literal("session.open"),
 		params: z.object({
 			sessionId: z.string().min(1),
+			limit: z.number().int().positive().max(500).optional(),
 		}),
 	}),
 	z.object({
