@@ -335,7 +335,7 @@ async function runAgentLoop(
 			contentText = message.content;
 		}
 
-		if ((!toolCalls || toolCalls.length === 0) && containsDsmlToolCalls(contentText)) {
+		if (tools.length > 0 && (!toolCalls || toolCalls.length === 0) && containsDsmlToolCalls(contentText)) {
 			const parsedToolCalls: ChatCompletionMessageToolCall[] = parseDsmlToolCalls(contentText ?? "", `dsml-step-${step}`);
 			if (parsedToolCalls.length > 0) {
 				toolCalls = parsedToolCalls;

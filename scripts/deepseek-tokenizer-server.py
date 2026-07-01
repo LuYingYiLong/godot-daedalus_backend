@@ -9,15 +9,22 @@ Sends {"ready": true} on startup.
 
 import sys
 import json
-import transformers
+from pathlib import Path
+from tokenizers import Tokenizer
+
+if hasattr(sys.stdin, "reconfigure"):
+    sys.stdin.reconfigure(encoding="utf-8")
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
 
 def main():
     if len(sys.argv) < 2:
         print(json.dumps({"error": "Usage: deepseek-tokenizer-server.py <tokenizer_dir>"}), flush=True)
         sys.exit(1)
 
-    tokenizer_dir = sys.argv[1]
-    tokenizer = transformers.AutoTokenizer.from_pretrained(tokenizer_dir, trust_remote_code=True)
+    tokenizer_dir = Path(sys.argv[1])
+    tokenizer_path = tokenizer_dir / "tokenizer.json"
+    tokenizer = Tokenizer.from_file(str(tokenizer_path))
     print(json.dumps({"ready": True}), flush=True)
 
     for line in sys.stdin:
@@ -38,8 +45,8 @@ def main():
             continue
 
         try:
-            token_ids = tokenizer.encode(text)
-            print(json.dumps({"id": request_id, "tokens": len(token_ids)}), flush=True)
+            encoded = tokenizer.encode(text)
+            print(json.dumps({"id": request_id, "tokens": len(encoded.ids)}), flush=True)
         except Exception as e:
             print(json.dumps({"id": request_id, "error": str(e)}), flush=True)
 

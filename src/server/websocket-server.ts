@@ -36,10 +36,12 @@ import {
 	deleteSession, renameSession,
 	readSummary, writeSummary,
 	appendSessionEvent, clearSessionEvents,
+	openSessionRecentTimeline, openSessionTimelinePage,
 	type SessionMetadata,
 	type SessionSummary,
 	type StoredMessage,
-	type StoredSessionEvent
+	type StoredSessionEvent,
+	type StoredSessionTimelinePage
 } from "../session/session-store.js";
 import { createDeepSeekClient } from "../providers/deepseek-client.js";
 import {
@@ -49,10 +51,21 @@ import {
 	saveProviderConfig,
 	type ProviderConfigWithSecret
 } from "../providers/provider-config-store.js";
+import { planWorkflow } from "../workflow/planner.js";
+import {
+	appendPhaseOutput,
+	createPhaseMessage,
+	createPhaseParams,
+	createPhasePrompt,
+	createWorkflowTodoSnapshot,
+	markRemainingWorkflowTodos,
+	updateWorkflowPhaseStatus
+} from "../workflow/runner.js";
+import type { WorkflowPhase, WorkflowPlan, WorkflowRunState } from "../workflow/types.js";
 
 const tokenCounterPromise: Promise<TokenCounter> = createTokenCounter();
 let sessionCompressorPromptCache: string | undefined;
-const DEFAULT_SESSION_OPEN_MESSAGE_LIMIT: number = 200;
+const DEFAULT_SESSION_OPEN_MESSAGE_LIMIT: number = 80;
 const MAX_SESSION_OPEN_MESSAGE_LIMIT: number = 500;
 const DEFAULT_SESSION_OPEN_EVENT_LIMIT: number = 80;
 const MAX_SESSION_OPEN_EVENT_LIMIT: number = 160;
@@ -91,6 +104,7 @@ type ClientSession = {
 	summaryMessage?: ChatMessage | undefined;
 	summaryCoveredMessageCount?: number | undefined;
 	pendingAiContinuations: Map<string, PendingAiContinuation>;
+	fullSessionLoadPromise?: Promise<void> | undefined;
 };
 
 type PendingAiContinuation = {
@@ -99,7 +113,10 @@ type PendingAiContinuation = {
 	continuation: DeepSeekAgentContinuation;
 	allowedToolNames?: readonly string[] | undefined;
 	userMessage: string;
+	requestId: string;
+	userCreatedAt: string;
 	stream: boolean;
+	workflowState?: WorkflowRunState | undefined;
 };
 
 type SlashCommandResult =
@@ -165,12 +182,14 @@ async function appendChatTurnToSession(
 	_history: ChatMessage[],
 	userMessage: string,
 	assistantMessage: string,
-	requestId: string
+	requestId: string,
+	userCreatedAt: string = new Date().toISOString(),
+	assistantCreatedAt: string = new Date().toISOString()
 ): Promise<void> {
 	const nextMessages: ChatMessage[] = [
 		...session.messages,
-		{ role: "user", content: userMessage, requestId },
-		{ role: "assistant", content: assistantMessage, requestId }
+		{ role: "user", content: userMessage, requestId, createdAt: userCreatedAt },
+		{ role: "assistant", content: assistantMessage, requestId, createdAt: assistantCreatedAt }
 	];
 	session.messages = nextMessages;
 }
@@ -212,6 +231,10 @@ function toChatMessage(message: StoredMessage): ChatMessage {
 
 	if (message.requestId !== undefined) {
 		chatMessage.requestId = message.requestId;
+	}
+
+	if (message.createdAt !== undefined) {
+		chatMessage.createdAt = message.createdAt;
 	}
 
 	return chatMessage;
@@ -274,57 +297,55 @@ function createSessionEventPreview(event: StoredSessionEvent): StoredSessionEven
 	};
 }
 
-function selectSessionOpenTimeline(
-	messages: StoredMessage[],
-	events: StoredSessionEvent[],
-	messageLimit: number
-): {
-	messages: StoredMessage[];
-	events: StoredSessionEvent[];
-	messagesOffset: number;
-	hasMoreBefore: boolean;
-	eventLimit: number;
-} {
-	const messagesOffset: number = Math.max(0, messages.length - messageLimit);
-	const visibleMessages: StoredMessage[] = messages.slice(messagesOffset);
-	const requestIds: Set<string> = new Set();
-
-	for (const message of visibleMessages) {
-		if (message.requestId !== undefined && message.requestId.length > 0) {
-			requestIds.add(message.requestId);
-		}
-	}
-
+function createTimelinePageResult(page: StoredSessionTimelinePage, limit: number): Record<string, unknown> {
 	const eventLimit: number = Math.min(
 		MAX_SESSION_OPEN_EVENT_LIMIT,
-		Math.max(DEFAULT_SESSION_OPEN_EVENT_LIMIT, messageLimit * 2)
+		Math.max(DEFAULT_SESSION_OPEN_EVENT_LIMIT, limit * 2)
 	);
-	const selectedEventsById: Map<string, StoredSessionEvent> = new Map();
-
-	for (const event of events) {
-		if (requestIds.has(event.requestId)) {
-			selectedEventsById.set(event.id, event);
-		}
-	}
-
-	for (const event of events.slice(Math.max(0, events.length - eventLimit))) {
-		selectedEventsById.set(event.id, event);
-	}
-
-	let selectedEvents: StoredSessionEvent[] = Array.from(selectedEventsById.values())
-		.sort((left: StoredSessionEvent, right: StoredSessionEvent): number => left.createdAt.localeCompare(right.createdAt));
-
-	if (selectedEvents.length > MAX_SESSION_OPEN_EVENT_LIMIT) {
-		selectedEvents = selectedEvents.slice(selectedEvents.length - MAX_SESSION_OPEN_EVENT_LIMIT);
-	}
+	const events: StoredSessionEvent[] = page.events.length > eventLimit
+		? page.events.slice(page.events.length - eventLimit)
+		: page.events;
 
 	return {
-		messages: visibleMessages,
-		events: selectedEvents.map(createSessionEventPreview),
-		messagesOffset,
-		hasMoreBefore: messagesOffset > 0,
-		eventLimit
+		messageCount: page.messageCount,
+		eventCount: page.eventCount,
+		messagesOffset: page.messagesOffset,
+		eventsIncluded: events.length,
+		limit,
+		eventLimit,
+		hasMoreBefore: page.hasMoreBefore,
+		messages: page.messages.map(toChatMessage),
+		events: events.map(createSessionEventPreview),
+		latestWorkflowSnapshot: page.latestWorkflowSnapshot === null ? null : createPreviewValue(page.latestWorkflowSnapshot)
 	};
+}
+
+function startFullSessionLoad(session: ClientSession, sessionId: string): void {
+	const loadPromise: Promise<void> = (async (): Promise<void> => {
+		try {
+			const stored = await openSession(sessionId);
+			if (session.sessionId !== sessionId) {
+				return;
+			}
+
+			session.messages = stored.messages.map(toChatMessage);
+		} catch (error: unknown) {
+			console.error(`[session] Failed to load complete history for ${sessionId}:`, error);
+		}
+	})();
+
+	const trackedPromise: Promise<void> = loadPromise.finally((): void => {
+		if (session.fullSessionLoadPromise === trackedPromise) {
+			session.fullSessionLoadPromise = undefined;
+		}
+	});
+	session.fullSessionLoadPromise = trackedPromise;
+}
+
+async function waitForFullSessionLoad(session: ClientSession): Promise<void> {
+	if (session.fullSessionLoadPromise !== undefined) {
+		await session.fullSessionLoadPromise;
+	}
 }
 
 function createDeepSeekChatOptions(session: ClientSession, apiKey: string): DeepSeekChatOptions {
@@ -340,10 +361,17 @@ function createDeepSeekChatOptions(session: ClientSession, apiKey: string): Deep
 }
 
 function shouldPersistSessionEvent(eventName: ServerEvent["event"]): boolean {
-	return eventName.startsWith("tool.") || eventName.startsWith("ai.thinking.");
+	return eventName.startsWith("tool.") || eventName.startsWith("ai.thinking.") || eventName.startsWith("workflow.");
 }
 
-function sendSessionEvent(socket: WebSocket, requestId: string, session: ClientSession, eventName: ServerEvent["event"], data: unknown): void {
+function sendSessionEvent(
+	socket: WebSocket,
+	requestId: string,
+	session: ClientSession,
+	eventName: ServerEvent["event"],
+	data: unknown,
+	persistRequestId: string = requestId
+): void {
 	sendJson(socket, {
 		type: "event",
 		id: requestId,
@@ -355,14 +383,14 @@ function sendSessionEvent(socket: WebSocket, requestId: string, session: ClientS
 		return;
 	}
 
-	appendSessionEvent(session.sessionId, requestId, eventName, data).catch((error: unknown): void => {
+	appendSessionEvent(session.sessionId, persistRequestId, eventName, data).catch((error: unknown): void => {
 		console.error("Failed to persist session event:", error);
 	});
 }
 
-function createToolEventForwarder(socket: WebSocket, requestId: string, session: ClientSession): OnToolEvent {
+function createToolEventForwarder(socket: WebSocket, requestId: string, session: ClientSession, persistRequestId: string = requestId): OnToolEvent {
 	return (event): void => {
-		sendSessionEvent(socket, requestId, session, event.type, event);
+		sendSessionEvent(socket, requestId, session, event.type, event, persistRequestId);
 	};
 }
 
@@ -372,18 +400,27 @@ function createPendingAiContinuation(
 	continuation: DeepSeekAgentContinuation,
 	allowedToolNames: readonly string[] | undefined,
 	userMessage: string,
-	stream: boolean
+	requestId: string,
+	userCreatedAt: string,
+	stream: boolean,
+	workflowState?: WorkflowRunState | undefined
 ): PendingAiContinuation {
 	const pendingContinuation: PendingAiContinuation = {
 		params,
 		options,
 		continuation,
 		userMessage,
+		requestId,
+		userCreatedAt,
 		stream
 	};
 
 	if (allowedToolNames !== undefined) {
 		pendingContinuation.allowedToolNames = allowedToolNames;
+	}
+
+	if (workflowState !== undefined) {
+		pendingContinuation.workflowState = workflowState;
 	}
 
 	return pendingContinuation;
@@ -419,7 +456,10 @@ async function sendContinuedAgentResult(
 			agentResult.continuation,
 			pendingContinuation.allowedToolNames,
 			pendingContinuation.userMessage,
-			pendingContinuation.stream
+			pendingContinuation.requestId,
+			pendingContinuation.userCreatedAt,
+			pendingContinuation.stream,
+			pendingContinuation.workflowState
 		);
 		session.pendingAiContinuations.set(agentResult.approvalId, nextPendingContinuation);
 		sendAiPaused(socket, requestId, agentResult);
@@ -439,7 +479,14 @@ async function sendContinuedAgentResult(
 		}
 	}
 
-	await appendChatTurnToSession(session, [], pendingContinuation.userMessage, text, requestId);
+	await appendChatTurnToSession(
+		session,
+		[],
+		pendingContinuation.userMessage,
+		text,
+		pendingContinuation.requestId,
+		pendingContinuation.userCreatedAt
+	);
 	sendJson(socket, {
 		type: "event",
 		id: requestId,
@@ -453,6 +500,249 @@ async function sendContinuedAgentResult(
 			}
 		}
 	});
+}
+
+function sendWorkflowEvent(
+	socket: WebSocket,
+	requestId: string,
+	session: ClientSession,
+	eventName: ServerEvent["event"],
+	data: unknown,
+	persistRequestId: string = requestId
+): void {
+	sendSessionEvent(socket, requestId, session, eventName, data, persistRequestId);
+}
+
+function sendWorkflowTodoSnapshot(socket: WebSocket, requestId: string, session: ClientSession, plan: WorkflowPlan, persistRequestId: string = requestId): void {
+	sendWorkflowEvent(socket, requestId, session, "workflow.todo.updated", createWorkflowTodoSnapshot(plan), persistRequestId);
+}
+
+async function runWorkflowPhase(
+	socket: WebSocket,
+	params: AiChatParams,
+	options: DeepSeekChatOptions,
+	history: ChatMessage[],
+	fullSystemPrompt: string,
+	phase: WorkflowPhase,
+	mcpHost: McpHost,
+	session: ClientSession,
+	requestId: string,
+	persistRequestId: string,
+	streamPhase: boolean
+): Promise<DeepSeekAgentResult> {
+	const onToolEvent: OnToolEvent = createToolEventForwarder(socket, requestId, session, persistRequestId);
+	return streamPhase
+		? await runDeepSeekAgentStreaming(params, options, history, fullSystemPrompt, mcpHost, session.approvalGateway, phase.allowedTools, onToolEvent)
+		: await runDeepSeekAgent(params, options, history, fullSystemPrompt, mcpHost, session.approvalGateway, phase.allowedTools, onToolEvent);
+}
+
+async function createWorkflowPhasePrompt(
+	phase: WorkflowPhase,
+	params: AiChatParams,
+	mcpHost: McpHost,
+	session: ClientSession
+): Promise<string> {
+	const systemPrompt: string = await composeSystemPrompt(phase.promptId ?? params.promptId, params.systemPrompt);
+	const skillPrompt: string = await composeSkillPrompt(phase.skillId);
+	const mcpSystemContext: string = await createMcpSystemContext(mcpHost, session);
+	return [
+		systemPrompt,
+		createPhasePrompt(phase, skillPrompt, mcpSystemContext)
+	].join("\n\n");
+}
+
+function createWorkflowPendingContinuation(
+	phaseParams: AiChatParams,
+	options: DeepSeekChatOptions,
+	agentResult: Extract<DeepSeekAgentResult, { status: "approval_required" }>,
+	phase: WorkflowPhase,
+	workflowState: WorkflowRunState,
+	requestId: string,
+	userCreatedAt: string,
+	streamPhase: boolean
+): PendingAiContinuation {
+	return createPendingAiContinuation(
+		phaseParams,
+		options,
+		agentResult.continuation,
+		phase.allowedTools,
+		workflowState.originalParams.message,
+		requestId,
+		userCreatedAt,
+		streamPhase,
+		workflowState
+	);
+}
+
+async function continueWorkflowExecution(
+	socket: WebSocket,
+	requestId: string,
+	session: ClientSession,
+	mcpHost: McpHost,
+	options: DeepSeekChatOptions,
+	workflowState: WorkflowRunState,
+	userCreatedAt: string,
+	initialAgentResult?: DeepSeekAgentResult | undefined,
+	persistRequestId: string = requestId
+): Promise<void> {
+	let state: WorkflowRunState = workflowState;
+	let plan: WorkflowPlan = state.plan;
+	let phaseOutputs = state.phaseOutputs;
+	let agentResultOverride: DeepSeekAgentResult | undefined = initialAgentResult;
+	const streamFinal: boolean = state.originalParams.options?.stream === true;
+
+	for (let index: number = state.phaseIndex; index < plan.phases.length; index += 1) {
+		const phase: WorkflowPhase | undefined = plan.phases[index];
+		if (phase === undefined) {
+			break;
+		}
+
+		plan = updateWorkflowPhaseStatus(plan, phase.id, "running");
+		state = { ...state, plan, phaseIndex: index, phaseOutputs };
+		sendWorkflowEvent(socket, requestId, session, "workflow.phase.started", {
+			workflowId: plan.id,
+			phaseId: phase.id,
+			title: phase.title,
+			skillId: phase.skillId ?? null
+		}, persistRequestId);
+		sendWorkflowTodoSnapshot(socket, requestId, session, plan, persistRequestId);
+
+		const phaseMessage: string = createPhaseMessage(state.originalParams, plan, phase, phaseOutputs);
+		const streamPhase: boolean = phase.id === "summarize" && streamFinal;
+		const phaseParams: AiChatParams = createPhaseParams(state.originalParams, phase, phaseMessage, streamPhase);
+		const fullSystemPrompt: string = await createWorkflowPhasePrompt(phase, phaseParams, mcpHost, session);
+		const agentResult: DeepSeekAgentResult = agentResultOverride ?? await runWorkflowPhase(
+			socket,
+			phaseParams,
+			options,
+			state.history,
+			fullSystemPrompt,
+			phase,
+			mcpHost,
+			session,
+			requestId,
+			persistRequestId,
+			streamPhase
+		);
+		agentResultOverride = undefined;
+
+		if (agentResult.status === "approval_required") {
+			plan = updateWorkflowPhaseStatus(plan, phase.id, "paused");
+			const pausedState: WorkflowRunState = { ...state, plan, phaseIndex: index, phaseOutputs };
+			session.pendingAiContinuations.set(agentResult.approvalId, createWorkflowPendingContinuation(
+				phaseParams,
+				options,
+				agentResult,
+				phase,
+				pausedState,
+				persistRequestId,
+				userCreatedAt,
+				streamPhase
+			));
+			sendWorkflowTodoSnapshot(socket, requestId, session, plan, persistRequestId);
+			sendAiPaused(socket, requestId, agentResult);
+			return;
+		}
+
+		phaseOutputs = appendPhaseOutput(phaseOutputs, phase, agentResult.text);
+		plan = updateWorkflowPhaseStatus(plan, phase.id, "done");
+		state = { ...state, plan, phaseIndex: index + 1, phaseOutputs };
+		sendWorkflowEvent(socket, requestId, session, "workflow.phase.done", {
+			workflowId: plan.id,
+			phaseId: phase.id,
+			title: phase.title
+		}, persistRequestId);
+		sendWorkflowTodoSnapshot(socket, requestId, session, plan, persistRequestId);
+
+		if (phase.id === "summarize") {
+			await appendChatTurnToSession(
+				session,
+				state.history,
+				state.originalParams.message,
+				agentResult.text,
+				persistRequestId,
+				userCreatedAt
+			);
+			sendWorkflowEvent(socket, requestId, session, "workflow.done", {
+				workflowId: plan.id,
+				title: plan.title
+			}, persistRequestId);
+
+			if (streamFinal) {
+				sendJson(socket, {
+					type: "event",
+					id: requestId,
+					event: "ai.done",
+					data: {
+						text: agentResult.text,
+						context: {
+							historyMessagesStored: session.messages.length,
+							historyBudgetTokens: state.historyBudgetTokens,
+							mcpServers: mcpHost.getConnectedServerIds()
+						}
+					}
+				});
+			} else {
+				sendJson(socket, {
+					type: "response",
+					id: requestId,
+					ok: true,
+					result: {
+						text: agentResult.text,
+						context: {
+							historyMessagesStored: session.messages.length,
+							historyBudgetTokens: state.historyBudgetTokens,
+							mcpServers: mcpHost.getConnectedServerIds()
+						}
+					}
+				});
+			}
+			return;
+		}
+	}
+}
+
+async function startWorkflowExecution(
+	socket: WebSocket,
+	requestId: string,
+	session: ClientSession,
+	mcpHost: McpHost,
+	options: DeepSeekChatOptions,
+	plan: WorkflowPlan,
+	originalParams: AiChatParams,
+	history: ChatMessage[],
+	historyBudgetTokens: number,
+	userCreatedAt: string
+): Promise<void> {
+	sendWorkflowEvent(socket, requestId, session, "workflow.started", {
+		workflowId: plan.id,
+		title: plan.title,
+		phases: plan.phases.map((phase: WorkflowPhase) => ({
+			id: phase.id,
+			title: phase.title,
+			skillId: phase.skillId ?? null
+		}))
+	});
+	sendWorkflowTodoSnapshot(socket, requestId, session, plan);
+	try {
+		await continueWorkflowExecution(socket, requestId, session, mcpHost, options, {
+			plan,
+			phaseIndex: 0,
+			phaseOutputs: [],
+			originalParams,
+			history,
+			historyBudgetTokens
+		}, userCreatedAt);
+	} catch (error: unknown) {
+		const failedPlan: WorkflowPlan = markRemainingWorkflowTodos(plan, "failed");
+		sendWorkflowTodoSnapshot(socket, requestId, session, failedPlan);
+		sendWorkflowEvent(socket, requestId, session, "workflow.error", {
+			workflowId: plan.id,
+			title: plan.title,
+			message: error instanceof Error ? error.message : "Workflow failed"
+		});
+		throw error;
+	}
 }
 
 function applyProviderConfigToSession(session: ClientSession, config: ProviderConfigWithSecret): void {
@@ -680,12 +970,14 @@ async function handleSlashCommand(
 
 	if (command === "/reset") {
 		session.messages = [];
+		session.fullSessionLoadPromise = undefined;
 		sendChatText(socket, request, "已清空当前会话历史。", session, mcpHost);
 		return { type: "handled" };
 	}
 
 	if (command === "/init") {
 		session.messages = [];
+		session.fullSessionLoadPromise = undefined;
 		const extraInstruction: string = restText.length > 0
 			? `\n\n用户补充要求：${restText}`
 			: "";
@@ -973,6 +1265,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 			break;
 
 		case "ai.chat": {
+			await waitForFullSessionLoad(session);
 			const slashCommandResult: SlashCommandResult = await handleSlashCommand(socket, request, session, mcpHost);
 			if (slashCommandResult.type === "handled") {
 				break;
@@ -997,6 +1290,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 			}
 
 			try {
+				const turnStartedAt: string = new Date().toISOString();
 				const options: DeepSeekChatOptions = createDeepSeekChatOptions(session, apiKey);
 				const activeSkillId: SkillId | undefined = params.skillId ?? session.activeSkillId;
 				const activeSkill = activeSkillId !== undefined ? getSkill(activeSkillId) : undefined;
@@ -1018,6 +1312,23 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 					skillPrompt + mcpSystemContext
 				);
 				const history: ChatMessage[] = await selectHistoryForModel(session, historyBudgetTokens);
+				const workflowPlan: WorkflowPlan | null = slashCommandResult.type === "none" ? planWorkflow(params) : null;
+
+				if (workflowPlan !== null) {
+					await startWorkflowExecution(
+						socket,
+						request.id,
+						session,
+						mcpHost,
+						options,
+						workflowPlan,
+						params,
+						history,
+						historyBudgetTokens,
+						turnStartedAt
+					);
+					break;
+				}
 
 				const onToolEvent: OnToolEvent = createToolEventForwarder(socket, request.id, session);
 
@@ -1031,6 +1342,8 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 							agentResult.continuation,
 							allowedToolNames,
 							params.message,
+							request.id,
+							turnStartedAt,
 							true
 						));
 						sendAiPaused(socket, request.id, agentResult);
@@ -1039,7 +1352,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 
 					const text: string = agentResult.text;
 
-					await appendChatTurnToSession(session, history, params.message, text, request.id);
+					await appendChatTurnToSession(session, history, params.message, text, request.id, turnStartedAt);
 					sendJson(socket, {
 						type: "event",
 						id: request.id,
@@ -1064,6 +1377,8 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 							agentResult.continuation,
 							allowedToolNames,
 							params.message,
+							request.id,
+							turnStartedAt,
 							false
 						));
 						sendJson(socket, {
@@ -1082,7 +1397,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 					}
 
 					const text: string = agentResult.text;
-					await appendChatTurnToSession(session, history, params.message, text, request.id);
+					await appendChatTurnToSession(session, history, params.message, text, request.id, turnStartedAt);
 
 					sendJson(socket, {
 						type: "response",
@@ -1150,6 +1465,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 
 		case "session.reset":
 			session.messages = [];
+			session.fullSessionLoadPromise = undefined;
 			session.summaryMessage = undefined;
 			session.summaryCoveredMessageCount = undefined;
 			if (session.sessionId) {
@@ -1167,6 +1483,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 			break;
 
 		case "session.info":
+			await waitForFullSessionLoad(session);
 			sendJson(socket, {
 				type: "response",
 				id: request.id,
@@ -1220,6 +1537,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 			session.sessionId = metadata.id;
 			session.sessionTitle = metadata.title;
 			session.messages = [];
+			session.fullSessionLoadPromise = undefined;
 			session.summaryMessage = undefined;
 			session.summaryCoveredMessageCount = undefined;
 
@@ -1247,30 +1565,32 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 
 		case "session.open": {
 			try {
-				const stored = await openSession(request.params.sessionId);
+				const openMessageLimit: number = clampSessionOpenMessageLimit(request.params.limit);
+				const timeline = await openSessionRecentTimeline(request.params.sessionId, openMessageLimit);
 				let workspace: WorkspaceConfig | undefined;
 				let workspaceWarning: string | undefined;
 
-				if (stored.metadata.workspaceId) {
-					workspace = findWorkspace(stored.metadata.workspaceId);
+				if (timeline.metadata.workspaceId) {
+					workspace = findWorkspace(timeline.metadata.workspaceId);
 
 					if (!workspace) {
-						workspaceWarning = `Session workspace not found: ${stored.metadata.workspaceId}`;
+						workspaceWarning = `Session workspace not found: ${timeline.metadata.workspaceId}`;
 						console.warn(`[session] ${workspaceWarning}`);
 					} else {
 						try {
 							await mcpHost.switchWorkspace(workspace);
 						} catch (error: unknown) {
 							workspaceWarning = error instanceof Error ? error.message : "Failed to switch MCP workspace";
-							console.warn(`[session] Failed to switch workspace for ${stored.metadata.id}:`, workspaceWarning);
+							console.warn(`[session] Failed to switch workspace for ${timeline.metadata.id}:`, workspaceWarning);
 							workspace = undefined;
 						}
 					}
 				}
 
-				session.sessionId = stored.metadata.id;
-				session.sessionTitle = stored.metadata.title;
-				session.messages = stored.messages.map(toChatMessage);
+				session.sessionId = timeline.metadata.id;
+				session.sessionTitle = timeline.metadata.title;
+				session.messages = timeline.messages.map(toChatMessage);
+				startFullSessionLoad(session, timeline.metadata.id);
 
 				const summary = await readSummary(request.params.sessionId);
 				session.summaryMessage = summary !== null ? createSummaryMessage(summary) : undefined;
@@ -1285,12 +1605,9 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 					}
 				}
 
-				session.activeSkillId = stored.metadata.activeSkillId && isSkillId(stored.metadata.activeSkillId)
-					? stored.metadata.activeSkillId
+				session.activeSkillId = timeline.metadata.activeSkillId && isSkillId(timeline.metadata.activeSkillId)
+					? timeline.metadata.activeSkillId
 					: undefined;
-
-				const openMessageLimit: number = clampSessionOpenMessageLimit(request.params.limit);
-				const timeline = selectSessionOpenTimeline(stored.messages, stored.events, openMessageLimit);
 
 				sendJson(socket, {
 					type: "response",
@@ -1298,16 +1615,8 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 					ok: true,
 					result: {
 						opened: true,
-						metadata: stored.metadata,
-						messageCount: stored.messages.length,
-						eventCount: stored.events.length,
-						messagesOffset: timeline.messagesOffset,
-						eventsIncluded: timeline.events.length,
-						limit: openMessageLimit,
-						eventLimit: timeline.eventLimit,
-						hasMoreBefore: timeline.hasMoreBefore,
-						messages: timeline.messages.map(toChatMessage),
-						events: timeline.events,
+						metadata: timeline.metadata,
+						...createTimelinePageResult(timeline, openMessageLimit),
 						workspaceWarning: workspaceWarning ?? null
 					}
 				});
@@ -1325,6 +1634,45 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 			break;
 		}
 
+		case "session.timeline": {
+			const sessionId: string | undefined = request.params.sessionId ?? session.sessionId;
+			if (sessionId === undefined) {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: { code: "no_session", message: "No active session" }
+				});
+				break;
+			}
+
+			try {
+				const limit: number = clampSessionOpenMessageLimit(request.params.limit);
+				const timeline = await openSessionTimelinePage(sessionId, request.params.beforeOffset, limit);
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: true,
+					result: {
+						timeline: true,
+						sessionId,
+						...createTimelinePageResult(timeline, limit)
+					}
+				});
+			} catch (error: unknown) {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: {
+						code: "session_timeline_error",
+						message: error instanceof Error ? error.message : "Failed to load session timeline"
+					}
+				});
+			}
+			break;
+		}
+
 		case "session.list":
 			sendJson(socket, {
 				type: "response",
@@ -1335,6 +1683,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 			break;
 
 		case "session.save":
+			await waitForFullSessionLoad(session);
 			if (!session.sessionId) {
 				sendJson(socket, {
 					type: "response",
@@ -1362,6 +1711,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 				session.sessionId = undefined;
 				session.sessionTitle = undefined;
 				session.messages = [];
+				session.fullSessionLoadPromise = undefined;
 				session.summaryMessage = undefined;
 				session.summaryCoveredMessageCount = undefined;
 			}
@@ -1388,6 +1738,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 		}
 
 		case "session.compress": {
+			await waitForFullSessionLoad(session);
 			if (!session.sessionId) {
 				sendJson(socket, {
 					type: "response",
@@ -1950,7 +2301,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 					type: "tool.approved",
 					approvalId: request.params.approvalId,
 					toolName: pending.llmToolName
-				});
+				}, pendingContinuation?.requestId ?? request.id);
 				sendSessionEvent(socket, request.id, session, "tool.result", {
 					type: "tool.result",
 					step: pendingContinuation?.continuation.nextStep ?? 0,
@@ -1958,7 +2309,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 					toolName: pending.llmToolName,
 					resultChars: result.content.length,
 					truncated: false
-				});
+				}, pendingContinuation?.requestId ?? request.id);
 
 				if (pendingContinuation === undefined) {
 					session.messages.push({
@@ -1969,7 +2320,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 				}
 
 				session.pendingAiContinuations.delete(request.params.approvalId);
-				const onToolEvent: OnToolEvent = createToolEventForwarder(socket, request.id, session);
+				const onToolEvent: OnToolEvent = createToolEventForwarder(socket, request.id, session, pendingContinuation.requestId);
 				const agentResult: DeepSeekAgentResult = pendingContinuation.stream
 					? await continueDeepSeekAgentStreaming(
 						pendingContinuation.params,
@@ -1997,6 +2348,21 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 						pendingContinuation.allowedToolNames,
 						onToolEvent
 					);
+
+				if (pendingContinuation.workflowState !== undefined) {
+					await continueWorkflowExecution(
+						socket,
+						request.id,
+						session,
+						mcpHost,
+						pendingContinuation.options,
+						pendingContinuation.workflowState,
+						pendingContinuation.userCreatedAt,
+						agentResult,
+						pendingContinuation.requestId
+					);
+					break;
+				}
 
 				await sendContinuedAgentResult(
 					socket,
@@ -2232,14 +2598,17 @@ export function createServer(port: number, mcpHost: McpHost): WebSocketServer {
 		});
 
 		socket.on("close", (): void => {
-			if (session.sessionId && session.messages.length > 0) {
-				saveSession(session.sessionId, session.messages, {
-					workspaceId: session.activeWorkspace?.id,
-					activeSkillId: session.activeSkillId
-				}).catch((error: unknown): void => {
-					console.error("Failed to auto-save session on disconnect:", error);
-				});
-			}
+			(async (): Promise<void> => {
+				await waitForFullSessionLoad(session);
+				if (session.sessionId && session.messages.length > 0) {
+					await saveSession(session.sessionId, session.messages, {
+						workspaceId: session.activeWorkspace?.id,
+						activeSkillId: session.activeSkillId
+					});
+				}
+			})().catch((error: unknown): void => {
+				console.error("Failed to auto-save session on disconnect:", error);
+			});
 			console.log(`Client disconnected: ${remoteAddress}`);
 		});
 	});

@@ -1,5 +1,7 @@
+import { createReadStream } from "node:fs";
 import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { createInterface } from "node:readline";
 import { getDefaultSessionsDir } from "../app-paths.js";
 import type { ChatMessage } from "../protocol/types.js";
 
@@ -35,6 +37,17 @@ export type StoredSession = {
 	metadata: SessionMetadata;
 	messages: StoredMessage[];
 	events: StoredSessionEvent[];
+};
+
+export type StoredSessionTimelinePage = {
+	metadata: SessionMetadata;
+	messages: StoredMessage[];
+	events: StoredSessionEvent[];
+	messageCount: number;
+	eventCount: number;
+	messagesOffset: number;
+	hasMoreBefore: boolean;
+	latestWorkflowSnapshot: unknown | null;
 };
 
 export type SessionSummary = {
@@ -126,19 +139,146 @@ function parseJsonLines<T>(rawLines: string): T[] {
 	return items;
 }
 
-export async function openSession(sessionId: string): Promise<StoredSession> {
+function parseJsonLine<T>(line: string): T | null {
+	const trimmed: string = line.trim();
+	if (trimmed.length === 0) {
+		return null;
+	}
+
+	try {
+		return JSON.parse(trimmed) as T;
+	} catch {
+		return null;
+	}
+}
+
+async function readSessionMetadata(sessionId: string): Promise<SessionMetadata> {
 	await ensureSessionsDir();
 	const metaFile: string = metaPath(sessionId);
-	const msgFile: string = messagesPath(sessionId);
-
-	let metadata: SessionMetadata;
 
 	try {
 		const raw: string = await readFile(metaFile, "utf8");
-		metadata = JSON.parse(raw) as SessionMetadata;
+		return JSON.parse(raw) as SessionMetadata;
 	} catch {
 		throw new Error(`Session not found: ${sessionId}`);
 	}
+}
+
+async function readRecentJsonLines<T>(filePath: string, limit: number): Promise<{ items: T[]; offset: number; total: number }> {
+	const items: T[] = [];
+	let total: number = 0;
+
+	try {
+		const rl = createInterface({
+			input: createReadStream(filePath, { encoding: "utf8" }),
+			crlfDelay: Infinity
+		});
+
+		for await (const line of rl) {
+			const item: T | null = parseJsonLine<T>(line);
+			if (item === null) {
+				continue;
+			}
+
+			total += 1;
+			items.push(item);
+			if (items.length > limit) {
+				items.shift();
+			}
+		}
+	} catch {
+		return { items: [], offset: 0, total: 0 };
+	}
+
+	return {
+		items,
+		offset: Math.max(0, total - items.length),
+		total
+	};
+}
+
+async function readJsonLineRange<T>(filePath: string, offset: number, limit: number): Promise<{ items: T[]; total: number }> {
+	const items: T[] = [];
+	let total: number = 0;
+	const startOffset: number = Math.max(0, offset);
+	const endOffset: number = Math.max(startOffset, startOffset + limit);
+
+	try {
+		const rl = createInterface({
+			input: createReadStream(filePath, { encoding: "utf8" }),
+			crlfDelay: Infinity
+		});
+
+		for await (const line of rl) {
+			const item: T | null = parseJsonLine<T>(line);
+			if (item === null) {
+				continue;
+			}
+
+			if (total >= startOffset && total < endOffset) {
+				items.push(item);
+			}
+			total += 1;
+		}
+	} catch {
+		return { items: [], total: 0 };
+	}
+
+	return { items, total };
+}
+
+function collectRequestIds(messages: StoredMessage[]): Set<string> {
+	const requestIds: Set<string> = new Set();
+
+	for (const message of messages) {
+		if (message.requestId !== undefined && message.requestId.length > 0) {
+			requestIds.add(message.requestId);
+		}
+	}
+
+	return requestIds;
+}
+
+async function readSessionEventsForRequestIds(sessionId: string, requestIds: Set<string>): Promise<{
+	events: StoredSessionEvent[];
+	eventCount: number;
+	latestWorkflowSnapshot: unknown | null;
+}> {
+	const events: StoredSessionEvent[] = [];
+	let eventCount: number = 0;
+	let latestWorkflowSnapshot: unknown | null = null;
+
+	try {
+		const rl = createInterface({
+			input: createReadStream(eventsPath(sessionId), { encoding: "utf8" }),
+			crlfDelay: Infinity
+		});
+
+		for await (const line of rl) {
+			const event: StoredSessionEvent | null = parseJsonLine<StoredSessionEvent>(line);
+			if (event === null) {
+				continue;
+			}
+
+			eventCount += 1;
+			if (event.event === "workflow.todo.updated") {
+				latestWorkflowSnapshot = event.data;
+			}
+			if (requestIds.has(event.requestId)) {
+				events.push(event);
+			}
+		}
+	} catch {
+		return { events: [], eventCount: 0, latestWorkflowSnapshot: null };
+	}
+
+	events.sort((left: StoredSessionEvent, right: StoredSessionEvent): number => left.createdAt.localeCompare(right.createdAt));
+	return { events, eventCount, latestWorkflowSnapshot };
+}
+
+export async function openSession(sessionId: string): Promise<StoredSession> {
+	const metadata: SessionMetadata = await readSessionMetadata(sessionId);
+	const msgFile: string = messagesPath(sessionId);
 
 	let messages: StoredMessage[] = [];
 
@@ -161,6 +301,42 @@ export async function openSession(sessionId: string): Promise<StoredSession> {
 	return { metadata, messages, events };
 }
 
+export async function openSessionRecentTimeline(sessionId: string, limit: number): Promise<StoredSessionTimelinePage> {
+	const metadata: SessionMetadata = await readSessionMetadata(sessionId);
+	const messagePage = await readRecentJsonLines<StoredMessage>(messagesPath(sessionId), limit);
+	const eventPage = await readSessionEventsForRequestIds(sessionId, collectRequestIds(messagePage.items));
+
+	return {
+		metadata,
+		messages: messagePage.items,
+		events: eventPage.events,
+		messageCount: messagePage.total,
+		eventCount: eventPage.eventCount,
+		messagesOffset: messagePage.offset,
+		hasMoreBefore: messagePage.offset > 0,
+		latestWorkflowSnapshot: eventPage.latestWorkflowSnapshot
+	};
+}
+
+export async function openSessionTimelinePage(sessionId: string, beforeOffset: number, limit: number): Promise<StoredSessionTimelinePage> {
+	const metadata: SessionMetadata = await readSessionMetadata(sessionId);
+	const endOffset: number = Math.max(0, beforeOffset);
+	const messagesOffset: number = Math.max(0, endOffset - limit);
+	const messagePage = await readJsonLineRange<StoredMessage>(messagesPath(sessionId), messagesOffset, endOffset - messagesOffset);
+	const eventPage = await readSessionEventsForRequestIds(sessionId, collectRequestIds(messagePage.items));
+
+	return {
+		metadata,
+		messages: messagePage.items,
+		events: eventPage.events,
+		messageCount: messagePage.total,
+		eventCount: eventPage.eventCount,
+		messagesOffset,
+		hasMoreBefore: messagesOffset > 0,
+		latestWorkflowSnapshot: eventPage.latestWorkflowSnapshot
+	};
+}
+
 export async function saveSession(sessionId: string, messages: ChatMessage[], metadata?: Partial<SessionMetadata>): Promise<void> {
 	const metaFile: string = metaPath(sessionId);
 	const msgFile: string = messagesPath(sessionId);
@@ -177,7 +353,7 @@ export async function saveSession(sessionId: string, messages: ChatMessage[], me
 	const lines: string[] = [];
 
 	for (const message of messages) {
-		lines.push(JSON.stringify({ ...message, createdAt: timestamp }) + "\n");
+		lines.push(JSON.stringify({ ...message, createdAt: message.createdAt ?? timestamp }) + "\n");
 	}
 
 	await writeFile(msgFile, lines.join(""), "utf8");
@@ -186,7 +362,7 @@ export async function saveSession(sessionId: string, messages: ChatMessage[], me
 export async function appendMessage(sessionId: string, message: ChatMessage): Promise<void> {
 	await ensureSessionsDir();
 	const msgFile: string = messagesPath(sessionId);
-	const line: string = JSON.stringify({ ...message, createdAt: new Date().toISOString() }) + "\n";
+	const line: string = JSON.stringify({ ...message, createdAt: message.createdAt ?? new Date().toISOString() }) + "\n";
 	await writeFile(msgFile, line, { encoding: "utf8", flag: "a" });
 }
 

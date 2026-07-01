@@ -38,11 +38,16 @@ export class DeepSeekTokenizerCounter implements TokenCounter {
 			let startupSettled: boolean = false;
 
 			const child: ChildProcess = spawn(pythonCmd, [TOKENIZER_SCRIPT, tokenizerDir], {
+				env: {
+					...process.env,
+					PYTHONIOENCODING: "utf-8",
+					PYTHONUTF8: "1"
+				},
 				stdio: ["pipe", "pipe", "pipe"]
 			});
 
 			const startTimeout: ReturnType<typeof setTimeout> = setTimeout((): void => {
-				rejectStartup(new Error("Tokenizer startup timed out. Install transformers: pip install transformers"));
+				rejectStartup(new Error("Tokenizer startup timed out. Install tokenizers: pip install tokenizers"));
 			}, START_TIMEOUT_MS);
 
 			const resolveStartup = (): void => {

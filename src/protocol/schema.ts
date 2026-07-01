@@ -28,6 +28,7 @@ export const aiChatParamsSchema = z.object({
 		responseFormat: z.union([z.literal("text"), z.literal("json")]).optional(),
 		stream: z.boolean().optional(),
 		toolBudget: z.enum(["simple", "normal", "codegen", "project_edit"]).optional(),
+		workflow: z.enum(["auto", "single", "multi_phase"]).optional(),
 	}).optional()
 });
 
@@ -126,6 +127,16 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		method: z.literal("session.open"),
 		params: z.object({
 			sessionId: z.string().min(1),
+			limit: z.number().int().positive().max(500).optional(),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("session.timeline"),
+		params: z.object({
+			sessionId: z.string().min(1).optional(),
+			beforeOffset: z.number().int().min(0),
 			limit: z.number().int().positive().max(500).optional(),
 		}),
 	}),

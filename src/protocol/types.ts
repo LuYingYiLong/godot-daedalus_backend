@@ -13,6 +13,7 @@ export type ChatMessage = {
 	role: "system" | "user" | "assistant";
 	content: string;
 	requestId?: string | undefined;
+	createdAt?: string | undefined;
 };
 
 export type ServerResponse =
@@ -35,7 +36,24 @@ export type ServerResponse =
 export type ServerEvent = {
 	type: "event";
 	id: string;
-	event: "ai.delta" | "ai.done" | "ai.paused" | "ai.thinking.delta" | "ai.thinking.done" | "tool.call" | "tool.result" | "tool.error" | "tool.approval_required" | "tool.approved" | "tool.rejected";
+	event:
+		| "ai.delta"
+		| "ai.done"
+		| "ai.paused"
+		| "ai.thinking.delta"
+		| "ai.thinking.done"
+		| "tool.call"
+		| "tool.result"
+		| "tool.error"
+		| "tool.approval_required"
+		| "tool.approved"
+		| "tool.rejected"
+		| "workflow.started"
+		| "workflow.phase.started"
+		| "workflow.todo.updated"
+		| "workflow.phase.done"
+		| "workflow.done"
+		| "workflow.error";
 	data?: unknown;
 };
 
