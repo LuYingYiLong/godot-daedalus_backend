@@ -28,6 +28,16 @@ const READ_TOOLS: string[] = [
 	"mcp_godot_list_scripts",
 	"mcp_godot_read_text_file",
 	"mcp_godot_search_text",
+	"mcp_godot_get_project_log_config",
+	"mcp_godot_list_project_logs",
+	"mcp_godot_read_project_log",
+	"mcp_godot_get_project_settings",
+	"mcp_godot_get_editor_config_summary",
+	"mcp_godot_get_editor_settings",
+	"mcp_godot_list_editor_config_files",
+	"mcp_godot_read_editor_config_file",
+	"mcp_godot_get_editor_project_state",
+	"mcp_godot_get_recent_projects",
 	"mcp_godot_inspect_scene_tree",
 	"mcp_godot_editor_get_context",
 	"mcp_godot_editor_get_selected_nodes",
@@ -50,7 +60,11 @@ const TERMINAL_WRITE_TOOLS: string[] = [
 
 const FILE_EDIT_TOOLS: string[] = [
 	"mcp_godot_overwrite_text_file",
-	"mcp_godot_replace_text_in_file"
+	"mcp_godot_replace_text_in_file",
+	"mcp_godot_propose_set_project_setting",
+	"mcp_godot_set_project_setting",
+	"mcp_godot_propose_unset_project_setting",
+	"mcp_godot_unset_project_setting"
 ];
 
 const SCENE_WRITE_TOOLS: string[] = [

@@ -1909,6 +1909,8 @@ async function createMcpSystemContext(mcpHost: McpHost, session: ClientSession):
 	} else {
 		sections.push("## MCP 工具上下文");
 		sections.push("当前 TypeScript 后端已经连接以下 MCP server。你不能直接连接 MCP server；所有 MCP 数据都由后端读取后注入到本系统提示词中。回答时可以基于这些已注入的 MCP 上下文说明当前可见能力。");
+		sections.push("Godot 路径规则：遇到 `user://`、项目日志或 `debug/file_logging/log_path` 时，不要猜真实系统路径；必须优先使用 Godot 日志配置/日志读取工具解析。修改 `project.godot` 项目设置前，先读取当前值并使用 propose 项目设置工具预览，再调用实际 set/unset 工具等待审批。");
+		sections.push("Godot 编辑器配置可能包含本机隐私路径。读取编辑器设置、最近项目或 `.godot/editor` 状态时，默认使用摘要/脱敏结果；只有用户明确要求原始配置或原始路径时，才把工具参数 `raw` 设为 true。");
 
 		for (const serverId of serverIds) {
 				sections.push(`\n### MCP Server: ${serverId}`);

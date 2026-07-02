@@ -201,9 +201,22 @@ function escapeRegExp(text: string): string {
 	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function parseLooseOpeningTagName(openingTag: string): string | null {
-	const match: RegExpMatchArray | null = /^<\s*([A-Za-z_][A-Za-z0-9_.-]*)\s*>$/u.exec(openingTag);
-	return match?.[1] ?? null;
+type LooseOpeningTag = {
+	tagName: string;
+	selfClosing: boolean;
+};
+
+function parseLooseOpeningTag(openingTag: string): LooseOpeningTag | null {
+	const match: RegExpMatchArray | null = /^<\s*([A-Za-z_][A-Za-z0-9_.:-]*)(?:\s+[^<>]*?)?(\/?)\s*>$/u.exec(openingTag);
+	const tagName: string | undefined = match?.[1];
+	if (tagName === undefined) {
+		return null;
+	}
+
+	return {
+		tagName,
+		selfClosing: (match?.[2] ?? "") === "/"
+	};
 }
 
 function isDsmlToolCallsOpeningTag(openingTag: string): boolean {
@@ -215,7 +228,7 @@ function isPotentialToolOpeningFragment(text: string): boolean {
 		return true;
 	}
 
-	const match: RegExpMatchArray | null = /^<\s*([A-Za-z_][A-Za-z0-9_.-]*)/u.exec(text);
+	const match: RegExpMatchArray | null = /^<\s*([A-Za-z_][A-Za-z0-9_.:-]*)/u.exec(text);
 	return match?.[1] !== undefined && isPotentialLooseToolTagName(match[1]);
 }
 
@@ -337,11 +350,11 @@ class ToolSyntaxStreamFilter {
 			}
 
 			const openingTag: string = this.pendingText.slice(0, tagEnd + 1);
-			const looseTagName: string | null = parseLooseOpeningTagName(openingTag);
-			if (looseTagName !== null && isKnownLooseToolTagName(looseTagName)) {
+			const looseOpeningTag: LooseOpeningTag | null = parseLooseOpeningTag(openingTag);
+			if (looseOpeningTag !== null && isKnownLooseToolTagName(looseOpeningTag.tagName)) {
 				this.suppressedSyntax = true;
 				this.pendingText = this.pendingText.slice(tagEnd + 1);
-				this.strippingTagName = looseTagName;
+				this.strippingTagName = looseOpeningTag.selfClosing ? null : looseOpeningTag.tagName;
 				continue;
 			}
 

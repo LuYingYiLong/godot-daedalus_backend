@@ -67,6 +67,62 @@ const TOOL_MAP: Record<string, ToolMapping> = {
 		serverId: "godot",
 		toolName: "search_text"
 	},
+	"mcp_godot_get_project_log_config": {
+		serverId: "godot",
+		toolName: "get_project_log_config"
+	},
+	"mcp_godot_list_project_logs": {
+		serverId: "godot",
+		toolName: "list_project_logs"
+	},
+	"mcp_godot_read_project_log": {
+		serverId: "godot",
+		toolName: "read_project_log"
+	},
+	"mcp_godot_get_project_settings": {
+		serverId: "godot",
+		toolName: "get_project_settings"
+	},
+	"mcp_godot_get_editor_config_summary": {
+		serverId: "godot",
+		toolName: "get_editor_config_summary"
+	},
+	"mcp_godot_get_editor_settings": {
+		serverId: "godot",
+		toolName: "get_editor_settings"
+	},
+	"mcp_godot_list_editor_config_files": {
+		serverId: "godot",
+		toolName: "list_editor_config_files"
+	},
+	"mcp_godot_read_editor_config_file": {
+		serverId: "godot",
+		toolName: "read_editor_config_file"
+	},
+	"mcp_godot_get_editor_project_state": {
+		serverId: "godot",
+		toolName: "get_editor_project_state"
+	},
+	"mcp_godot_get_recent_projects": {
+		serverId: "godot",
+		toolName: "get_recent_projects"
+	},
+	"mcp_godot_propose_set_project_setting": {
+		serverId: "godot",
+		toolName: "propose_set_project_setting"
+	},
+	"mcp_godot_set_project_setting": {
+		serverId: "godot",
+		toolName: "set_project_setting"
+	},
+	"mcp_godot_propose_unset_project_setting": {
+		serverId: "godot",
+		toolName: "propose_unset_project_setting"
+	},
+	"mcp_godot_unset_project_setting": {
+		serverId: "godot",
+		toolName: "unset_project_setting"
+	},
 	"mcp_godot_propose_create_text_file": {
 		serverId: "godot",
 		toolName: "propose_create_text_file"
@@ -286,6 +342,268 @@ const TOOL_DEFINITIONS: ChatCompletionTool[] = [
 					}
 				},
 				required: ["query"]
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_godot_get_project_log_config",
+			description: "读取 Godot 项目日志配置并解析 user://。当用户询问日志位置、运行报错或 user://logs/godot.log 时，先用本工具获取真实路径，不要自己猜 user://。",
+			parameters: {
+				type: "object",
+				properties: {},
+				required: []
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_godot_list_project_logs",
+			description: "列出当前 Godot 项目日志目录中的 godot.log 和轮转日志，包含大小和修改时间。排查运行错误时先列出日志再读取最新日志。",
+			parameters: {
+				type: "object",
+				properties: {},
+				required: []
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_godot_read_project_log",
+			description: "读取 Godot 项目日志尾部。默认读取 godot.log；如果不存在则读取最新轮转日志。只读取日志目录内文件，返回 user:// 解析说明。",
+			parameters: {
+				type: "object",
+				properties: {
+					fileName: {
+						type: "string",
+						description: "可选，来自 mcp_godot_list_project_logs 的纯文件名，例如 godot.log"
+					},
+					lines: {
+						type: "integer",
+						description: "读取尾部行数，默认 200，最多 1000"
+					}
+				},
+				required: []
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_godot_get_project_settings",
+			description: "结构化读取 project.godot 中显式写出的项目设置。key 使用 Godot 完整路径，例如 application/config/name 或 debug/file_logging/log_path。",
+			parameters: {
+				type: "object",
+				properties: {
+					keys: {
+						type: "array",
+						items: { type: "string" },
+						description: "按完整 key 精确读取，例如 ['debug/file_logging/log_path']"
+					},
+					prefix: {
+						type: "string",
+						description: "按完整 key 前缀过滤，例如 debug/file_logging/"
+					}
+				},
+				required: []
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_godot_get_editor_config_summary",
+			description: "读取 Godot 编辑器全局设置和当前项目 .godot/editor 状态摘要，包括主题、字体、打开场景/脚本、最近项目数量等。默认脱敏本机路径；只有用户明确要求原始配置/路径时才设置 raw=true。",
+			parameters: {
+				type: "object",
+				properties: {
+					raw: {
+						type: "boolean",
+						description: "是否返回原始本机路径。默认 false，会脱敏用户名和非当前项目绝对路径。"
+					}
+				},
+				required: []
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_godot_get_editor_settings",
+			description: "按 key 或 prefix 读取 editor_settings-*.tres 中的 Godot 编辑器设置，例如 interface/theme/、interface/editor/fonts/、text_editor/。默认脱敏路径值。",
+			parameters: {
+				type: "object",
+				properties: {
+					keys: {
+						type: "array",
+						items: { type: "string" },
+						description: "按完整 EditorSettings key 精确读取，例如 ['interface/theme/style']"
+					},
+					prefix: {
+						type: "string",
+						description: "按 key 前缀过滤，例如 interface/theme/"
+					},
+					raw: {
+						type: "boolean",
+						description: "是否返回原始路径值。默认 false。"
+					}
+				},
+				required: []
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_godot_list_editor_config_files",
+			description: "列出只读白名单中的 Godot 编辑器配置文件，包括 editor_settings、projects.cfg、recent_dirs、text_editor_themes、script_templates 和当前项目 .godot/editor/*.cfg。读取原文前先用本工具拿 fileId。",
+			parameters: {
+				type: "object",
+				properties: {
+					raw: {
+						type: "boolean",
+						description: "是否返回原始绝对路径。默认 false。"
+					}
+				},
+				required: []
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_godot_read_editor_config_file",
+			description: "读取 mcp_godot_list_editor_config_files 返回的白名单编辑器配置文件。默认脱敏内容中的本机路径；只有用户明确要求原始内容时才设置 raw=true。",
+			parameters: {
+				type: "object",
+				properties: {
+					fileId: {
+						type: "string",
+						description: "来自 list_editor_config_files 的 fileId，例如 global_config:editor_settings-4.7.tres"
+					},
+					filePath: {
+						type: "string",
+						description: "可选路径写法；推荐优先使用 fileId"
+					},
+					raw: {
+						type: "boolean",
+						description: "是否返回原始内容。默认 false。"
+					}
+				},
+				required: []
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_godot_get_editor_project_state",
+			description: "结构化读取当前项目 .godot/editor/editor_layout.cfg 与 script_editor_cache.cfg，返回打开场景、当前场景、FileSystem Dock 选中项、打开脚本、当前脚本和光标行列。默认脱敏路径。",
+			parameters: {
+				type: "object",
+				properties: {
+					raw: {
+						type: "boolean",
+						description: "是否返回原始路径。默认 false。"
+					}
+				},
+				required: []
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_godot_get_recent_projects",
+			description: "读取 Godot projects.cfg 和 recent_dirs，返回最近项目与最近目录。默认脱敏非当前项目路径；只有用户明确要求原始路径时才设置 raw=true。",
+			parameters: {
+				type: "object",
+				properties: {
+					raw: {
+						type: "boolean",
+						description: "是否返回原始路径。默认 false。"
+					}
+				},
+				required: []
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_godot_propose_set_project_setting",
+			description: "预览设置 project.godot 中的某个项目设置，不写入磁盘。修改项目设置前优先先读取当前值，再调用本工具预览。valueExpression 是 project.godot 右侧原始表达式，例如 '\"Daedalus\"'、true、PackedStringArray(...)。",
+			parameters: {
+				type: "object",
+				properties: {
+					key: {
+						type: "string",
+						description: "完整项目设置 key，例如 debug/file_logging/log_path"
+					},
+					valueExpression: {
+						type: "string",
+						description: "project.godot 右侧原始表达式，例如 '\"user://logs/godot.log\"'"
+					}
+				},
+				required: ["key", "valueExpression"]
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_godot_set_project_setting",
+			description: "实际修改 project.godot 中的某个项目设置，会触发用户审批。修改前应读取当前值并用 mcp_godot_propose_set_project_setting 预览。",
+			parameters: {
+				type: "object",
+				properties: {
+					key: {
+						type: "string",
+						description: "完整项目设置 key，例如 debug/file_logging/log_path"
+					},
+					valueExpression: {
+						type: "string",
+						description: "project.godot 右侧原始表达式，例如 '\"user://logs/godot.log\"'"
+					}
+				},
+				required: ["key", "valueExpression"]
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_godot_propose_unset_project_setting",
+			description: "预览移除 project.godot 中的某个显式项目设置，不写入磁盘。移除后 Godot 会回退默认值。",
+			parameters: {
+				type: "object",
+				properties: {
+					key: {
+						type: "string",
+						description: "完整项目设置 key，例如 debug/file_logging/log_path"
+					}
+				},
+				required: ["key"]
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_godot_unset_project_setting",
+			description: "实际移除 project.godot 中的某个显式项目设置，会触发用户审批。移除后 Godot 会回退默认值。",
+			parameters: {
+				type: "object",
+				properties: {
+					key: {
+						type: "string",
+						description: "完整项目设置 key，例如 debug/file_logging/log_path"
+					}
+				},
+				required: ["key"]
 			}
 		}
 	},

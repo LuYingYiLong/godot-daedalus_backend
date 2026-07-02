@@ -10,6 +10,16 @@ export const READ_TOOLS: string[] = [
 	"mcp_godot_list_scripts",
 	"mcp_godot_read_text_file",
 	"mcp_godot_search_text",
+	"mcp_godot_get_project_log_config",
+	"mcp_godot_list_project_logs",
+	"mcp_godot_read_project_log",
+	"mcp_godot_get_project_settings",
+	"mcp_godot_get_editor_config_summary",
+	"mcp_godot_get_editor_settings",
+	"mcp_godot_list_editor_config_files",
+	"mcp_godot_read_editor_config_file",
+	"mcp_godot_get_editor_project_state",
+	"mcp_godot_get_recent_projects",
 	"mcp_godot_inspect_scene_tree",
 	"mcp_godot_editor_get_context",
 	"mcp_godot_editor_get_selected_nodes",
@@ -31,6 +41,10 @@ export const WRITE_TOOLS: string[] = [
 	"mcp_godot_connect_signal_in_scene",
 	"mcp_godot_apply_scene_patch",
 	"mcp_godot_editor_apply_scene_patch",
+	"mcp_godot_propose_set_project_setting",
+	"mcp_godot_set_project_setting",
+	"mcp_godot_propose_unset_project_setting",
+	"mcp_godot_unset_project_setting",
 	"mcp_terminal_run_write_preset",
 	"mcp_terminal_run_godot_scene_script"
 ];
@@ -52,7 +66,7 @@ const PHASE_TEMPLATES: Record<FixedWorkflowPhaseId, WorkflowPhase> = {
 		promptId: "godot.assistant",
 		toolBudget: "project_edit",
 		allowedTools: [...READ_TOOLS, ...WRITE_TOOLS],
-		instruction: "基于已收集上下文完成必要修改。优先小步修改，必须使用 create/overwrite/replace/apply/add/attach/connect 等实际写入工具完成修改；这些写入工具会走审批系统。不要使用 propose_* 作为实现结果。"
+		instruction: "基于已收集上下文完成必要修改。优先小步修改，必须使用 create/overwrite/replace/apply/add/attach/connect/set/unset 等实际写入工具完成修改；这些写入工具会走审批系统。修改项目设置时先用 propose_* 预览，但不要把 propose_* 当作实现结果。"
 	},
 	review: {
 		id: "review",

@@ -108,6 +108,99 @@ export function describeToolEvent(toolName: string, args: Record<string, unknown
 
 	if (toolName.startsWith("mcp_godot_")) {
 		const relativePath: string | undefined = getStringArg(args, "relativePath") ?? getStringArg(args, "scenePath");
+		const settingKey: string | undefined = getStringArg(args, "key");
+
+		if (toolName.includes("get_project_log_config")) {
+			return createDisplay("godot", "Godot", "read", "读取日志配置", "解析 Godot 项目日志路径", {
+				kind: "unknown",
+				label: "project log config"
+			});
+		}
+
+		if (toolName.includes("list_project_logs")) {
+			return createDisplay("godot", "Godot", "read", "列出项目日志", "列出 Godot 项目日志文件", {
+				kind: "file",
+				label: "project logs"
+			});
+		}
+
+		if (toolName.includes("read_project_log")) {
+			const fileName: string = getStringArg(args, "fileName") ?? "godot.log";
+			return createDisplay("godot", "Godot", "read", "读取项目日志", `读取 ${fileName}`, {
+				kind: "file",
+				label: fileName
+			});
+		}
+
+		if (toolName.includes("get_project_settings")) {
+			return createDisplay("godot", "Godot", "read", "读取项目设置", "读取 project.godot 设置", {
+				kind: "file",
+				path: "project.godot",
+				label: "project.godot"
+			});
+		}
+
+		if (toolName.includes("get_editor_config_summary")) {
+			return createDisplay("godot", "Godot", "read", "读取编辑器摘要", "读取 Godot 编辑器设置与项目编辑状态摘要", {
+				kind: "unknown",
+				label: "Godot editor config"
+			});
+		}
+
+		if (toolName.includes("get_editor_settings")) {
+			return createDisplay("godot", "Godot", "read", "读取编辑器设置", "读取 editor_settings 配置", {
+				kind: "file",
+				label: "editor_settings"
+			});
+		}
+
+		if (toolName.includes("list_editor_config_files")) {
+			return createDisplay("godot", "Godot", "read", "列出编辑器配置", "列出可读的 Godot 编辑器配置文件", {
+				kind: "file",
+				label: "editor config files"
+			});
+		}
+
+		if (toolName.includes("read_editor_config_file")) {
+			const fileId: string = getStringArg(args, "fileId") ?? getStringArg(args, "filePath") ?? "editor config";
+			return createDisplay("godot", "Godot", "read", "读取编辑器配置", `读取 ${fileId}`, {
+				kind: "file",
+				label: fileId
+			});
+		}
+
+		if (toolName.includes("get_editor_project_state")) {
+			return createDisplay("godot", "Godot", "read", "读取编辑器状态", "读取当前项目 .godot/editor 状态", {
+				kind: "file",
+				path: ".godot/editor",
+				label: ".godot/editor"
+			});
+		}
+
+		if (toolName.includes("get_recent_projects")) {
+			return createDisplay("godot", "Godot", "read", "读取最近项目", "读取 Godot 最近项目与目录", {
+				kind: "file",
+				label: "projects.cfg"
+			});
+		}
+
+		if (toolName.includes("propose_set_project_setting") || toolName.includes("propose_unset_project_setting")) {
+			const targetLabel: string = settingKey ?? "project setting";
+			return createDisplay("godot", "Godot", "propose", "预览项目设置修改", `预览 ${targetLabel}`, {
+				kind: "file",
+				path: "project.godot",
+				label: targetLabel
+			});
+		}
+
+		if (toolName.includes("set_project_setting") || toolName.includes("unset_project_setting")) {
+			const targetLabel: string = settingKey ?? "project setting";
+			return createDisplay("godot", "Godot", "write", "修改项目设置", `修改 ${targetLabel}`, {
+				kind: "file",
+				path: "project.godot",
+				label: targetLabel
+			});
+		}
 
 		if (toolName.includes("read_text_file")) {
 			const filePath: string = relativePath ?? "unknown file";

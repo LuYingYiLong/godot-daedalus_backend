@@ -1,7 +1,10 @@
 import type { ChatCompletionMessageToolCall } from "openai/resources/chat/completions";
 
-const TOOL_TAG_PATTERN: RegExp = /<\s*([A-Za-z_][A-Za-z0-9_.-]*)\s*>([\s\S]*?)<\/\s*\1\s*>/g;
-const PARAMETER_TAG_PATTERN: RegExp = /<\s*([A-Za-z_][A-Za-z0-9_.-]*)\s*>([\s\S]*?)<\/\s*\1\s*>/g;
+const XML_NAME_PATTERN: string = "[A-Za-z_][A-Za-z0-9_.:-]*";
+const TOOL_TAG_PATTERN: RegExp = new RegExp(`<\\s*(${XML_NAME_PATTERN})\\s*>([\\s\\S]*?)<\\/\\s*\\1\\s*>`, "g");
+const SELF_CLOSING_TOOL_TAG_PATTERN: RegExp = new RegExp(`<\\s*(${XML_NAME_PATTERN})([^<>]*?)\\/\\s*>`, "g");
+const PARAMETER_TAG_PATTERN: RegExp = new RegExp(`<\\s*(${XML_NAME_PATTERN})\\s*>([\\s\\S]*?)<\\/\\s*\\1\\s*>`, "g");
+const ATTRIBUTE_PATTERN: RegExp = new RegExp(`(${XML_NAME_PATTERN})\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "g");
 
 const RAW_TOOL_NAME_MAP: Readonly<Record<string, string>> = {
 	get_project_summary: "mcp_godot_get_project_summary",
@@ -10,6 +13,20 @@ const RAW_TOOL_NAME_MAP: Readonly<Record<string, string>> = {
 	list_scripts: "mcp_godot_list_scripts",
 	read_text_file: "mcp_godot_read_text_file",
 	search_text: "mcp_godot_search_text",
+	get_project_log_config: "mcp_godot_get_project_log_config",
+	list_project_logs: "mcp_godot_list_project_logs",
+	read_project_log: "mcp_godot_read_project_log",
+	get_project_settings: "mcp_godot_get_project_settings",
+	get_editor_config_summary: "mcp_godot_get_editor_config_summary",
+	get_editor_settings: "mcp_godot_get_editor_settings",
+	list_editor_config_files: "mcp_godot_list_editor_config_files",
+	read_editor_config_file: "mcp_godot_read_editor_config_file",
+	get_editor_project_state: "mcp_godot_get_editor_project_state",
+	get_recent_projects: "mcp_godot_get_recent_projects",
+	propose_set_project_setting: "mcp_godot_propose_set_project_setting",
+	set_project_setting: "mcp_godot_set_project_setting",
+	propose_unset_project_setting: "mcp_godot_propose_unset_project_setting",
+	unset_project_setting: "mcp_godot_unset_project_setting",
 	propose_create_text_file: "mcp_godot_propose_create_text_file",
 	create_text_file: "mcp_godot_create_text_file",
 	propose_overwrite_text_file: "mcp_godot_propose_overwrite_text_file",
@@ -78,6 +95,15 @@ function decodeXmlEntities(text: string): string {
 		.replaceAll("&amp;", "&");
 }
 
+function getXmlLocalName(name: string): string {
+	const namespaceSeparatorIndex: number = name.lastIndexOf(":");
+	if (namespaceSeparatorIndex < 0) {
+		return name;
+	}
+
+	return name.slice(namespaceSeparatorIndex + 1);
+}
+
 function parseLooseValue(rawValue: string): unknown {
 	const decoded: string = decodeXmlEntities(rawValue).trim();
 	if (decoded.length === 0) {
@@ -104,27 +130,64 @@ function parseLooseValue(rawValue: string): unknown {
 }
 
 export function normalizeKnownToolName(toolName: string): string | undefined {
-	if (toolName.startsWith("mcp_")) {
-		return toolName;
+	const localToolName: string = getXmlLocalName(toolName);
+	if (localToolName.startsWith("mcp_")) {
+		return localToolName;
 	}
 
-	return RAW_TOOL_NAME_MAP[toolName];
+	return RAW_TOOL_NAME_MAP[localToolName];
 }
 
 export function isKnownLooseToolTagName(toolName: string): boolean {
-	return toolName.startsWith("mcp_") || RAW_TOOL_NAME_MAP[toolName] !== undefined;
+	const localToolName: string = getXmlLocalName(toolName);
+	return localToolName.startsWith("mcp_") || RAW_TOOL_NAME_MAP[localToolName] !== undefined;
 }
 
 export function isPotentialLooseToolTagName(toolNamePrefix: string): boolean {
-	return toolNamePrefix.length > 0 && (
-		"mcp_".startsWith(toolNamePrefix)
-		|| toolNamePrefix.startsWith("mcp_")
-		|| RAW_TOOL_NAMES.some((toolName: string): boolean => toolName.startsWith(toolNamePrefix))
+	const localToolNamePrefix: string = getXmlLocalName(toolNamePrefix);
+	return localToolNamePrefix.length > 0 && (
+		"mcp_".startsWith(localToolNamePrefix)
+		|| localToolNamePrefix.startsWith("mcp_")
+		|| RAW_TOOL_NAMES.some((toolName: string): boolean => toolName.startsWith(localToolNamePrefix))
 	);
 }
 
 function normalizeParameterName(toolName: string, parameterName: string): string {
-	if (parameterName === "path") {
+	const localParameterName: string = getXmlLocalName(parameterName);
+	if (toolName === "mcp_godot_read_project_log" && (localParameterName === "path" || localParameterName === "resourcePath" || localParameterName === "file")) {
+		return "fileName";
+	}
+
+	if (toolName === "mcp_godot_read_editor_config_file" && (localParameterName === "path" || localParameterName === "resourcePath" || localParameterName === "file")) {
+		return "fileId";
+	}
+
+	if (
+		(toolName === "mcp_godot_get_editor_settings" || toolName === "mcp_godot_get_project_settings")
+		&& (localParameterName === "setting" || localParameterName === "settingKey")
+	) {
+		return "prefix";
+	}
+
+	if (
+		(toolName === "mcp_godot_propose_set_project_setting" || toolName === "mcp_godot_set_project_setting")
+		&& (localParameterName === "value" || localParameterName === "expression")
+	) {
+		return "valueExpression";
+	}
+
+	if (
+		(toolName === "mcp_godot_get_project_settings"
+			|| toolName === "mcp_godot_propose_set_project_setting"
+			|| toolName === "mcp_godot_set_project_setting"
+			|| toolName === "mcp_godot_propose_unset_project_setting"
+			|| toolName === "mcp_godot_unset_project_setting")
+		&& (localParameterName === "setting" || localParameterName === "settingKey")
+	) {
+		return "key";
+	}
+
+	if (localParameterName === "path" || localParameterName === "resourcePath") {
 		if (SCENE_PATH_TOOL_NAMES.has(toolName)) {
 			return "scenePath";
 		}
@@ -134,15 +197,15 @@ function normalizeParameterName(toolName: string, parameterName: string): string
 		}
 	}
 
-	if (parameterName === "preset") {
+	if (localParameterName === "preset") {
 		return "presetName";
 	}
 
-	if (parameterName === "operation") {
+	if (localParameterName === "operation") {
 		return "operationJson";
 	}
 
-	return parameterName;
+	return localParameterName;
 }
 
 function defaultParameterName(toolName: string): string | undefined {
@@ -162,11 +225,36 @@ function defaultParameterName(toolName: string): string | undefined {
 		return "nodePath";
 	}
 
+	if (toolName === "mcp_godot_read_project_log") {
+		return "fileName";
+	}
+
+	if (toolName === "mcp_godot_read_editor_config_file") {
+		return "fileId";
+	}
+
+	if (
+		toolName === "mcp_godot_propose_set_project_setting"
+		|| toolName === "mcp_godot_set_project_setting"
+		|| toolName === "mcp_godot_propose_unset_project_setting"
+		|| toolName === "mcp_godot_unset_project_setting"
+	) {
+		return "key";
+	}
+
 	if (toolName === "mcp_terminal_run_safe_preset" || toolName === "mcp_terminal_run_write_preset") {
 		return "presetName";
 	}
 
 	return undefined;
+}
+
+function parseLooseParameterValue(parameterName: string, rawValue: string): unknown {
+	if (parameterName === "valueExpression") {
+		return decodeXmlEntities(rawValue).trim();
+	}
+
+	return parseLooseValue(rawValue);
 }
 
 function parseLooseArguments(toolName: string, body: string): Record<string, unknown> {
@@ -184,15 +272,34 @@ function parseLooseArguments(toolName: string, body: string): Record<string, unk
 
 		foundParameter = true;
 		const parameterName: string = normalizeParameterName(toolName, rawParameterName);
-		args[parameterName] = parseLooseValue(rawParameterValue);
+		args[parameterName] = parseLooseParameterValue(parameterName, rawParameterValue);
 	}
 
 	if (!foundParameter) {
 		const fallbackName: string | undefined = defaultParameterName(toolName);
-		const fallbackValue: unknown = parseLooseValue(body);
+		const fallbackValue: unknown = fallbackName === undefined ? undefined : parseLooseParameterValue(fallbackName, body);
 		if (fallbackName !== undefined && typeof fallbackValue === "string" && fallbackValue.length > 0) {
 			args[fallbackName] = fallbackValue;
 		}
+	}
+
+	return args;
+}
+
+function parseLooseAttributeArguments(toolName: string, attributesText: string): Record<string, unknown> {
+	const args: Record<string, unknown> = {};
+	let attributeMatch: RegExpExecArray | null;
+
+	ATTRIBUTE_PATTERN.lastIndex = 0;
+	while ((attributeMatch = ATTRIBUTE_PATTERN.exec(attributesText)) !== null) {
+		const rawParameterName: string = attributeMatch[1] ?? "";
+		const rawParameterValue: string = attributeMatch[2] ?? attributeMatch[3] ?? "";
+		if (rawParameterName.length === 0) {
+			continue;
+		}
+
+		const parameterName: string = normalizeParameterName(toolName, rawParameterName);
+		args[parameterName] = parseLooseParameterValue(parameterName, rawParameterValue);
 	}
 
 	return args;
@@ -220,12 +327,31 @@ export function containsLooseToolCalls(
 		}
 	}
 
+	SELF_CLOSING_TOOL_TAG_PATTERN.lastIndex = 0;
+	while ((tagMatch = SELF_CLOSING_TOOL_TAG_PATTERN.exec(text)) !== null) {
+		const rawToolName: string = tagMatch[1] ?? "";
+		const toolName: string | undefined = normalizeKnownToolName(rawToolName);
+		if (toolName !== undefined && isAllowedToolName(toolName, allowedToolNames)) {
+			return true;
+		}
+	}
+
 	return false;
 }
 
 export function stripLooseToolCalls(text: string, allowedToolNames?: ReadonlySet<string>): string {
 	return text.replace(
 		TOOL_TAG_PATTERN,
+		(match: string, rawToolName: string): string => {
+			const toolName: string | undefined = normalizeKnownToolName(rawToolName);
+			if (toolName !== undefined && isAllowedToolName(toolName, allowedToolNames)) {
+				return "";
+			}
+
+			return match;
+		}
+	).replace(
+		SELF_CLOSING_TOOL_TAG_PATTERN,
 		(match: string, rawToolName: string): string => {
 			const toolName: string | undefined = normalizeKnownToolName(rawToolName);
 			if (toolName !== undefined && isAllowedToolName(toolName, allowedToolNames)) {
@@ -260,6 +386,25 @@ export function parseLooseToolCalls(
 			function: {
 				name: toolName,
 				arguments: JSON.stringify(parseLooseArguments(toolName, body))
+			}
+		});
+	}
+
+	SELF_CLOSING_TOOL_TAG_PATTERN.lastIndex = 0;
+	while ((tagMatch = SELF_CLOSING_TOOL_TAG_PATTERN.exec(text)) !== null) {
+		const rawToolName: string = tagMatch[1] ?? "";
+		const attributesText: string = tagMatch[2] ?? "";
+		const toolName: string | undefined = normalizeKnownToolName(rawToolName);
+		if (toolName === undefined || !isAllowedToolName(toolName, allowedToolNames)) {
+			continue;
+		}
+
+		toolCalls.push({
+			id: `${idPrefix}-${toolCalls.length + 1}`,
+			type: "function",
+			function: {
+				name: toolName,
+				arguments: JSON.stringify(parseLooseAttributeArguments(toolName, attributesText))
 			}
 		});
 	}
