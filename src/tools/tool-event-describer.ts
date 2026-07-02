@@ -5,6 +5,7 @@ export type ToolEventCategory =
 	| "terminal"
 	| "scene"
 	| "approval"
+	| "propose"
 	| "docs"
 	| "unknown";
 
@@ -74,6 +75,19 @@ export function describeToolEvent(toolName: string, args: Record<string, unknown
 			return createDisplay("godot", "Godot", "search", "搜索文本", `搜索 ${query}`, {
 				kind: "query",
 				label: query
+			});
+		}
+
+		if (toolName.includes("propose_")) {
+			const targetKind: ToolEventTarget["kind"] = toolName.includes("scene") || toolName.includes("scene_patch") || relativePath?.endsWith(".tscn")
+				? "scene"
+				: "file";
+			const targetLabel: string = relativePath ?? (targetKind === "scene" ? "unknown scene" : "unknown file");
+			const title: string = targetKind === "scene" ? "预览场景修改" : "预览文件修改";
+			return createDisplay("godot", "Godot", "propose", title, `${title} ${targetLabel}`, {
+				kind: targetKind,
+				path: targetLabel,
+				label: targetLabel
 			});
 		}
 

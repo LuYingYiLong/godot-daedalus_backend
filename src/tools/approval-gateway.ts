@@ -1,6 +1,6 @@
 import type { McpHost } from "../mcp/mcp-host.js";
-import { evaluateToolCall, type ApprovalDecision, type ApprovalMode, getToolPolicy } from "./tool-policy.js";
-import { resolveToolMapping, MAX_TOOL_RESULT_CHARS } from "./llm-tools.js";
+import { evaluateToolCall, type ApprovalDecision, type ApprovalMode } from "./tool-policy.js";
+import { executeLlmToolWithIdempotency, getLlmToolExecutionIdentity } from "./tool-idempotency.js";
 
 export type PendingApproval = {
 	approvalId: string;
@@ -10,10 +10,11 @@ export type PendingApproval = {
 	args: Record<string, unknown>;
 	reason: string;
 	createdAt: number;
+	executionFingerprint?: string | undefined;
 };
 
 export type ApprovalResult =
-	| { status: "executed"; content: string }
+	| { status: "executed"; content: string; cached?: boolean | undefined }
 	| { status: "pending"; approval: PendingApproval }
 	| { status: "denied"; reason: string };
 
@@ -54,8 +55,18 @@ export class ApprovalGateway {
 		llmToolName: string,
 		args: Record<string, unknown>,
 		toolCallId: string,
-		reason: string
+		reason: string,
+		executionScope: string = "workspace:none"
 	): PendingApproval {
+		const executionFingerprint: string | undefined = getLlmToolExecutionIdentity(llmToolName, args, executionScope)?.fingerprint;
+		if (executionFingerprint !== undefined) {
+			for (const pendingApproval of this.pendingApprovals.values()) {
+				if (pendingApproval.executionFingerprint === executionFingerprint) {
+					return pendingApproval;
+				}
+			}
+		}
+
 		const approvalId: string = `approval-${this.approvalIdCounter}`;
 		this.approvalIdCounter += 1;
 
@@ -66,14 +77,15 @@ export class ApprovalGateway {
 			llmToolName,
 			args,
 			reason,
-			createdAt: Date.now()
+			createdAt: Date.now(),
+			executionFingerprint
 		};
 
 		this.pendingApprovals.set(approvalId, pending);
 		return pending;
 	}
 
-	async approve(approvalId: string, mcpHost: McpHost): Promise<{ content: string }> {
+	async approve(approvalId: string, mcpHost: McpHost): Promise<{ content: string; cached?: boolean | undefined }> {
 		const pending: PendingApproval | undefined = this.pendingApprovals.get(approvalId);
 
 		if (!pending) {
@@ -82,24 +94,8 @@ export class ApprovalGateway {
 
 		this.pendingApprovals.delete(approvalId);
 
-		const mapping = resolveToolMapping(pending.llmToolName);
-		const result = await mcpHost.callTool(mapping.serverId, mapping.toolName, pending.args) as {
-			content: Array<{ type: string; text?: string }>;
-		};
-		const firstContent = result.content[0];
-		let textResult: string;
-
-		if (firstContent !== undefined && "text" in firstContent) {
-			textResult = firstContent.text as string;
-		} else {
-			textResult = JSON.stringify(result);
-		}
-
-		if (textResult.length > MAX_TOOL_RESULT_CHARS) {
-			textResult = textResult.slice(0, MAX_TOOL_RESULT_CHARS) + `\n\n[结果已截断，原始长度 ${textResult.length} 字符]`;
-		}
-
-		return { content: textResult };
+		const result = await executeLlmToolWithIdempotency(mcpHost, pending.llmToolName, pending.args);
+		return { content: result.content, cached: result.reused };
 	}
 
 	reject(approvalId: string): PendingApproval {

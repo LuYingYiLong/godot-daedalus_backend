@@ -538,15 +538,25 @@ export async function restoreArchivedSession(sessionId: string): Promise<Session
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {
+	const safeSessionId: string = assertSafeSessionId(sessionId);
 	await ensureSessionsDir();
-	const dir: string = getSessionDir(sessionId);
-	await rm(dir, { recursive: true, force: true });
+	const dir: string = getSessionDir(safeSessionId);
+	if (!await pathExists(dir)) {
+		throw new Error(`Session not found: ${safeSessionId}`);
+	}
+
+	await rm(dir, { recursive: true });
 }
 
 export async function deleteArchivedSession(sessionId: string): Promise<void> {
+	const safeSessionId: string = assertSafeSessionId(sessionId);
 	await ensureArchivedSessionsDir();
-	const dir: string = getArchivedSessionDir(sessionId);
-	await rm(dir, { recursive: true, force: true });
+	const dir: string = getArchivedSessionDir(safeSessionId);
+	if (!await pathExists(dir)) {
+		throw new Error(`Archived session not found: ${safeSessionId}`);
+	}
+
+	await rm(dir, { recursive: true });
 }
 
 export async function renameSession(sessionId: string, newTitle: string): Promise<SessionMetadata> {

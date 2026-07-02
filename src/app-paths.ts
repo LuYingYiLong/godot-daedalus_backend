@@ -26,3 +26,7 @@ export function getDefaultSessionsDir(): string {
 export function getDefaultArchivedSessionsDir(): string {
 	return join(getAppDataDir(), "data", "archived_sessions");
 }
+
+export function getToolExecutionLedgerPath(): string {
+	return join(getAppDataDir(), "data", "tool-executions.jsonl");
+}

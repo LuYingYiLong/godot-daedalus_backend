@@ -294,7 +294,7 @@ const TOOL_DEFINITIONS: ChatCompletionTool[] = [
 		type: "function",
 		function: {
 			name: "mcp_godot_propose_create_text_file",
-			description: "提出新建一个文本文件的提案。不会实际写入磁盘。只能创建 .gd/.tres/.tscn/.json/.md/.txt 文件。.tscn 文件必须包含 [gd_scene ...] 头部和至少一个 [node ...] 根节点。不允许覆盖已有文件。需要用户通过 Godot 客户端确认后才会真正写入。",
+			description: "仅预览新建文本文件方案，不会实际写入磁盘，也不会创建审批。只能创建 .gd/.tres/.tscn/.json/.md/.txt 文件。.tscn 文件必须包含 [gd_scene ...] 头部和至少一个 [node ...] 根节点。不允许覆盖已有文件。需要真正写入时，必须改用 mcp_godot_create_text_file。",
 			parameters: {
 				type: "object",
 				properties: {
@@ -336,7 +336,7 @@ const TOOL_DEFINITIONS: ChatCompletionTool[] = [
 		type: "function",
 		function: {
 			name: "mcp_godot_propose_overwrite_text_file",
-			description: "提出覆盖已有文件的提案。不会实际写入。支持 .gd/.tres/.tscn/.json/.md/.txt 文件。.tscn 文件必须包含 [gd_scene ...] 头部和至少一个 [node ...] 根节点。文件必须已存在，会返回新旧内容对比。AI 只能 propose，实际覆盖需要用户通过 Godot 客户端确认。",
+			description: "仅预览覆盖已有文件方案，不会实际写入，也不会创建审批。支持 .gd/.tres/.tscn/.json/.md/.txt 文件。.tscn 文件必须包含 [gd_scene ...] 头部和至少一个 [node ...] 根节点。文件必须已存在，会返回新旧内容对比。需要真正覆盖时，必须改用 mcp_godot_overwrite_text_file。",
 			parameters: {
 				type: "object",
 				properties: {
@@ -366,7 +366,7 @@ const TOOL_DEFINITIONS: ChatCompletionTool[] = [
 		type: "function",
 		function: {
 			name: "mcp_godot_propose_replace_text_in_file",
-			description: "提出替换文件中指定文本的提案。不会实际写入。oldText 必须精确匹配（含空白和缩进），只替换首次出现。AI 只能 propose，实际替换需要用户确认。",
+			description: "仅预览替换文件中指定文本的方案，不会实际写入，也不会创建审批。oldText 必须精确匹配（含空白和缩进），只替换首次出现。需要真正替换时，必须改用 mcp_godot_replace_text_in_file。",
 			parameters: {
 				type: "object",
 				properties: {
@@ -475,7 +475,7 @@ const TOOL_DEFINITIONS: ChatCompletionTool[] = [
 		type: "function",
 		function: {
 			name: "mcp_godot_propose_apply_scene_patch",
-			description: "提出批量修改已有 Godot .tscn 场景的提案，不会实际写入。支持一次添加多个节点、挂载脚本、连接信号。创建复杂 UI 或小游戏场景时，应优先使用本工具减少碎片化 add_node 调用。",
+			description: "仅预览批量修改已有 Godot .tscn 场景的方案，不会实际写入，也不会创建审批。支持一次添加多个节点、挂载脚本、连接信号。需要真正修改场景时，必须改用 mcp_godot_apply_scene_patch。",
 			parameters: {
 				type: "object",
 				properties: {
