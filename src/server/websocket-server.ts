@@ -11,7 +11,7 @@ import {
 	type DeepSeekAgentResult
 } from "../providers/deepseek-agent.js";
 import type { OnToolEvent } from "../tools/tool-dispatcher.js";
-import type { DeepSeekChatOptions } from "../providers/deepseek-client.js";
+import { chatWithDeepSeek, createDeepSeekClient, type DeepSeekChatOptions } from "../providers/deepseek-client.js";
 import { McpHost } from "../mcp/mcp-host.js";
 import { sendJson } from "./send-json.js";
 import { createHash } from "node:crypto";
@@ -45,7 +45,6 @@ import {
 	type StoredSessionEvent,
 	type StoredSessionTimelinePage
 } from "../session/session-store.js";
-import { createDeepSeekClient } from "../providers/deepseek-client.js";
 import {
 	clearProviderConfig,
 	getProviderConfigStatus,
@@ -78,6 +77,10 @@ const THINKING_EVENT_FLUSH_CHARS: number = 512;
 const REQUEST_DEDUP_TTL_MS: number = 5 * 60 * 1000;
 const MAX_COMPLETED_REQUEST_IDS: number = 512;
 const CUSTOM_INSTRUCTIONS_TRACE_WARNING_CHARS: number = 4000;
+const DEFAULT_NEXT_STEP_HINT_COUNT: number = 3;
+const MAX_NEXT_STEP_HINT_COUNT: number = 5;
+const MAX_NEXT_STEP_HINT_MESSAGE_CHARS: number = 320;
+const MAX_GUIDE_TEXT_CHARS: number = 4000;
 
 function fingerprintText(text: string): string {
 	if (text.length === 0) {
@@ -96,6 +99,7 @@ function logPromptTrace(params: {
 	systemPrompt: string;
 	skillPrompt: string;
 	mcpSystemContext: string;
+	guidePromptSection?: string | undefined;
 	fullSystemPrompt: string;
 }): void {
 	const customInstructions: string = params.customInstructions?.trim() ?? "";
@@ -112,6 +116,7 @@ function logPromptTrace(params: {
 			`system=${params.systemPrompt.length}chars:${fingerprintText(params.systemPrompt)}`,
 			`skillPrompt=${params.skillPrompt.length}chars:${fingerprintText(params.skillPrompt)}`,
 			`mcpContext=${params.mcpSystemContext.length}chars:${fingerprintText(params.mcpSystemContext)}`,
+			`guide=${(params.guidePromptSection ?? "").length}chars:${fingerprintText(params.guidePromptSection ?? "")}`,
 			`full=${params.fullSystemPrompt.length}chars:${fingerprintText(params.fullSystemPrompt)}`
 		].join(" ")
 	);
@@ -171,7 +176,22 @@ type ClientSession = {
 	inFlightRequestIds: Set<string>;
 	completedRequestIds: Map<string, number>;
 	eventPersistQueue: Promise<void>;
+	pendingGuides: PendingGuide[];
 	fullSessionLoadPromise?: Promise<void> | undefined;
+};
+
+type PendingGuide = {
+	id: string;
+	clientGuideId: string;
+	text: string;
+	anchorRequestId?: string | undefined;
+	createdAt: string;
+	updatedAt: string;
+};
+
+type NextStepHint = {
+	title: string;
+	message: string;
 };
 
 function clearActiveSession(session: ClientSession): void {
@@ -181,6 +201,7 @@ function clearActiveSession(session: ClientSession): void {
 	session.fullSessionLoadPromise = undefined;
 	session.summaryMessage = undefined;
 	session.summaryCoveredMessageCount = undefined;
+	session.pendingGuides = [];
 }
 
 function isCancellationError(error: unknown, abortSignal?: AbortSignal | undefined): boolean {
@@ -516,6 +537,7 @@ function startFullSessionLoad(session: ClientSession, sessionId: string): void {
 			}
 
 			session.messages = stored.messages.map(toChatMessage);
+			session.pendingGuides = hydratePendingGuides(stored.events);
 		} catch (error: unknown) {
 			console.error(`[session] Failed to load complete history for ${sessionId}:`, error);
 		}
@@ -547,6 +569,266 @@ function createDeepSeekChatOptions(session: ClientSession, apiKey: string): Deep
 	return options;
 }
 
+function createGuideId(): string {
+	return `guide-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function clipTextByChars(text: string, maxChars: number): string {
+	if (text.length <= maxChars) {
+		return text;
+	}
+
+	return text.slice(0, maxChars);
+}
+
+function createPendingGuide(clientGuideId: string, text: string, anchorRequestId: string | undefined): PendingGuide {
+	const timestamp: string = new Date().toISOString();
+	const guide: PendingGuide = {
+		id: createGuideId(),
+		clientGuideId,
+		text: clipTextByChars(text.trim(), MAX_GUIDE_TEXT_CHARS),
+		createdAt: timestamp,
+		updatedAt: timestamp
+	};
+	if (anchorRequestId !== undefined) {
+		guide.anchorRequestId = anchorRequestId;
+	}
+	return guide;
+}
+
+function serializePendingGuide(guide: PendingGuide): Record<string, unknown> {
+	return {
+		guideId: guide.id,
+		clientGuideId: guide.clientGuideId,
+		text: guide.text,
+		anchorRequestId: guide.anchorRequestId ?? null,
+		status: "pending",
+		createdAt: guide.createdAt,
+		updatedAt: guide.updatedAt
+	};
+}
+
+function findPendingGuideIndexById(session: ClientSession, guideId: string): number {
+	return session.pendingGuides.findIndex((guide: PendingGuide): boolean => guide.id === guideId);
+}
+
+function findPendingGuideByClientId(session: ClientSession, clientGuideId: string): PendingGuide | undefined {
+	return session.pendingGuides.find((guide: PendingGuide): boolean => guide.clientGuideId === clientGuideId);
+}
+
+function readEventDataObject(event: StoredSessionEvent): Record<string, unknown> | null {
+	if (typeof event.data !== "object" || event.data === null || Array.isArray(event.data)) {
+		return null;
+	}
+
+	return event.data as Record<string, unknown>;
+}
+
+function hydratePendingGuides(events: StoredSessionEvent[]): PendingGuide[] {
+	const pendingById: Map<string, PendingGuide> = new Map();
+
+	for (const event of events) {
+		const data: Record<string, unknown> | null = readEventDataObject(event);
+		if (data === null) {
+			continue;
+		}
+
+		const guideId: string = String(data.guideId ?? "");
+		if (guideId.length === 0) {
+			continue;
+		}
+
+		if (event.event === "guide.added") {
+			const text: string = String(data.text ?? "").trim();
+			const clientGuideId: string = String(data.clientGuideId ?? guideId);
+			if (text.length === 0) {
+				continue;
+			}
+
+			const guide: PendingGuide = {
+				id: guideId,
+				clientGuideId,
+				text: clipTextByChars(text, MAX_GUIDE_TEXT_CHARS),
+				createdAt: String(data.createdAt ?? event.createdAt),
+				updatedAt: String(data.updatedAt ?? event.createdAt)
+			};
+			const anchorRequestId: string = String(data.anchorRequestId ?? "");
+			if (anchorRequestId.length > 0) {
+				guide.anchorRequestId = anchorRequestId;
+			}
+			pendingById.set(guideId, guide);
+		} else if (event.event === "guide.updated") {
+			const guide: PendingGuide | undefined = pendingById.get(guideId);
+			if (guide === undefined) {
+				continue;
+			}
+			const text: string = String(data.text ?? "").trim();
+			if (text.length > 0) {
+				guide.text = clipTextByChars(text, MAX_GUIDE_TEXT_CHARS);
+			}
+			guide.updatedAt = String(data.updatedAt ?? event.createdAt);
+		} else if (event.event === "guide.deleted" || event.event === "guide.applied") {
+			pendingById.delete(guideId);
+		}
+	}
+
+	return [...pendingById.values()];
+}
+
+async function persistGuideEvent(
+	session: ClientSession,
+	requestId: string,
+	eventName: "guide.added" | "guide.updated" | "guide.deleted",
+	data: Record<string, unknown>
+): Promise<void> {
+	if (!session.sessionId) {
+		return;
+	}
+
+	await waitForSessionEventPersistence(session);
+	await appendSessionEvent(session.sessionId, requestId, eventName, data);
+}
+
+function formatGuidePromptSection(guides: PendingGuide[]): string {
+	if (guides.length === 0) {
+		return "";
+	}
+
+	return [
+		"## 用户实时引导（安全边界注入）",
+		"以下内容是用户在模型响应过程中提交的引导，不属于聊天历史消息，但在本轮安全边界已经生效。请把它们视为当前用户意图的补充；若与系统提示、AGENTS.md、工具安全边界或更高优先级指令冲突，必须服从更高优先级并说明无法满足的部分。",
+		...guides.map((guide: PendingGuide, index: number): string => [
+			`### 引导 ${index + 1}`,
+			guide.text
+		].join("\n"))
+	].join("\n\n");
+}
+
+function consumePendingGuideSection(
+	socket: WebSocket,
+	requestId: string,
+	session: ClientSession,
+	persistRequestId: string = requestId
+): string {
+	if (session.pendingGuides.length === 0) {
+		return "";
+	}
+
+	const guides: PendingGuide[] = session.pendingGuides.splice(0, session.pendingGuides.length);
+	const appliedAt: string = new Date().toISOString();
+	for (const guide of guides) {
+		console.info(
+			`[guide.applied] session=${session.sessionId ?? "none"} request=${persistRequestId} guide=${guide.id} chars=${guide.text.length} sha256=${fingerprintText(guide.text)}`
+		);
+		sendSessionEvent(socket, requestId, session, "guide.applied", {
+			type: "guide.applied",
+			guideId: guide.id,
+			clientGuideId: guide.clientGuideId,
+			anchorRequestId: guide.anchorRequestId ?? null,
+			appliedAt
+		}, persistRequestId);
+	}
+
+	return formatGuidePromptSection(guides);
+}
+
+function parseJsonObjectLoose(text: string): unknown {
+	try {
+		return JSON.parse(text) as unknown;
+	} catch {
+		const startIndex: number = text.indexOf("{");
+		const endIndex: number = text.lastIndexOf("}");
+		if (startIndex >= 0 && endIndex > startIndex) {
+			return JSON.parse(text.slice(startIndex, endIndex + 1)) as unknown;
+		}
+		throw new Error("LLM did not return valid JSON");
+	}
+}
+
+function normalizeNextStepHints(raw: unknown, maxHints: number): NextStepHint[] {
+	const source: unknown = typeof raw === "object" && raw !== null && !Array.isArray(raw)
+		? (raw as Record<string, unknown>).hints
+		: raw;
+	if (!Array.isArray(source)) {
+		return [];
+	}
+
+	const hints: NextStepHint[] = [];
+	for (const item of source) {
+		if (typeof item !== "object" || item === null || Array.isArray(item)) {
+			continue;
+		}
+
+		const record: Record<string, unknown> = item as Record<string, unknown>;
+		const title: string = String(record.title ?? "").trim();
+		const message: string = String(record.message ?? "").trim();
+		const normalizedMessage: string = clipTextByChars(message.length > 0 ? message : title, MAX_NEXT_STEP_HINT_MESSAGE_CHARS);
+		if (normalizedMessage.length === 0) {
+			continue;
+		}
+
+		hints.push({
+			title: clipTextByChars(title.length > 0 ? title : normalizedMessage, 48),
+			message: normalizedMessage
+		});
+		if (hints.length >= maxHints) {
+			break;
+		}
+	}
+
+	return hints;
+}
+
+function createNextStepHintPrompt(trigger: string, anchorRequestId: string | undefined): string {
+	return [
+		"你是 Godot Daedalus 的对话引导器。只生成下一步建议，不调用工具，不修改会话，不输出解释文本。",
+		"输出必须是 JSON object，格式：{\"hints\":[{\"title\":\"短标题\",\"message\":\"可直接填入输入框的一句话\"}]}",
+		"规则：",
+		"- 生成 2 到 3 条。",
+		"- message 必须短、具体、可直接作为用户下一轮消息。",
+		"- 避免重复刚刚已经完成的动作。",
+		"- 如果用户当前正在修改代码，优先建议验证、补测、总结或继续明确目标。",
+		`- 触发点：${trigger || "done"}。`,
+		anchorRequestId ? `- 锚点请求：${anchorRequestId}。` : ""
+	].filter((line: string): boolean => line.length > 0).join("\n");
+}
+
+async function createNextStepHints(
+	session: ClientSession,
+	options: DeepSeekChatOptions,
+	maxHints: number,
+	trigger: string,
+	anchorRequestId: string | undefined,
+	abortSignal?: AbortSignal | undefined
+): Promise<NextStepHint[]> {
+	const clippedMaxHints: number = Math.max(1, Math.min(MAX_NEXT_STEP_HINT_COUNT, Math.floor(maxHints)));
+	const history: ChatMessage[] = session.messages.slice(-8);
+	const latestMessages: string = history
+		.map((message: ChatMessage): string => `${message.role}: ${clipTextByChars(message.content, 1200)}`)
+		.join("\n\n");
+	const text: string = await chatWithDeepSeek(
+		{
+			message: [
+				"请基于下面最近会话生成下一步提示。",
+				"",
+				"## 最近会话",
+				latestMessages.length > 0 ? latestMessages : "暂无会话历史。"
+			].join("\n"),
+			options: {
+				temperature: 0.35,
+				maxTokens: 600,
+				responseFormat: "json",
+				workflow: "single"
+			}
+		},
+		options,
+		[],
+		createNextStepHintPrompt(trigger, anchorRequestId),
+		abortSignal
+	);
+	return normalizeNextStepHints(parseJsonObjectLoose(text), clippedMaxHints);
+}
+
 function resolveAllowedToolsForChatParams(params: AiChatParams, activeSkillTools: readonly string[] | undefined): readonly string[] | undefined {
 	if (activeSkillTools !== undefined) {
 		return activeSkillTools;
@@ -560,7 +842,10 @@ function resolveAllowedToolsForChatParams(params: AiChatParams, activeSkillTools
 }
 
 function shouldPersistSessionEvent(eventName: ServerEvent["event"]): boolean {
-	return eventName.startsWith("tool.") || eventName.startsWith("ai.thinking.") || eventName.startsWith("workflow.");
+	return eventName.startsWith("tool.")
+		|| eventName.startsWith("ai.thinking.")
+		|| eventName.startsWith("workflow.")
+		|| eventName.startsWith("guide.");
 }
 
 function getThinkingEventBufferKey(sessionId: string, requestId: string): string {
@@ -825,14 +1110,16 @@ async function createWorkflowPhasePrompt(
 	params: AiChatParams,
 	mcpHost: McpHost,
 	session: ClientSession,
-	requestId: string
+	requestId: string,
+	guidePromptSection: string = ""
 ): Promise<string> {
 	const systemPrompt: string = await composeSystemPrompt(phase.promptId ?? params.promptId, params.systemPrompt);
 	const skillPrompt: string = await composeSkillPrompt(phase.skillId);
 	const mcpSystemContext: string = await createMcpSystemContext(mcpHost, session);
 	const fullSystemPrompt: string = [
 		systemPrompt,
-		createPhasePrompt(phase, skillPrompt, mcpSystemContext)
+		createPhasePrompt(phase, skillPrompt, mcpSystemContext),
+		guidePromptSection
 	].join("\n\n");
 	logPromptTrace({
 		requestId,
@@ -843,6 +1130,7 @@ async function createWorkflowPhasePrompt(
 		systemPrompt,
 		skillPrompt,
 		mcpSystemContext,
+		guidePromptSection,
 		fullSystemPrompt
 	});
 	return fullSystemPrompt;
@@ -911,7 +1199,14 @@ async function continueWorkflowExecution(
 		const isFinalPhase: boolean = index >= plan.phases.length - 1;
 		const streamPhase: boolean = isFinalPhase && streamFinal;
 		const phaseParams: AiChatParams = createPhaseParams(state.originalParams, phase, phaseMessage, streamPhase);
-		const fullSystemPrompt: string = await createWorkflowPhasePrompt(phase, phaseParams, mcpHost, session, requestId);
+		const carriedGuidePromptSection: string = state.guidePromptSection ?? "";
+		state = { ...state, guidePromptSection: undefined };
+		const pendingGuidePromptSection: string = consumePendingGuideSection(socket, requestId, session, persistRequestId);
+		const guidePromptSection: string = [
+			carriedGuidePromptSection,
+			pendingGuidePromptSection
+		].filter((section: string): boolean => section.length > 0).join("\n\n");
+		const fullSystemPrompt: string = await createWorkflowPhasePrompt(phase, phaseParams, mcpHost, session, requestId, guidePromptSection);
 		let agentResult: DeepSeekAgentResult;
 		try {
 			agentResult = agentResultOverride ?? await runWorkflowPhase(
@@ -1009,6 +1304,20 @@ async function continueWorkflowExecution(
 
 		if (plan.source === "llm") {
 			try {
+				const revisionGuidePromptSection: string = consumePendingGuideSection(socket, requestId, session, persistRequestId);
+				const revisionPlanningContext: string = [
+					planningContext,
+					revisionGuidePromptSection
+				].filter((section: string): boolean => section.length > 0).join("\n\n");
+				if (revisionGuidePromptSection.length > 0) {
+					state = {
+						...state,
+						guidePromptSection: [
+							state.guidePromptSection ?? "",
+							revisionGuidePromptSection
+						].filter((section: string): boolean => section.length > 0).join("\n\n")
+					};
+				}
 				const revisedPlan: WorkflowPlan = await reviseLlmWorkflowPlan(
 					plan,
 					index,
@@ -1016,7 +1325,7 @@ async function continueWorkflowExecution(
 					phaseOutputs,
 					options,
 					state.history,
-					planningContext,
+					revisionPlanningContext,
 					abortSignal
 				);
 				if ((revisedPlan.revision ?? 0) !== (plan.revision ?? 0)) {
@@ -1043,6 +1352,7 @@ async function startWorkflowExecution(
 	historyBudgetTokens: number,
 	userCreatedAt: string,
 	planningContext: string = "",
+	guidePromptSection: string = "",
 	abortSignal?: AbortSignal | undefined
 ): Promise<void> {
 	sendWorkflowEvent(socket, requestId, session, "workflow.started", {
@@ -1066,7 +1376,8 @@ async function startWorkflowExecution(
 			originalParams,
 			history,
 			historyBudgetTokens,
-			planningContext
+			planningContext,
+			guidePromptSection
 		}, userCreatedAt, undefined, requestId, abortSignal);
 	} catch (error: unknown) {
 		const latestPlan: WorkflowPlan = error instanceof WorkflowExecutionError ? error.plan : plan;
@@ -1142,6 +1453,7 @@ function createSessionInfoResult(session: ClientSession, mcpHost: McpHost, histo
 		safetyMarginTokens: session.modelProfile.safetyMarginTokens,
 		approvalMode: session.approvalGateway.getMode(),
 		pendingApprovals: session.approvalGateway.listPending().length,
+		pendingGuides: session.pendingGuides.length,
 		mcpServers: mcpHost.getConnectedServerIds(),
 		godotExecutablePath: session.activeWorkspace?.godotExecutablePath ?? session.godotExecutablePath ?? null,
 		godotProjectPath: getSessionProjectPath(session) || null,
@@ -1667,9 +1979,11 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 				);
 				const skillPrompt: string = await composeSkillPrompt(activeSkillId);
 				const mcpSystemContext: string = await createMcpSystemContext(mcpHost, session);
+				const guidePromptSection: string = consumePendingGuideSection(socket, request.id, session);
 				const fullSystemPrompt: string = systemPrompt
 					+ (skillPrompt.length > 0 ? `\n\n${skillPrompt}` : "")
-					+ mcpSystemContext;
+					+ mcpSystemContext
+					+ (guidePromptSection.length > 0 ? `\n\n${guidePromptSection}` : "");
 				logPromptTrace({
 					requestId: request.id,
 					promptId,
@@ -1678,6 +1992,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 					systemPrompt,
 					skillPrompt,
 					mcpSystemContext,
+					guidePromptSection,
 					fullSystemPrompt
 				});
 				if (params.retryFromRequestId !== undefined && session.sessionId !== undefined) {
@@ -1692,14 +2007,14 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 					session.modelProfile,
 					params,
 					systemPrompt,
-					skillPrompt + mcpSystemContext
+					skillPrompt + mcpSystemContext + guidePromptSection
 				);
 				const history: ChatMessage[] = await selectHistoryForModel(session, historyBudgetTokens);
 				let workflowPlan: WorkflowPlan | null = null;
 				if (slashCommandResult.type === "none") {
 					if (params.options?.workflow === "llm_planned") {
 						try {
-							workflowPlan = await createLlmWorkflowPlan(params, options, history, mcpSystemContext, abortController.signal);
+							workflowPlan = await createLlmWorkflowPlan(params, options, history, mcpSystemContext + guidePromptSection, abortController.signal);
 						} catch (error: unknown) {
 							console.warn("[workflow] LLM planner failed, falling back to fixed workflow:", error);
 							workflowPlan = planWorkflow({
@@ -1727,7 +2042,8 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 						history,
 						historyBudgetTokens,
 						turnStartedAt,
-						mcpSystemContext,
+						mcpSystemContext + guidePromptSection,
+						guidePromptSection,
 						abortController.signal
 					);
 					break;
@@ -1837,6 +2153,87 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 			break;
 		}
 
+		case "ai.next_step_hints": {
+			await waitForFullSessionLoad(session);
+			if (request.params?.sessionId !== undefined && request.params.sessionId !== session.sessionId) {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: {
+						code: "session_mismatch",
+						message: "Next-step hints can only be generated for the active session."
+					}
+				});
+				break;
+			}
+			if (!session.sessionId) {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: { code: "no_session", message: "No active session for next-step hints." }
+				});
+				break;
+			}
+
+			const apiKey: string | undefined = await ensureProviderConfigured(session);
+			if (!apiKey) {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: {
+						code: "provider_not_configured",
+						message: "DeepSeek API key is not configured. Save it with provider.config.set first."
+					}
+				});
+				break;
+			}
+
+			const abortController: AbortController = new AbortController();
+			session.activeAbortControllers.set(request.id, abortController);
+			try {
+				const hints: NextStepHint[] = await createNextStepHints(
+					session,
+					createDeepSeekChatOptions(session, apiKey),
+					request.params?.maxHints ?? DEFAULT_NEXT_STEP_HINT_COUNT,
+					request.params?.trigger ?? "done",
+					request.params?.anchorRequestId,
+					abortController.signal
+				);
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: true,
+					result: {
+						nextStepHints: true,
+						sessionId: session.sessionId,
+						anchorRequestId: request.params?.anchorRequestId ?? null,
+						hints,
+						generatedAt: new Date().toISOString()
+					}
+				});
+			} catch (error: unknown) {
+				if (isCancellationError(error, abortController.signal)) {
+					sendAiCancelled(socket, request.id);
+					break;
+				}
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: {
+						code: "next_step_hints_error",
+						message: error instanceof Error ? error.message : "Failed to generate next-step hints"
+					}
+				});
+			} finally {
+				session.activeAbortControllers.delete(request.id);
+			}
+			break;
+		}
+
 		case "prompt.list":
 			sendJson(socket, {
 				type: "response",
@@ -1877,6 +2274,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 			session.fullSessionLoadPromise = undefined;
 			session.summaryMessage = undefined;
 			session.summaryCoveredMessageCount = undefined;
+			session.pendingGuides = [];
 			if (session.sessionId) {
 				await clearSessionEvents(session.sessionId);
 			}
@@ -1949,6 +2347,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 			session.fullSessionLoadPromise = undefined;
 			session.summaryMessage = undefined;
 			session.summaryCoveredMessageCount = undefined;
+			session.pendingGuides = [];
 
 			if (workspace) {
 				session.activeWorkspace = workspace;
@@ -1999,6 +2398,8 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 				session.sessionId = timeline.metadata.id;
 				session.sessionTitle = timeline.metadata.title;
 				session.messages = timeline.messages.map(toChatMessage);
+				const storedForGuides: Awaited<ReturnType<typeof openSession>> = await openSession(request.params.sessionId);
+				session.pendingGuides = hydratePendingGuides(storedForGuides.events);
 				startFullSessionLoad(session, timeline.metadata.id);
 
 				const summary = await readSummary(request.params.sessionId);
@@ -2026,6 +2427,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 						opened: true,
 						metadata: timeline.metadata,
 						...createTimelinePageResult(timeline, openMessageLimit),
+						pendingGuides: session.pendingGuides.map(serializePendingGuide),
 						workspaceWarning: workspaceWarning ?? null
 					}
 				});
@@ -2712,6 +3114,137 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 			break;
 		}
 
+		case "session.guide.add": {
+			if (!session.sessionId) {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: { code: "no_session", message: "No active session for guide." }
+				});
+				break;
+			}
+
+			const existingGuide: PendingGuide | undefined = findPendingGuideByClientId(session, request.params.clientGuideId);
+			if (existingGuide !== undefined) {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: true,
+					result: {
+						guideAdded: true,
+						duplicate: true,
+						guide: serializePendingGuide(existingGuide),
+						pendingGuides: session.pendingGuides.map(serializePendingGuide)
+					}
+				});
+				break;
+			}
+
+			const guide: PendingGuide = createPendingGuide(
+				request.params.clientGuideId,
+				request.params.text,
+				request.params.anchorRequestId
+			);
+			session.pendingGuides.push(guide);
+			const data: Record<string, unknown> = {
+				type: "guide.added",
+				...serializePendingGuide(guide)
+			};
+			await persistGuideEvent(session, request.id, "guide.added", data);
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: true,
+				result: {
+					guideAdded: true,
+					guide: serializePendingGuide(guide),
+					pendingGuides: session.pendingGuides.map(serializePendingGuide)
+				}
+			});
+			break;
+		}
+
+		case "session.guide.update": {
+			if (!session.sessionId) {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: { code: "no_session", message: "No active session for guide." }
+				});
+				break;
+			}
+
+			const guideIndex: number = findPendingGuideIndexById(session, request.params.guideId);
+			if (guideIndex < 0) {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: { code: "guide_not_found", message: `Pending guide not found: ${request.params.guideId}` }
+				});
+				break;
+			}
+
+			const guide: PendingGuide = session.pendingGuides[guideIndex] as PendingGuide;
+			guide.text = clipTextByChars(request.params.text.trim(), MAX_GUIDE_TEXT_CHARS);
+			guide.updatedAt = new Date().toISOString();
+			session.pendingGuides[guideIndex] = guide;
+			const data: Record<string, unknown> = {
+				type: "guide.updated",
+				...serializePendingGuide(guide)
+			};
+			await persistGuideEvent(session, request.id, "guide.updated", data);
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: true,
+				result: {
+					guideUpdated: true,
+					guide: serializePendingGuide(guide),
+					pendingGuides: session.pendingGuides.map(serializePendingGuide)
+				}
+			});
+			break;
+		}
+
+		case "session.guide.delete": {
+			if (!session.sessionId) {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: { code: "no_session", message: "No active session for guide." }
+				});
+				break;
+			}
+
+			const guideIndex: number = findPendingGuideIndexById(session, request.params.guideId);
+			const deletedGuide: PendingGuide | undefined = guideIndex >= 0
+				? session.pendingGuides.splice(guideIndex, 1)[0]
+				: undefined;
+			const data: Record<string, unknown> = {
+				type: "guide.deleted",
+				guideId: request.params.guideId,
+				clientGuideId: deletedGuide?.clientGuideId ?? null,
+				deletedAt: new Date().toISOString()
+			};
+			await persistGuideEvent(session, request.id, "guide.deleted", data);
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: true,
+				result: {
+					guideDeleted: true,
+					found: deletedGuide !== undefined,
+					guideId: request.params.guideId,
+					pendingGuides: session.pendingGuides.map(serializePendingGuide)
+				}
+			});
+			break;
+		}
+
 		case "approval.list":
 			sendJson(socket, {
 				type: "response",
@@ -3034,6 +3567,7 @@ export function createServer(port: number, mcpHost: McpHost): WebSocketServer {
 			activeAbortControllers: new Map(),
 			inFlightRequestIds: new Set(),
 			completedRequestIds: new Map(),
+			pendingGuides: [],
 			eventPersistQueue: Promise.resolve()
 		};
 		const remoteAddress: string = request.socket.remoteAddress ?? "unknown";

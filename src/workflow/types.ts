@@ -52,6 +52,7 @@ export type WorkflowRunState = {
 	history: ChatMessage[];
 	historyBudgetTokens: number;
 	planningContext?: string | undefined;
+	guidePromptSection?: string | undefined;
 };
 
 export type WorkflowTodoSnapshot = {

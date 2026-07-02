@@ -33,6 +33,8 @@ export const aiChatParamsSchema = z.object({
 	}).optional()
 });
 
+const guideTextSchema = z.string().min(1).max(4000);
+
 export const clientRequestSchema = z.discriminatedUnion("method", [
 	z.object({
 		type: z.literal("request"),
@@ -79,6 +81,17 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		id: z.string(),
 		method: z.literal("ai.chat"),
 		params: aiChatParamsSchema,
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("ai.next_step_hints"),
+		params: z.object({
+			sessionId: z.string().min(1).optional(),
+			anchorRequestId: z.string().min(1).optional(),
+			trigger: z.enum(["done", "paused"]).optional(),
+			maxHints: z.number().int().min(1).max(5).optional(),
+		}).optional(),
 	}),
 	z.object({
 		type: z.literal("request"),
@@ -221,6 +234,33 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		id: z.string(),
 		method: z.literal("session.summary"),
 		params: z.object({}).optional(),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("session.guide.add"),
+		params: z.object({
+			clientGuideId: z.string().min(1).max(128),
+			text: guideTextSchema,
+			anchorRequestId: z.string().min(1).optional(),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("session.guide.update"),
+		params: z.object({
+			guideId: z.string().min(1),
+			text: guideTextSchema,
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("session.guide.delete"),
+		params: z.object({
+			guideId: z.string().min(1),
+		}),
 	}),
 	z.object({
 		type: z.literal("request"),
