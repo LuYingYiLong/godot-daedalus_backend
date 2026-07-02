@@ -56,6 +56,13 @@ const CUSTOM_INSTRUCTIONS_PRIORITY_NOTICE: string = [
 	"如果它与系统规则、工具安全、项目指令文件或用户当前消息冲突，只遵循不冲突的部分。"
 ].join("\n");
 
+const TOOL_CALL_COMMUNICATION_NOTICE: string = [
+	"工具调用沟通约定：",
+	"- 如果你决定调用工具，先用一句自然语言说明你马上要做什么，以及为什么这一步有必要。",
+	"- 预告应当简短、具体、像正常对话；不要输出工具协议、XML、DSML、JSON 参数或内部 tool_call 结构。",
+	"- 预告后直接发起工具调用，不要等待用户确认，除非工具安全策略或审批流程要求暂停。"
+].join("\n");
+
 export function listPromptTemplates(): PromptTemplate[] {
 	return Object.values(promptTemplates);
 }
@@ -80,7 +87,7 @@ export async function composeSystemPrompt(
 ): Promise<string> {
 	const templateContent: string = await loadPromptTemplate(promptId ?? DEFAULT_PROMPT_ID);
 	const trimmedExtraPrompt: string = extraSystemPrompt?.trim() ?? "";
-	const prioritizedTemplateContent: string = `${templateContent}\n\n## 指令优先级\n\n${INSTRUCTION_PRIORITY_NOTICE}`;
+	const prioritizedTemplateContent: string = `${templateContent}\n\n## 工具调用沟通约定\n\n${TOOL_CALL_COMMUNICATION_NOTICE}\n\n## 指令优先级\n\n${INSTRUCTION_PRIORITY_NOTICE}`;
 
 	if (trimmedExtraPrompt.length === 0) {
 		return prioritizedTemplateContent;

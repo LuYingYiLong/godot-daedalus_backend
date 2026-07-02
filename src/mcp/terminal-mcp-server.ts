@@ -16,6 +16,14 @@ type CommandPreset = {
 	command: string[];
 	workingDirectory: string;
 	risk: CommandRisk;
+	requiresGodotProject?: boolean | undefined;
+	resourcePathMode?: "optional" | "required" | undefined;
+};
+
+type SafePresetInput = {
+	presetName: string;
+	workingDirectory?: string | undefined;
+	resourcePath?: string | undefined;
 };
 
 const BACKEND_DIR: string = process.env.BACKEND_DIR ?? process.cwd();
@@ -60,17 +68,21 @@ const COMMAND_PRESETS: CommandPreset[] = [
 	},
 	{
 		name: "godot.check_only",
-		description: "运行 Godot 全项目脚本语法检查 (只读)",
+		description: "运行 Godot 语法检查 (只读)。可传 resourcePath 精确检查 .gd 脚本或加载 .tscn 场景。",
 		command: [GODOT_EXECUTABLE, "--headless", "--disable-crash-handler", "--path", GODOT_PROJECT, "--check-only", "--quit"],
 		workingDirectory: GODOT_PROJECT || BACKEND_DIR,
-		risk: "verify"
+		risk: "verify",
+		requiresGodotProject: true,
+		resourcePathMode: "optional"
 	},
 	{
 		name: "godot.validate_scene",
-		description: "验证指定场景文件的语法正确性 (只读)。运行 Godot headless 检查。",
+		description: "验证指定场景文件的语法正确性 (只读)。必须传 resourcePath，例如 scenes/main.tscn。",
 		command: [GODOT_EXECUTABLE, "--headless", "--disable-crash-handler", "--path", GODOT_PROJECT, "--check-only", "--quit"],
 		workingDirectory: GODOT_PROJECT || BACKEND_DIR,
-		risk: "verify"
+		risk: "verify",
+		requiresGodotProject: true,
+		resourcePathMode: "required"
 	}
 ];
 
@@ -228,6 +240,116 @@ function resolveWorkingDirectory(workingDirectory: string | undefined, preset: C
 	throw new Error(`Working directory is outside allowed roots: ${resolvedPath}`);
 }
 
+function createMissingGodotProjectResult(presetName: string): { content: Array<{ type: "text"; text: string }> } {
+	return asJsonTextResult({
+		preset: presetName,
+		ok: false,
+		error: "GODOT_PROJECT_PATH is not configured for the terminal MCP server. Configure the Godot project path in the client and restart or reconnect the backend workspace before running Godot presets.",
+		godotProjectPath: GODOT_PROJECT || null,
+		godotExecutablePath: GODOT_EXECUTABLE
+	});
+}
+
+function toProjectRelativePath(resourcePath: string): string {
+	const trimmedPath: string = resourcePath.trim();
+	if (trimmedPath.length === 0) {
+		throw new Error("resourcePath cannot be empty");
+	}
+
+	if (GODOT_PROJECT.length === 0) {
+		throw new Error("Cannot resolve resourcePath without GODOT_PROJECT_PATH");
+	}
+
+	const projectRoot: string = path.resolve(GODOT_PROJECT);
+	if (trimmedPath.startsWith("res://")) {
+		const relativePath: string = trimmedPath.slice("res://".length).replaceAll("\\", "/");
+		const absolutePath: string = path.resolve(projectRoot, relativePath);
+		if (!isPathInsideRoot(absolutePath, projectRoot)) {
+			throw new Error(`resourcePath is outside the Godot project: ${trimmedPath}`);
+		}
+
+		return path.relative(projectRoot, absolutePath).replaceAll(path.sep, "/");
+	}
+
+	if (path.isAbsolute(trimmedPath)) {
+		const absolutePath: string = path.resolve(trimmedPath);
+		if (!isPathInsideRoot(absolutePath, projectRoot)) {
+			throw new Error(`resourcePath is outside the Godot project: ${absolutePath}`);
+		}
+
+		return path.relative(projectRoot, absolutePath).replaceAll(path.sep, "/");
+	}
+
+	const relativePath: string = trimmedPath.replaceAll("\\", "/");
+	const absolutePath: string = path.resolve(projectRoot, relativePath);
+	if (!isPathInsideRoot(absolutePath, projectRoot)) {
+		throw new Error(`resourcePath is outside the Godot project: ${trimmedPath}`);
+	}
+
+	return path.relative(projectRoot, absolutePath).replaceAll(path.sep, "/");
+}
+
+function toResPath(relativePath: string): string {
+	return `res://${relativePath.replace(/^\/+/u, "")}`;
+}
+
+function createGodotResourceCommand(preset: CommandPreset, resourcePath: string | undefined): string[] {
+	if (!preset.requiresGodotProject) {
+		return preset.command;
+	}
+
+	if (GODOT_PROJECT.length === 0) {
+		return preset.command;
+	}
+
+	const trimmedResourcePath: string = resourcePath?.trim() ?? "";
+	if (preset.resourcePathMode === "required" && trimmedResourcePath.length === 0) {
+		throw new Error(`Preset '${preset.name}' requires resourcePath`);
+	}
+
+	if (trimmedResourcePath.length === 0) {
+		return preset.command;
+	}
+
+	const relativePath: string = toProjectRelativePath(trimmedResourcePath);
+	const extension: string = path.extname(relativePath).toLowerCase();
+	const resPath: string = toResPath(relativePath);
+
+	if (extension === ".gd") {
+		return [
+			GODOT_EXECUTABLE,
+			"--headless",
+			"--disable-crash-handler",
+			"--path", GODOT_PROJECT,
+			"--script", resPath,
+			"--check-only"
+		];
+	}
+
+	if (extension === ".tscn" || extension === ".scn") {
+		return [
+			GODOT_EXECUTABLE,
+			"--headless",
+			"--disable-crash-handler",
+			"--path", GODOT_PROJECT,
+			resPath,
+			"--quit-after", "1"
+		];
+	}
+
+	throw new Error(`Unsupported Godot resourcePath extension for '${preset.name}': ${extension || "(none)"}. Use a .gd or .tscn file.`);
+}
+
+function describePresetCommand(command: string[]): string {
+	return command.map((part: string): string => {
+		if (!/[\s"]/u.test(part)) {
+			return part;
+		}
+
+		return `"${part.replaceAll("\"", "\\\"")}"`;
+	}).join(" ");
+}
+
 async function main(): Promise<void> {
 	const server: McpServer = new McpServer({
 		name: "terminal-mcp-server",
@@ -246,7 +368,11 @@ async function main(): Promise<void> {
 				name: p.name,
 				description: p.description,
 				workingDirectory: p.workingDirectory,
-				risk: p.risk
+				risk: p.risk,
+				resourcePathMode: p.resourcePathMode ?? "none",
+				godotProjectPath: p.requiresGodotProject ? GODOT_PROJECT || null : undefined,
+				godotExecutablePath: p.requiresGodotProject ? GODOT_EXECUTABLE : undefined,
+				command: p.requiresGodotProject ? describePresetCommand(p.command) : undefined
 			}))
 		})
 	);
@@ -255,13 +381,14 @@ async function main(): Promise<void> {
 		"run_safe_preset",
 		{
 			title: "Run Safe Command Preset",
-			description: "执行安全的预设命令（read/verify 风险），自动允许。包括 git.status、git.diff、backend.typecheck、godot.check_only。",
+			description: "执行安全的预设命令（read/verify 风险），自动允许。包括 git.status、git.diff、backend.typecheck、godot.check_only。Godot 预设可传 resourcePath 精确检查 .gd 或 .tscn。",
 			inputSchema: z.object({
 				presetName: z.string().min(1).describe("安全预设名称"),
+				resourcePath: z.string().optional().describe("Godot 资源路径，可用 res://、项目相对路径或项目内绝对路径。例如 scripts/main.gd、scenes/main.tscn。"),
 				workingDirectory: z.string().optional().describe("覆盖默认工作目录")
 			})
 		},
-		async ({ presetName, workingDirectory }) => {
+		async ({ presetName, workingDirectory, resourcePath }: SafePresetInput) => {
 			const preset: CommandPreset = findPreset(presetName);
 
 			if (preset.risk !== "read" && preset.risk !== "verify") {
@@ -271,6 +398,10 @@ async function main(): Promise<void> {
 					error: `Preset '${presetName}' has risk '${preset.risk}', not allowed via run_safe_preset. Use run_write_preset for write commands.`,
 					requiredRisk: preset.risk
 				});
+			}
+
+			if (preset.requiresGodotProject && GODOT_PROJECT.length === 0) {
+				return createMissingGodotProjectResult(presetName);
 			}
 
 			let cwd: string;
@@ -284,12 +415,32 @@ async function main(): Promise<void> {
 				});
 			}
 
-			const result = await runCommand(preset.command, cwd);
+			let command: string[];
+			try {
+				command = createGodotResourceCommand(preset, resourcePath);
+			} catch (error: unknown) {
+				return asJsonTextResult({
+					preset: presetName,
+					ok: false,
+					error: error instanceof Error ? error.message : "Invalid preset arguments",
+					resourcePath: resourcePath ?? null,
+					godotProjectPath: preset.requiresGodotProject ? GODOT_PROJECT || null : undefined,
+					godotExecutablePath: preset.requiresGodotProject ? GODOT_EXECUTABLE : undefined
+				});
+			}
+
+			const result = await runCommand(command, cwd);
 
 			return asJsonTextResult({
 				preset: presetName,
 				ok: result.exitCode === 0,
 				exitCode: result.exitCode,
+				command,
+				commandLine: describePresetCommand(command),
+				cwd,
+				resourcePath: resourcePath ?? null,
+				godotProjectPath: preset.requiresGodotProject ? GODOT_PROJECT || null : undefined,
+				godotExecutablePath: preset.requiresGodotProject ? GODOT_EXECUTABLE : undefined,
 				stdout: result.stdout,
 				stderr: result.stderr,
 				durationMs: result.durationMs,

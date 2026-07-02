@@ -190,8 +190,10 @@ Git 检查只证明补丁范围和空白问题，不能代替 Godot 检查、编
 ### GDScript
 
 - 每次修改 `.gd` 后，先运行 Godot `--check-only` 或 Runtime 等价检查。
+- 使用终端预设验证 Godot 文件时，优先给 `godot.check_only` 或 `godot.validate_scene` 传入具体 `resourcePath`，例如 `scripts/main.gd` 或 `scenes/main.tscn`。
 - 新增或修改需导入的资源时，必要时运行 Godot 导入或等价验证。
 - 通过 `--script` 执行的临时测试脚本默认继承 `SceneTree`，在 `_init()` 中执行测试并用 `quit(exit_code)` 退出。
+- 如果 Godot 原生命令或终端预设失败，必须报告实际失败命令、cwd 和错误摘要；不要把“让用户按 F6 运行”当作自动验证的替代品。
 
 ### C++
 

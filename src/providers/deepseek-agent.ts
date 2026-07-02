@@ -181,6 +181,22 @@ function extractToolNames(toolCalls: ChatCompletionMessageToolCall[]): string[] 
 	return [...toolNames];
 }
 
+function createToolCallPreludeDelta(
+	contentText: string | null,
+	emittedContentText: string
+): string {
+	if (emittedContentText.trim().length > 0) {
+		return "";
+	}
+
+	const naturalPrelude: string = stripKnownToolSyntax(contentText ?? "").trim();
+	if (naturalPrelude.length > 0) {
+		return `\n\n${naturalPrelude}\n\n`;
+	}
+
+	return "";
+}
+
 function escapeRegExp(text: string): string {
 	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -645,8 +661,6 @@ async function runAgentLoop(
 		let reasoningContent: string = "";
 		let emittedContentText: string = "";
 		let suppressedStreamToolSyntax: boolean = false;
-		const shouldBufferContentDeltas: boolean = streamAssistant && tools.length > 0;
-
 		if (streamAssistant) {
 			const streamedMessage: StreamedAssistantMessage = await readStreamingAssistantMessage(
 				client,
@@ -656,7 +670,7 @@ async function runAgentLoop(
 				tools,
 				step,
 				onEvent,
-				!shouldBufferContentDeltas,
+				true,
 				abortSignal
 			);
 			toolCalls = streamedMessage.toolCalls;
@@ -711,9 +725,7 @@ async function runAgentLoop(
 				: hasKnownToolSyntax
 					? createToolSyntaxLeakFallback(text, "当前阶段没有可执行的工具调用")
 					: stripKnownToolSyntax(text);
-			if (streamAssistant && shouldBufferContentDeltas) {
-				onEvent?.({ type: "ai.delta", text: finalText });
-			} else if (streamAssistant && hasKnownToolSyntax) {
+			if (streamAssistant && hasKnownToolSyntax) {
 				const suffixText: string = getUnemittedSuffix(finalText, emittedContentText);
 				if (suffixText.length > 0) {
 					onEvent?.({ type: "ai.delta", text: suffixText });
@@ -721,6 +733,13 @@ async function runAgentLoop(
 			}
 
 			return { status: "completed", text: finalText };
+		}
+
+		if (streamAssistant) {
+			const preludeDelta: string = createToolCallPreludeDelta(contentText, emittedContentText);
+			if (preludeDelta.length > 0) {
+				onEvent?.({ type: "ai.delta", text: preludeDelta });
+			}
 		}
 
 		const assistantMessage: ChatCompletionMessageParam = createAssistantToolMessage(contentText, toolCalls, reasoningContent);

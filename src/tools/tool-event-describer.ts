@@ -133,10 +133,17 @@ export function describeToolEvent(toolName: string, args: Record<string, unknown
 
 	if (toolName.startsWith("mcp_terminal_")) {
 		const presetName: string = getStringArg(args, "presetName") ?? toolName;
-		return createDisplay("terminal", "Terminal", "terminal", "运行终端命令", presetName, {
+		const resourcePath: string | undefined = getStringArg(args, "resourcePath");
+		const label: string = resourcePath === undefined ? presetName : `${presetName} ${resourcePath}`;
+		const target: ToolEventTarget = resourcePath === undefined ? {
 			kind: "command",
-			label: presetName
-		});
+			label
+		} : {
+			kind: "command",
+			path: resourcePath,
+			label
+		};
+		return createDisplay("terminal", "Terminal", "terminal", "运行终端命令", label, target);
 	}
 
 	if (toolName.includes("context7") || toolName.includes("library") || toolName.includes("docs")) {

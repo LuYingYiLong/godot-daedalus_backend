@@ -424,13 +424,17 @@ const TOOL_DEFINITIONS: ChatCompletionTool[] = [
 		type: "function",
 		function: {
 			name: "mcp_terminal_run_safe_preset",
-			description: "执行安全的（read/verify 风险）终端预设命令，自动允许。包括：backend.typecheck（TypeScript 类型检查）、git.status（Git 工作区状态）、git.diff（Git 差异）、godot.check_only（Godot 脚本语法检查）。",
+			description: "执行安全的（read/verify 风险）终端预设命令，自动允许。包括：backend.typecheck（TypeScript 类型检查）、git.status（Git 工作区状态）、git.diff（Git 差异）、godot.check_only（Godot 语法检查）、godot.validate_scene（Godot 场景加载验证）。Godot 预设建议传 resourcePath 精确检查目标 .gd 或 .tscn，工具结果会返回实际执行命令和 cwd。",
 			parameters: {
 				type: "object",
 				properties: {
 					presetName: {
 						type: "string",
-						description: "安全预设名称，如 'backend.typecheck'、'git.status'、'git.diff'、'godot.check_only'"
+						description: "安全预设名称，如 'backend.typecheck'、'git.status'、'git.diff'、'godot.check_only'、'godot.validate_scene'"
+					},
+					resourcePath: {
+						type: "string",
+						description: "Godot 资源路径，仅 Godot 预设需要。可用 res://、项目相对路径或项目内绝对路径，例如 scripts/main.gd、scenes/main.tscn。检查脚本用 godot.check_only + .gd；验证场景用 godot.validate_scene + .tscn。"
 					}
 				},
 				required: ["presetName"]
