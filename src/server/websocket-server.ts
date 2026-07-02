@@ -13,6 +13,14 @@ import {
 import type { OnToolEvent } from "../tools/tool-dispatcher.js";
 import { chatWithDeepSeek, createDeepSeekClient, type DeepSeekChatOptions } from "../providers/deepseek-client.js";
 import { McpHost } from "../mcp/mcp-host.js";
+import type { CustomMcpServerRuntimeStatus } from "../mcp/mcp-host.js";
+import {
+	addCustomMcpServerConfig,
+	listCustomMcpServerSummaries,
+	removeCustomMcpServerConfig,
+	setCustomMcpServerEnabled,
+	type CustomMcpServerSummary
+} from "../mcp/custom-mcp-config-store.js";
 import { sendJson } from "./send-json.js";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
@@ -1617,6 +1625,54 @@ function canCallMcpToolDirectly(toolName: string): boolean {
 	return allowedTools.has(toolName);
 }
 
+async function createMcpConfigListResult(mcpHost: McpHost): Promise<Record<string, unknown>> {
+	const summaries: CustomMcpServerSummary[] = await listCustomMcpServerSummaries();
+	const statusesById: Map<string, CustomMcpServerRuntimeStatus> = new Map(
+		mcpHost.getCustomServerStatuses().map((status: CustomMcpServerRuntimeStatus): [string, CustomMcpServerRuntimeStatus] => [status.id, status])
+	);
+	const servers: Record<string, unknown>[] = summaries.map((summary: CustomMcpServerSummary): Record<string, unknown> => {
+		const runtimeStatus: CustomMcpServerRuntimeStatus | undefined = statusesById.get(summary.id);
+		const status: string = summary.enabled ? runtimeStatus?.status ?? "connecting" : "disabled";
+		return {
+			...summary,
+			status,
+			toolCount: summary.enabled ? runtimeStatus?.toolCount ?? 0 : 0,
+			error: summary.enabled ? runtimeStatus?.error ?? null : null
+		};
+	});
+
+	return {
+		customMcpServers: servers,
+		mcpServers: servers,
+		connectedServerIds: mcpHost.getConnectedServerIds()
+	};
+}
+
+function refreshCustomMcpServersAndNotify(socket: WebSocket, mcpHost: McpHost): void {
+	void (async (): Promise<void> => {
+		try {
+			await mcpHost.refreshCustomServersForActiveWorkspace();
+			sendJson(socket, {
+				type: "event",
+				id: "mcp-config",
+				event: "mcp.config.updated",
+				data: await createMcpConfigListResult(mcpHost)
+			});
+		} catch (error: unknown) {
+			console.warn("Failed to refresh custom MCP servers:", error instanceof Error ? error.message : error);
+			sendJson(socket, {
+				type: "event",
+				id: "mcp-config",
+				event: "mcp.config.updated",
+				data: {
+					...await createMcpConfigListResult(mcpHost),
+					error: error instanceof Error ? error.message : "Failed to refresh custom MCP servers"
+				}
+			});
+		}
+	})();
+}
+
 function createSessionInfoResult(session: ClientSession, mcpHost: McpHost, historyTokensStored: number | null = null): Record<string, unknown> {
 	return {
 		providerConfigured: session.deepseekApiKey !== undefined,
@@ -1634,6 +1690,7 @@ function createSessionInfoResult(session: ClientSession, mcpHost: McpHost, histo
 		pendingApprovals: session.approvalGateway.listPending().length,
 		pendingGuides: session.pendingGuides.length,
 		mcpServers: mcpHost.getConnectedServerIds(),
+		customMcpServerStatus: mcpHost.getCustomServerStatuses(),
 		godotExecutablePath: session.activeWorkspace?.godotExecutablePath ?? session.godotExecutablePath ?? null,
 		godotProjectPath: getSessionProjectPath(session) || null,
 		activeWorkspace: session.activeWorkspace ? {
@@ -1880,7 +1937,7 @@ async function createMcpSystemContext(mcpHost: McpHost, session: ClientSession):
 	}
 
 	// Project instruction files (AGENTS.md / CLAUDE.md)
-	for (const serverId of serverIds) {
+	for (const serverId of serverIds.filter((id: string): boolean => id === "godot")) {
 		for (const fileName of ["AGENTS.md", "CLAUDE.md"]) {
 			try {
 				const result = await mcpHost.callTool(serverId, "read_text_file", { relativePath: fileName });
@@ -1911,6 +1968,7 @@ async function createMcpSystemContext(mcpHost: McpHost, session: ClientSession):
 		sections.push("当前 TypeScript 后端已经连接以下 MCP server。你不能直接连接 MCP server；所有 MCP 数据都由后端读取后注入到本系统提示词中。回答时可以基于这些已注入的 MCP 上下文说明当前可见能力。");
 		sections.push("Godot 路径规则：遇到 `user://`、项目日志或 `debug/file_logging/log_path` 时，不要猜真实系统路径；必须优先使用 Godot 日志配置/日志读取工具解析。修改 `project.godot` 项目设置前，先读取当前值并使用 propose 项目设置工具预览，再调用实际 set/unset 工具等待审批。");
 		sections.push("Godot 编辑器配置可能包含本机隐私路径。读取编辑器设置、最近项目或 `.godot/editor` 状态时，默认使用摘要/脱敏结果；只有用户明确要求原始配置或原始路径时，才把工具参数 `raw` 设为 true。");
+		sections.push("用户自定义 MCP server 的工具会以 `mcp_custom_*` 包装函数提供；这些工具一律按写风险处理，调用前必须经过后端审批，不要尝试用原始 MCP 工具名直接调用。");
 
 		for (const serverId of serverIds) {
 				sections.push(`\n### MCP Server: ${serverId}`);
@@ -3015,6 +3073,112 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 					error: {
 						code: "mcp_error",
 						message: error instanceof Error ? error.message : "MCP call failed"
+					}
+				});
+			}
+			break;
+		}
+
+		case "mcp.config.list": {
+			try {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: true,
+					result: await createMcpConfigListResult(mcpHost)
+				});
+			} catch (error: unknown) {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: {
+						code: "mcp_config_error",
+						message: error instanceof Error ? error.message : "Failed to list custom MCP servers"
+					}
+				});
+			}
+			break;
+		}
+
+		case "mcp.config.add": {
+			try {
+				await addCustomMcpServerConfig(request.params);
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: true,
+					result: {
+						added: true,
+						...await createMcpConfigListResult(mcpHost)
+					}
+				});
+				refreshCustomMcpServersAndNotify(socket, mcpHost);
+			} catch (error: unknown) {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: {
+						code: "mcp_config_error",
+						message: error instanceof Error ? error.message : "Failed to add custom MCP server"
+					}
+				});
+			}
+			break;
+		}
+
+		case "mcp.config.remove": {
+			try {
+				const removed: boolean = await removeCustomMcpServerConfig(request.params.serverId);
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: true,
+					result: {
+						removed,
+						serverId: request.params.serverId,
+						...await createMcpConfigListResult(mcpHost)
+					}
+				});
+				refreshCustomMcpServersAndNotify(socket, mcpHost);
+			} catch (error: unknown) {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: {
+						code: "mcp_config_error",
+						message: error instanceof Error ? error.message : "Failed to remove custom MCP server"
+					}
+				});
+			}
+			break;
+		}
+
+		case "mcp.config.setEnabled": {
+			try {
+				const updated: boolean = await setCustomMcpServerEnabled(request.params.serverId, request.params.enabled);
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: true,
+					result: {
+						updated,
+						serverId: request.params.serverId,
+						enabled: request.params.enabled,
+						...await createMcpConfigListResult(mcpHost)
+					}
+				});
+				refreshCustomMcpServersAndNotify(socket, mcpHost);
+			} catch (error: unknown) {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: {
+						code: "mcp_config_error",
+						message: error instanceof Error ? error.message : "Failed to update custom MCP server"
 					}
 				});
 			}

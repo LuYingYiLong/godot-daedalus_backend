@@ -27,6 +27,7 @@ export function buildMcpServerConfigs(workspace?: WorkspaceConfig): McpServerCon
 		{
 			id: "godot",
 			name: "Godot Project MCP",
+			transport: "stdio",
 			command: "npx",
 			args: ["tsx", "src/mcp/godot-mcp-server.ts"],
 			env: {
@@ -36,6 +37,7 @@ export function buildMcpServerConfigs(workspace?: WorkspaceConfig): McpServerCon
 		{
 			id: "terminal",
 			name: "Terminal MCP",
+			transport: "stdio",
 			command: "npx",
 			args: ["tsx", "src/mcp/terminal-mcp-server.ts"],
 			env: terminalEnv

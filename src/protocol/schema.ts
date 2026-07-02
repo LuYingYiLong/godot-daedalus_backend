@@ -50,6 +50,27 @@ export const aiChatParamsSchema = z.object({
 });
 
 const guideTextSchema = z.string().min(1).max(4000);
+const customMcpSecretRecordSchema = z.record(z.string().min(1).max(160), z.string().max(20000))
+	.refine((value: Record<string, string>): boolean => Object.keys(value).length <= 64, "Too many secret entries");
+const customMcpServerInputSchema = z.discriminatedUnion("transport", [
+	z.object({
+		name: z.string().min(1).max(80),
+		description: z.string().max(300).optional(),
+		transport: z.literal("stdio"),
+		enabled: z.boolean().optional(),
+		command: z.string().min(1).max(300),
+		args: z.array(z.string().max(1000)).max(64).optional(),
+		env: customMcpSecretRecordSchema.optional(),
+	}),
+	z.object({
+		name: z.string().min(1).max(80),
+		description: z.string().max(300).optional(),
+		transport: z.literal("http"),
+		enabled: z.boolean().optional(),
+		url: z.string().url().max(1000),
+		headers: customMcpSecretRecordSchema.optional(),
+	})
+]);
 
 export const clientRequestSchema = z.discriminatedUnion("method", [
 	z.object({
@@ -311,6 +332,35 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		params: z.object({
 			serverId: z.string().optional(),
 			uri: z.string(),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("mcp.config.list"),
+		params: z.object({}).optional(),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("mcp.config.add"),
+		params: customMcpServerInputSchema,
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("mcp.config.remove"),
+		params: z.object({
+			serverId: z.string().min(1),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("mcp.config.setEnabled"),
+		params: z.object({
+			serverId: z.string().min(1),
+			enabled: z.boolean(),
 		}),
 	}),
 	z.object({

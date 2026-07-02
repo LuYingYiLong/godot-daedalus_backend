@@ -57,6 +57,7 @@ export type ServerEvent = {
 		| "guide.deleted"
 		| "guide.applied"
 		| "editor.tool.requested"
+		| "mcp.config.updated"
 		| "workflow.started"
 		| "workflow.phase.started"
 		| "workflow.todo.updated"

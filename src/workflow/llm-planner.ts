@@ -159,7 +159,7 @@ function createRevisionMessage(
 		"## 当前后端注入上下文",
 		clipPlanningContext(planningContext),
 		"",
-		"请输出完整替换后的 pending steps。若无需调整，原样输出 pending steps。"
+		"请只输出完整替换后的 pending steps。若无需调整，原样输出 pending steps。不要输出已完成步骤，不要复用已完成步骤 id。"
 	].join("\n");
 }
 
@@ -199,8 +199,12 @@ function createWorkflowPlanFromLlmPlan(rawPlan: LlmPlan, userMessage: string): W
 }
 
 function createPhasesFromSteps(steps: LlmPlanStep[]): WorkflowPhase[] {
+	return createPhasesFromStepsWithReservedIds(steps, new Set());
+}
+
+function createPhasesFromStepsWithReservedIds(steps: LlmPlanStep[], reservedIds: Set<string>): WorkflowPhase[] {
 	const trimmedSteps: LlmPlanStep[] = ensureSummaryStep(steps.slice(0, MAX_LLM_WORKFLOW_STEPS));
-	const usedIds: Set<string> = new Set();
+	const usedIds: Set<string> = new Set(reservedIds);
 	return trimmedSteps.map((step: LlmPlanStep, index: number): WorkflowPhase => createPhaseFromStep(step, index, usedIds));
 }
 
@@ -254,14 +258,24 @@ function createPhaseFromStep(step: LlmPlanStep, index: number, usedIds: Set<stri
 
 function mergeRevisedPendingSteps(plan: WorkflowPlan, firstPendingIndex: number, rawPlan: LlmPlan): WorkflowPlan {
 	const completedPhases: WorkflowPhase[] = plan.phases.slice(0, firstPendingIndex);
-	const revisedPendingPhases: WorkflowPhase[] = createPhasesFromSteps(rawPlan.steps);
-	const phases: WorkflowPhase[] = [...completedPhases, ...revisedPendingPhases];
 	const completedPhaseIds: Set<string> = new Set(completedPhases.map((phase: WorkflowPhase): string => phase.id));
+	const completedPhaseTitles: Set<string> = new Set(completedPhases.map((phase: WorkflowPhase): string => phase.title.toLowerCase()));
+	const usableSteps: LlmPlanStep[] = rawPlan.steps.filter((step: LlmPlanStep, index: number): boolean => (
+		!doesStepRepeatCompletedPhase(step, index, completedPhaseIds, completedPhaseTitles)
+	));
+	const previousPendingPhases: WorkflowPhase[] = plan.phases.slice(firstPendingIndex);
+	const revisedPendingPhases: WorkflowPhase[] = usableSteps.length > 0
+		? createPhasesFromStepsWithReservedIds(usableSteps, completedPhaseIds)
+		: previousPendingPhases.map((phase: WorkflowPhase): WorkflowPhase => ({
+			...phase,
+			allowedTools: [...phase.allowedTools]
+		}));
+	const phases: WorkflowPhase[] = [...completedPhases, ...revisedPendingPhases];
 	const completedTodos: WorkflowTodoItem[] = plan.todos.filter((todo: WorkflowTodoItem): boolean => completedPhaseIds.has(todo.phaseId));
 
 	return {
 		...plan,
-		title: rawPlan.title ?? plan.title,
+		title: plan.title,
 		phases,
 		todos: [
 			...completedTodos,
@@ -269,6 +283,24 @@ function mergeRevisedPendingSteps(plan: WorkflowPlan, firstPendingIndex: number,
 		],
 		revision: (plan.revision ?? 0) + 1
 	};
+}
+
+function doesStepRepeatCompletedPhase(
+	step: LlmPlanStep,
+	index: number,
+	completedPhaseIds: Set<string>,
+	completedPhaseTitles: Set<string>
+): boolean {
+	const stepId: string | undefined = step.id?.trim();
+	if (stepId !== undefined && completedPhaseIds.has(normalizeStepId(stepId, index))) {
+		return true;
+	}
+
+	if (completedPhaseIds.has(normalizeStepId(step.title, index))) {
+		return true;
+	}
+
+	return completedPhaseTitles.has(step.title.trim().toLowerCase());
 }
 
 function createTodos(phases: WorkflowPhase[]): WorkflowTodoItem[] {
@@ -281,12 +313,7 @@ function createTodos(phases: WorkflowPhase[]): WorkflowTodoItem[] {
 }
 
 function createUniqueStepId(value: string, index: number, usedIds: Set<string>): string {
-	const normalized: string = value
-		.toLowerCase()
-		.replace(/[^a-z0-9_-]+/g, "-")
-		.replace(/^-+|-+$/g, "");
-	const fallback: string = `step-${index + 1}`;
-	const baseId: string = normalized.length > 0 ? normalized : fallback;
+	const baseId: string = normalizeStepId(value, index);
 	let nextId: string = baseId;
 	let suffix: number = 2;
 	while (usedIds.has(nextId)) {
@@ -295,6 +322,15 @@ function createUniqueStepId(value: string, index: number, usedIds: Set<string>):
 	}
 	usedIds.add(nextId);
 	return nextId;
+}
+
+function normalizeStepId(value: string, index: number): string {
+	const normalized: string = value
+		.toLowerCase()
+		.replace(/[^a-z0-9_-]+/g, "-")
+		.replace(/^-+|-+$/g, "");
+	const fallback: string = `step-${index + 1}`;
+	return normalized.length > 0 ? normalized : fallback;
 }
 
 function normalizeSkillId(value: string | null | undefined): SkillId | undefined {

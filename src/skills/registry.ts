@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { PromptId } from "../protocol/types.js";
+import { CUSTOM_MCP_TOOLS_SENTINEL } from "../tools/llm-tools.js";
 
 export const skillIds = [
 	"godot.project_init",
@@ -41,7 +42,8 @@ const READ_TOOLS: string[] = [
 	"mcp_godot_inspect_scene_tree",
 	"mcp_godot_editor_get_context",
 	"mcp_godot_editor_get_selected_nodes",
-	"mcp_godot_editor_inspect_node"
+	"mcp_godot_editor_inspect_node",
+	CUSTOM_MCP_TOOLS_SENTINEL
 ];
 
 const FILE_CREATE_TOOLS: string[] = [
@@ -159,7 +161,9 @@ export async function composeSkillPrompt(skillId: SkillId | undefined): Promise<
 		`- 名称: ${skill.name}`,
 		`- 描述: ${skill.description}`,
 		"- 允许工具:",
-		...skill.allowedTools.map((toolName: string): string => `  - ${toolName}`),
+		...skill.allowedTools
+			.filter((toolName: string): boolean => toolName !== CUSTOM_MCP_TOOLS_SENTINEL)
+			.map((toolName: string): string => `  - ${toolName}`),
 		"",
 		prompt
 	].join("\n");

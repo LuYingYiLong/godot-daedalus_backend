@@ -1,4 +1,5 @@
 import type { AiChatParams } from "../protocol/types.js";
+import { CUSTOM_MCP_TOOLS_SENTINEL } from "../tools/llm-tools.js";
 import type { WorkflowPhase, WorkflowPhaseId, WorkflowPlan, WorkflowTodoItem } from "./types.js";
 
 type FixedWorkflowPhaseId = "inspect" | "implement" | "review" | "verify" | "summarize";
@@ -23,7 +24,8 @@ export const READ_TOOLS: string[] = [
 	"mcp_godot_inspect_scene_tree",
 	"mcp_godot_editor_get_context",
 	"mcp_godot_editor_get_selected_nodes",
-	"mcp_godot_editor_inspect_node"
+	"mcp_godot_editor_inspect_node",
+	CUSTOM_MCP_TOOLS_SENTINEL
 ];
 
 export const VERIFY_TOOLS: string[] = [

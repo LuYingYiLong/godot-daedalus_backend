@@ -1,3 +1,5 @@
+import { getDynamicMcpToolMetadata, isDynamicMcpToolName } from "./llm-tools.js";
+
 export type ToolEventCategory =
 	| "read"
 	| "write"
@@ -58,6 +60,17 @@ function createDisplay(
 }
 
 export function describeToolEvent(toolName: string, args: Record<string, unknown>): ToolEventDisplay {
+	if (isDynamicMcpToolName(toolName)) {
+		const metadata = getDynamicMcpToolMetadata(toolName);
+		const serverId: string = metadata?.serverId ?? "custom";
+		const serverName: string = metadata?.serverName ?? "Custom MCP";
+		const originalToolName: string = metadata?.toolName ?? toolName;
+		return createDisplay(serverId, serverName, "write", "自定义 MCP 工具", `${serverName}: ${originalToolName}`, {
+			kind: "unknown",
+			label: originalToolName
+		});
+	}
+
 	if (toolName.startsWith("mcp_godot_editor_")) {
 		const scenePath: string | undefined = getStringArg(args, "scenePath");
 		const nodePath: string | undefined = getStringArg(args, "nodePath");

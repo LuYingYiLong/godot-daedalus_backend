@@ -1,10 +1,12 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { McpServerConfig } from "./types.js";
 
 export class McpSession {
 	private client: Client;
-	private transport: StdioClientTransport | undefined;
+	private transport: StdioClientTransport | StreamableHTTPClientTransport | undefined;
 
 	constructor(private readonly config: McpServerConfig) {
 		this.client = new Client({
@@ -14,16 +16,32 @@ export class McpSession {
 	}
 
 	async connect(): Promise<void> {
-		this.transport = new StdioClientTransport({
-			command: this.config.command,
-			args: this.config.args,
-			env: {
-				...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
-				...this.config.env
-			} as Record<string, string>
-		});
+		if (this.config.transport === "http") {
+			if (this.config.url === undefined) {
+				throw new Error(`HTTP MCP server has no URL: ${this.config.id}`);
+			}
 
-		await this.client.connect(this.transport);
+			this.transport = new StreamableHTTPClientTransport(new URL(this.config.url), {
+				requestInit: {
+					headers: this.config.headers ?? {}
+				}
+			});
+		} else {
+			if (this.config.command === undefined) {
+				throw new Error(`STDIO MCP server has no command: ${this.config.id}`);
+			}
+
+			this.transport = new StdioClientTransport({
+				command: this.config.command,
+				args: this.config.args ?? [],
+				env: {
+					...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
+					...this.config.env
+				} as Record<string, string>
+			});
+		}
+
+		await this.client.connect(this.transport as unknown as Transport);
 	}
 
 	async listTools() {
@@ -51,5 +69,13 @@ export class McpSession {
 
 	get id(): string {
 		return this.config.id;
+	}
+
+	get name(): string {
+		return this.config.name;
+	}
+
+	get isCustom(): boolean {
+		return this.config.custom === true;
 	}
 }

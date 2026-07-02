@@ -19,6 +19,10 @@ export function getProviderConfigPath(): string {
 	return join(getAppDataDir(), "config", "provider.json");
 }
 
+export function getMcpServersConfigPath(): string {
+	return join(getAppDataDir(), "config", "mcp-servers.json");
+}
+
 export function getDefaultSessionsDir(): string {
 	return join(getAppDataDir(), "data", "sessions");
 }

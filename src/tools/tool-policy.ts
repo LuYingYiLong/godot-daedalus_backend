@@ -1,3 +1,5 @@
+import { isDynamicMcpToolName } from "./llm-tools.js";
+
 export type ApprovalMode = "read-only" | "manual" | "auto-safe" | "bypass";
 
 export type ToolRisk = "read" | "verify" | "propose" | "write" | "destructive";
@@ -56,6 +58,10 @@ const TOOL_POLICIES: Record<string, ToolPolicy> = {
 };
 
 export function getToolPolicy(toolName: string): ToolPolicy | undefined {
+	if (isDynamicMcpToolName(toolName)) {
+		return { risk: "write" };
+	}
+
 	return TOOL_POLICIES[toolName];
 }
 
