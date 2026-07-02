@@ -151,6 +151,22 @@ const TOOL_MAP: Record<string, ToolMapping> = {
 		serverId: "godot",
 		toolName: "apply_scene_patch"
 	},
+	"mcp_godot_editor_get_context": {
+		serverId: "godot_editor",
+		toolName: "get_context"
+	},
+	"mcp_godot_editor_get_selected_nodes": {
+		serverId: "godot_editor",
+		toolName: "get_selected_nodes"
+	},
+	"mcp_godot_editor_inspect_node": {
+		serverId: "godot_editor",
+		toolName: "inspect_node"
+	},
+	"mcp_godot_editor_apply_scene_patch": {
+		serverId: "godot_editor",
+		toolName: "apply_scene_patch"
+	},
 	"mcp_terminal_run_godot_scene_script": {
 		serverId: "terminal",
 		toolName: "run_godot_scene_script"
@@ -287,6 +303,140 @@ const TOOL_DEFINITIONS: ChatCompletionTool[] = [
 					}
 				},
 				required: ["relativePath"]
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_godot_editor_get_context",
+			description: "读取在线 Godot 编辑器上下文，包括在线状态、当前打开场景、选中节点和上下文新鲜度。若编辑器离线会返回 editor_unavailable，可回退到离线 Godot MCP 工具。",
+			parameters: {
+				type: "object",
+				properties: {},
+				required: []
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_godot_editor_get_selected_nodes",
+			description: "读取当前 Godot 编辑器中多个选中节点的路径、类型、脚本、owner 和关键属性摘要。适合用户说“这些节点/当前选中按钮”等实时编辑器上下文。",
+			parameters: {
+				type: "object",
+				properties: {},
+				required: []
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_godot_editor_inspect_node",
+			description: "检查在线 Godot 编辑器中指定节点的实时结构，能看到尚未保存到 .tscn 的当前状态。若编辑器离线或上下文不匹配，应回退到 mcp_godot_inspect_scene_tree。",
+			parameters: {
+				type: "object",
+				properties: {
+					scenePath: {
+						type: "string",
+						description: "可选场景路径；为空时使用当前打开场景。"
+					},
+					nodePath: {
+						type: "string",
+						description: "相对当前场景根节点的 NodePath，例如 '.'、'CanvasLayer/Button'。"
+					}
+				},
+				required: ["nodePath"]
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_godot_editor_apply_scene_patch",
+			description: "在在线 Godot 编辑器中应用场景 patch，会使用 EditorUndoRedoManager 合并为一个可撤销动作，并默认保存当前场景。该工具会实际修改场景，必须经过用户审批；编辑器离线时回退到离线 mcp_godot_apply_scene_patch 或 headless 工具。",
+			parameters: {
+				type: "object",
+				properties: {
+					title: {
+						type: "string",
+						description: "UndoRedo 动作标题，例如 'Daedalus: 调整按钮文本'。"
+					},
+					scenePath: {
+						type: "string",
+						description: "可选场景路径；为空时使用当前打开场景。"
+					},
+					saveAfter: {
+						type: "boolean",
+						description: "提交 UndoRedo 动作后是否保存当前场景，默认 true。"
+					},
+					operations: {
+						type: "array",
+						description: "按顺序执行的在线场景操作。第一版支持 set_property、add_node、rename_node、attach_script、connect_signal。",
+						items: {
+							oneOf: [
+								{
+									type: "object",
+									properties: {
+										type: { const: "set_property" },
+										nodePath: { type: "string" },
+										property: { type: "string" },
+										value: {}
+									},
+									required: ["type", "nodePath", "property", "value"]
+								},
+								{
+									type: "object",
+									properties: {
+										type: { const: "add_node" },
+										parentPath: { type: "string" },
+										nodeType: { type: "string" },
+										nodeName: { type: "string" },
+										properties: {
+											type: "object",
+											additionalProperties: true
+										}
+									},
+									required: ["type", "parentPath", "nodeType", "nodeName"]
+								},
+								{
+									type: "object",
+									properties: {
+										type: { const: "rename_node" },
+										nodePath: { type: "string" },
+										name: { type: "string" }
+									},
+									required: ["type", "nodePath", "name"]
+								},
+								{
+									type: "object",
+									properties: {
+										type: { const: "attach_script" },
+										nodePath: { type: "string" },
+										scriptPath: { type: "string" }
+									},
+									required: ["type", "nodePath", "scriptPath"]
+								},
+								{
+									type: "object",
+									properties: {
+										type: { const: "connect_signal" },
+										fromNode: { type: "string" },
+										signal: { type: "string" },
+										toNode: { type: "string" },
+										method: { type: "string" },
+										flags: { type: "integer" }
+									},
+									required: ["type", "fromNode", "signal", "toNode", "method"]
+								}
+							]
+						},
+						minItems: 1,
+						maxItems: 50
+					}
+				},
+				required: ["operations"]
 			}
 		}
 	},

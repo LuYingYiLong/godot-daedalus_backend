@@ -1,7 +1,7 @@
 import WebSocket, { WebSocketServer } from "ws";
 import { composeSystemPrompt, listPromptTemplates } from "../prompts/registry.js";
 import { clientRequestSchema } from "../protocol/schema.js";
-import type { AiChatParams, ChatMessage, ClientRequest, ModelProfile, ServerEvent } from "../protocol/types.js";
+import type { AdditionalContextItem, AiChatParams, ChatMessage, ClientRequest, ModelProfile, ServerEvent } from "../protocol/types.js";
 import {
 	continueDeepSeekAgent,
 	continueDeepSeekAgentStreaming,
@@ -99,6 +99,7 @@ function logPromptTrace(params: {
 	systemPrompt: string;
 	skillPrompt: string;
 	mcpSystemContext: string;
+	additionalContextSection?: string | undefined;
 	guidePromptSection?: string | undefined;
 	fullSystemPrompt: string;
 }): void {
@@ -116,6 +117,7 @@ function logPromptTrace(params: {
 			`system=${params.systemPrompt.length}chars:${fingerprintText(params.systemPrompt)}`,
 			`skillPrompt=${params.skillPrompt.length}chars:${fingerprintText(params.skillPrompt)}`,
 			`mcpContext=${params.mcpSystemContext.length}chars:${fingerprintText(params.mcpSystemContext)}`,
+			`additionalContext=${(params.additionalContextSection ?? "").length}chars:${fingerprintText(params.additionalContextSection ?? "")}`,
 			`guide=${(params.guidePromptSection ?? "").length}chars:${fingerprintText(params.guidePromptSection ?? "")}`,
 			`full=${params.fullSystemPrompt.length}chars:${fingerprintText(params.fullSystemPrompt)}`
 		].join(" ")
@@ -388,15 +390,22 @@ async function appendChatTurnToSession(
 	assistantMessage: string,
 	requestId: string,
 	userCreatedAt: string = new Date().toISOString(),
-	assistantCreatedAt: string = new Date().toISOString()
+	assistantCreatedAt: string = new Date().toISOString(),
+	additionalContext?: readonly AdditionalContextItem[] | undefined
 ): Promise<void> {
 	if (session.messages.some((message: ChatMessage): boolean => message.requestId === requestId)) {
 		return;
 	}
 
+	const userChatMessage: ChatMessage = { role: "user", content: userMessage, requestId, createdAt: userCreatedAt };
+	const clonedAdditionalContext: AdditionalContextItem[] | undefined = cloneAdditionalContextItems(additionalContext);
+	if (clonedAdditionalContext !== undefined) {
+		userChatMessage.additionalContext = clonedAdditionalContext;
+	}
+
 	const nextMessages: ChatMessage[] = [
 		...session.messages,
-		{ role: "user", content: userMessage, requestId, createdAt: userCreatedAt },
+		userChatMessage,
 		{ role: "assistant", content: assistantMessage, requestId, createdAt: assistantCreatedAt }
 	];
 	session.messages = nextMessages;
@@ -443,6 +452,10 @@ function toChatMessage(message: StoredMessage): ChatMessage {
 
 	if (message.createdAt !== undefined) {
 		chatMessage.createdAt = message.createdAt;
+	}
+
+	if (message.additionalContext !== undefined && message.additionalContext.length > 0) {
+		chatMessage.additionalContext = cloneAdditionalContextItems(message.additionalContext);
 	}
 
 	return chatMessage;
@@ -579,6 +592,63 @@ function clipTextByChars(text: string, maxChars: number): string {
 	}
 
 	return text.slice(0, maxChars);
+}
+
+function cloneAdditionalContextItems(items: readonly AdditionalContextItem[] | undefined): AdditionalContextItem[] | undefined {
+	if (items === undefined || items.length === 0) {
+		return undefined;
+	}
+
+	return items.map((item: AdditionalContextItem): AdditionalContextItem => ({ ...item }));
+}
+
+function createAdditionalContextPromptSection(items: readonly AdditionalContextItem[] | undefined): string {
+	if (items === undefined || items.length === 0) {
+		return "";
+	}
+
+	const lines: string[] = [
+		"## 用户附加上下文",
+		"以下是用户本轮显式附加的紧凑上下文。不要把这些条目当成长期记忆；它们只对本轮任务生效。大文件和文件夹只提供引用，不内联全文；如需内容，使用可用 MCP 读取工具按需读取。",
+		"编辑器上下文规则：如果 Godot 编辑器在线，并且任务目标明显指向当前打开场景或选中节点，优先使用 godot_editor 读取/检查/patch；如果返回 editor_unavailable、上下文 stale，或目标不在当前编辑器上下文中，回退到离线 .tscn/text/headless 工具。"
+	];
+
+	for (const item of items.slice(0, 20)) {
+		const title: string = clipTextByChars(item.title.trim(), 120);
+		const subtitle: string = clipTextByChars((item.subtitle ?? "").trim(), 220);
+		const headerParts: string[] = [
+			`- [${item.kind}] ${title}`,
+			subtitle.length > 0 ? `— ${subtitle}` : "",
+			item.pinned === true ? "(pinned)" : "",
+			`source=${item.source}`
+		].filter((part: string): boolean => part.length > 0);
+		lines.push(headerParts.join(" "));
+
+		if (item.resourcePath !== undefined) {
+			lines.push(`  - resourcePath: ${clipTextByChars(item.resourcePath, 300)}`);
+		}
+		if (item.nodePath !== undefined) {
+			lines.push(`  - nodePath: ${clipTextByChars(item.nodePath, 300)}`);
+		}
+		if (item.nodeType !== undefined) {
+			lines.push(`  - nodeType: ${clipTextByChars(item.nodeType, 120)}`);
+		}
+		if (item.scriptPath !== undefined) {
+			lines.push(`  - scriptPath: ${clipTextByChars(item.scriptPath, 300)}`);
+		}
+		if (item.summary !== undefined && item.summary.trim().length > 0) {
+			lines.push(`  - summary: ${clipTextByChars(item.summary.trim(), 500)}`);
+		}
+		if (item.data !== undefined) {
+			lines.push(`  - data: ${clipTextByChars(JSON.stringify(createPreviewValue(item.data)), 1000)}`);
+		}
+	}
+
+	if (items.length > 20) {
+		lines.push(`- [truncated] 另有 ${items.length - 20} 条上下文未注入。`);
+	}
+
+	return lines.join("\n");
 }
 
 function createPendingGuide(clientGuideId: string, text: string, anchorRequestId: string | undefined): PendingGuide {
@@ -1053,7 +1123,9 @@ async function sendContinuedAgentResult(
 		pendingContinuation.userMessage,
 		text,
 		pendingContinuation.requestId,
-		pendingContinuation.userCreatedAt
+		pendingContinuation.userCreatedAt,
+		undefined,
+		pendingContinuation.params.additionalContext
 	);
 	sendJson(socket, {
 		type: "event",
@@ -1116,9 +1188,11 @@ async function createWorkflowPhasePrompt(
 	const systemPrompt: string = await composeSystemPrompt(phase.promptId ?? params.promptId, params.systemPrompt);
 	const skillPrompt: string = await composeSkillPrompt(phase.skillId);
 	const mcpSystemContext: string = await createMcpSystemContext(mcpHost, session);
+	const additionalContextSection: string = createAdditionalContextPromptSection(params.additionalContext);
 	const fullSystemPrompt: string = [
 		systemPrompt,
 		createPhasePrompt(phase, skillPrompt, mcpSystemContext),
+		additionalContextSection,
 		guidePromptSection
 	].join("\n\n");
 	logPromptTrace({
@@ -1130,6 +1204,7 @@ async function createWorkflowPhasePrompt(
 		systemPrompt,
 		skillPrompt,
 		mcpSystemContext,
+		additionalContextSection,
 		guidePromptSection,
 		fullSystemPrompt
 	});
@@ -1263,7 +1338,9 @@ async function continueWorkflowExecution(
 				state.originalParams.message,
 				agentResult.text,
 				persistRequestId,
-				userCreatedAt
+				userCreatedAt,
+				undefined,
+				state.originalParams.additionalContext
 			);
 			sendWorkflowEvent(socket, requestId, session, "workflow.done", {
 				workflowId: plan.id,
@@ -1432,7 +1509,10 @@ function canCallMcpToolDirectly(toolName: string): boolean {
 		"list_scripts",
 		"read_text_file",
 		"search_text",
-		"propose_create_text_file"
+		"propose_create_text_file",
+		"get_context",
+		"get_selected_nodes",
+		"inspect_node"
 	]);
 
 	return allowedTools.has(toolName);
@@ -1773,6 +1853,20 @@ async function createMcpSystemContext(mcpHost: McpHost, session: ClientSession):
 						sections.push(`Godot 项目摘要读取失败：${message}`);
 					}
 				}
+
+				if (serverId === "godot_editor") {
+					try {
+						const editorResource = await mcpHost.readResource(serverId, "godot-editor://context");
+						const editorContent = editorResource.contents[0];
+						if (editorContent !== undefined && "text" in editorContent) {
+							sections.push("当前 Godot 编辑器上下文：");
+							sections.push(createSafeMarkdownFence(editorContent.text, "json"));
+						}
+					} catch (error: unknown) {
+						const message: string = error instanceof Error ? error.message : "unknown error";
+						sections.push(`Godot 编辑器上下文读取失败：${message}`);
+					}
+				}
 			}
 	}
 
@@ -1979,10 +2073,12 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 				);
 				const skillPrompt: string = await composeSkillPrompt(activeSkillId);
 				const mcpSystemContext: string = await createMcpSystemContext(mcpHost, session);
+				const additionalContextSection: string = createAdditionalContextPromptSection(params.additionalContext);
 				const guidePromptSection: string = consumePendingGuideSection(socket, request.id, session);
 				const fullSystemPrompt: string = systemPrompt
 					+ (skillPrompt.length > 0 ? `\n\n${skillPrompt}` : "")
 					+ mcpSystemContext
+					+ (additionalContextSection.length > 0 ? `\n\n${additionalContextSection}` : "")
 					+ (guidePromptSection.length > 0 ? `\n\n${guidePromptSection}` : "");
 				logPromptTrace({
 					requestId: request.id,
@@ -1992,6 +2088,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 					systemPrompt,
 					skillPrompt,
 					mcpSystemContext,
+					additionalContextSection,
 					guidePromptSection,
 					fullSystemPrompt
 				});
@@ -2007,14 +2104,14 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 					session.modelProfile,
 					params,
 					systemPrompt,
-					skillPrompt + mcpSystemContext + guidePromptSection
+					skillPrompt + mcpSystemContext + additionalContextSection + guidePromptSection
 				);
 				const history: ChatMessage[] = await selectHistoryForModel(session, historyBudgetTokens);
 				let workflowPlan: WorkflowPlan | null = null;
 				if (slashCommandResult.type === "none") {
 					if (params.options?.workflow === "llm_planned") {
 						try {
-							workflowPlan = await createLlmWorkflowPlan(params, options, history, mcpSystemContext + guidePromptSection, abortController.signal);
+							workflowPlan = await createLlmWorkflowPlan(params, options, history, mcpSystemContext + additionalContextSection + guidePromptSection, abortController.signal);
 						} catch (error: unknown) {
 							console.warn("[workflow] LLM planner failed, falling back to fixed workflow:", error);
 							workflowPlan = planWorkflow({
@@ -2042,7 +2139,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 						history,
 						historyBudgetTokens,
 						turnStartedAt,
-						mcpSystemContext + guidePromptSection,
+						mcpSystemContext + additionalContextSection + guidePromptSection,
 						guidePromptSection,
 						abortController.signal
 					);
@@ -2071,7 +2168,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 
 					const text: string = agentResult.text;
 
-					await appendChatTurnToSession(session, history, params.message, text, request.id, turnStartedAt);
+					await appendChatTurnToSession(session, history, params.message, text, request.id, turnStartedAt, undefined, params.additionalContext);
 					sendJson(socket, {
 						type: "event",
 						id: request.id,
@@ -2116,7 +2213,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 					}
 
 					const text: string = agentResult.text;
-					await appendChatTurnToSession(session, history, params.message, text, request.id, turnStartedAt);
+					await appendChatTurnToSession(session, history, params.message, text, request.id, turnStartedAt, undefined, params.additionalContext);
 
 					sendJson(socket, {
 						type: "response",
@@ -3473,6 +3570,39 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 			});
 			break;
 
+		case "editor.context.update":
+			mcpHost.getEditorBridge().attachSocket(socket);
+			mcpHost.getEditorBridge().updateContext(request.params);
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: true,
+				result: {
+					updated: true,
+					serverId: "godot_editor"
+				}
+			});
+			break;
+
+		case "editor.tool.result": {
+			const accepted: boolean = mcpHost.getEditorBridge().handleToolResult(
+				request.params.callId,
+				request.params.ok,
+				request.params.result,
+				request.params.error
+			);
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: true,
+				result: {
+					accepted,
+					callId: request.params.callId
+				}
+			});
+			break;
+		}
+
 		case "workspace.list":
 			sendJson(socket, {
 				type: "response",
@@ -3632,6 +3762,7 @@ export function createServer(port: number, mcpHost: McpHost): WebSocketServer {
 		});
 
 		socket.on("close", (): void => {
+			mcpHost.getEditorBridge().detachSocket(socket);
 			for (const controller of session.activeAbortControllers.values()) {
 				controller.abort();
 			}

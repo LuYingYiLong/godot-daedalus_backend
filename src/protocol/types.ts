@@ -1,7 +1,9 @@
 import type { z } from "zod";
-import type { aiChatParamsSchema, clientRequestSchema, promptIdSchema, skillIdSchema } from "./schema.js";
+import type { additionalContextItemSchema, aiChatParamsSchema, clientRequestSchema, promptIdSchema, skillIdSchema } from "./schema.js";
 
 export type AiChatParams = z.infer<typeof aiChatParamsSchema>;
+
+export type AdditionalContextItem = z.infer<typeof additionalContextItemSchema>;
 
 export type ClientRequest = z.infer<typeof clientRequestSchema>;
 
@@ -14,6 +16,7 @@ export type ChatMessage = {
 	content: string;
 	requestId?: string | undefined;
 	createdAt?: string | undefined;
+	additionalContext?: AdditionalContextItem[] | undefined;
 };
 
 export type ServerResponse =
@@ -53,6 +56,7 @@ export type ServerEvent = {
 		| "guide.updated"
 		| "guide.deleted"
 		| "guide.applied"
+		| "editor.tool.requested"
 		| "workflow.started"
 		| "workflow.phase.started"
 		| "workflow.todo.updated"

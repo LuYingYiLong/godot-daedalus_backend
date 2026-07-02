@@ -1,4 +1,5 @@
 import { buildMcpServerConfigs } from "./mcp-config.js";
+import { GODOT_EDITOR_SERVER_ID, GodotEditorBridge } from "./godot-editor-bridge.js";
 import { McpSession } from "./mcp-session.js";
 import { getDefaultWorkspace } from "../workspace/registry.js";
 import type { WorkspaceConfig } from "../workspace/types.js";
@@ -6,6 +7,7 @@ import type { WorkspaceConfig } from "../workspace/types.js";
 export class McpHost {
 	private workspaceSessions: Map<string, Map<string, McpSession>> = new Map();
 	private activeWorkspaceId?: string | undefined;
+	private readonly editorBridge: GodotEditorBridge = new GodotEditorBridge();
 
 	async connectAll(): Promise<void> {
 		if (process.env.MCP_AUTO_CONNECT !== "1") {
@@ -92,6 +94,10 @@ export class McpHost {
 		return this.activeWorkspaceId;
 	}
 
+	getEditorBridge(): GodotEditorBridge {
+		return this.editorBridge;
+	}
+
 	getSession(id: string): McpSession {
 		const session: McpSession | undefined = this.getActiveSessions().get(id);
 
@@ -104,15 +110,19 @@ export class McpHost {
 
 	getConnectedServerIds(): string[] {
 		if (!this.activeWorkspaceId) {
-			return [];
+			return this.editorBridge.isOnline() ? [GODOT_EDITOR_SERVER_ID] : [];
 		}
 
 		const sessions: Map<string, McpSession> | undefined = this.workspaceSessions.get(this.activeWorkspaceId);
 		if (!sessions) {
-			return [];
+			return this.editorBridge.isOnline() ? [GODOT_EDITOR_SERVER_ID] : [];
 		}
 
-		return Array.from(sessions.keys()).sort();
+		const serverIds: string[] = Array.from(sessions.keys());
+		if (this.editorBridge.isOnline()) {
+			serverIds.push(GODOT_EDITOR_SERVER_ID);
+		}
+		return serverIds.sort();
 	}
 
 	getConnectedWorkspaceIds(): string[] {
@@ -120,18 +130,34 @@ export class McpHost {
 	}
 
 	async listTools(serverId: string) {
+		if (serverId === GODOT_EDITOR_SERVER_ID) {
+			return this.editorBridge.listTools();
+		}
+
 		return this.getSession(serverId).listTools();
 	}
 
 	async callTool(serverId: string, name: string, args: Record<string, unknown>) {
+		if (serverId === GODOT_EDITOR_SERVER_ID) {
+			return this.editorBridge.callTool(name, args);
+		}
+
 		return this.getSession(serverId).callTool(name, args);
 	}
 
 	async listResources(serverId: string) {
+		if (serverId === GODOT_EDITOR_SERVER_ID) {
+			return this.editorBridge.listResources();
+		}
+
 		return this.getSession(serverId).listResources();
 	}
 
 	async readResource(serverId: string, uri: string) {
+		if (serverId === GODOT_EDITOR_SERVER_ID) {
+			return this.editorBridge.readResource(uri);
+		}
+
 		return this.getSession(serverId).readResource(uri);
 	}
 

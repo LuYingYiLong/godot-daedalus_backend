@@ -31,7 +31,15 @@ const RAW_TOOL_NAME_MAP: Readonly<Record<string, string>> = {
 	propose_connect_signal_in_scene: "mcp_godot_propose_connect_signal_in_scene",
 	connect_signal_in_scene: "mcp_godot_connect_signal_in_scene",
 	propose_apply_scene_patch: "mcp_godot_propose_apply_scene_patch",
-	apply_scene_patch: "mcp_godot_apply_scene_patch"
+	apply_scene_patch: "mcp_godot_apply_scene_patch",
+	editor_get_context: "mcp_godot_editor_get_context",
+	get_editor_context: "mcp_godot_editor_get_context",
+	editor_get_selected_nodes: "mcp_godot_editor_get_selected_nodes",
+	get_selected_nodes: "mcp_godot_editor_get_selected_nodes",
+	editor_inspect_node: "mcp_godot_editor_inspect_node",
+	inspect_live_node: "mcp_godot_editor_inspect_node",
+	editor_apply_scene_patch: "mcp_godot_editor_apply_scene_patch",
+	apply_editor_scene_patch: "mcp_godot_editor_apply_scene_patch"
 };
 const RAW_TOOL_NAMES: readonly string[] = Object.keys(RAW_TOOL_NAME_MAP);
 
@@ -57,7 +65,8 @@ const SCENE_PATH_TOOL_NAMES: ReadonlySet<string> = new Set([
 	"mcp_godot_propose_connect_signal_in_scene",
 	"mcp_godot_connect_signal_in_scene",
 	"mcp_godot_propose_apply_scene_patch",
-	"mcp_godot_apply_scene_patch"
+	"mcp_godot_apply_scene_patch",
+	"mcp_godot_editor_apply_scene_patch"
 ]);
 
 function decodeXmlEntities(text: string): string {
@@ -147,6 +156,10 @@ function defaultParameterName(toolName: string): string | undefined {
 
 	if (toolName === "mcp_godot_search_text") {
 		return "query";
+	}
+
+	if (toolName === "mcp_godot_editor_inspect_node") {
+		return "nodePath";
 	}
 
 	if (toolName === "mcp_terminal_run_safe_preset" || toolName === "mcp_terminal_run_write_preset") {

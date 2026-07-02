@@ -113,6 +113,7 @@ function createPlannerSystemPrompt(): string {
 		"- 每个 title 必须是前端 Todo 可显示的短标题，不要写长描述。",
 		"- 复杂修改通常包含 read/write/verify/summarize；简单问答可以只有 summarize。",
 		"- 最后一步必须能给用户最终交付总结，优先使用 toolGroup=summarize。",
+		"- 如果上下文显示 Godot 编辑器在线，且用户目标指向当前打开场景或选中节点，read/write 步骤应让执行模型优先使用 godot_editor 工具；若编辑器离线、stale 或不匹配，则回退到离线 .tscn/text/headless 工具。",
 		"- 不要输出 tool 名称，后端会根据 toolGroup 决定安全工具集合。"
 	].join("\n");
 }

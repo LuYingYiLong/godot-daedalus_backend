@@ -58,6 +58,54 @@ function createDisplay(
 }
 
 export function describeToolEvent(toolName: string, args: Record<string, unknown>): ToolEventDisplay {
+	if (toolName.startsWith("mcp_godot_editor_")) {
+		const scenePath: string | undefined = getStringArg(args, "scenePath");
+		const nodePath: string | undefined = getStringArg(args, "nodePath");
+		const targetLabel: string = nodePath ?? scenePath ?? "Godot Editor";
+
+		if (toolName.includes("get_context")) {
+			return createDisplay("godot_editor", "Godot Editor", "read", "读取编辑器上下文", "读取当前编辑器在线状态与场景上下文", {
+				kind: "unknown",
+				label: "Godot Editor"
+			});
+		}
+
+		if (toolName.includes("get_selected_nodes")) {
+			return createDisplay("godot_editor", "Godot Editor", "read", "读取选中节点", "读取当前编辑器选中的节点", {
+				kind: "scene",
+				label: "selected nodes"
+			});
+		}
+
+		if (toolName.includes("inspect_node")) {
+			const target: ToolEventTarget = scenePath === undefined ? {
+				kind: "scene",
+				label: targetLabel
+			} : {
+				kind: "scene",
+				path: scenePath,
+				label: targetLabel
+			};
+			return createDisplay("godot_editor", "Godot Editor", "read", "查看在线节点", `查看 ${targetLabel}`, {
+				...target
+			});
+		}
+
+		if (toolName.includes("apply_scene_patch")) {
+			const target: ToolEventTarget = scenePath === undefined ? {
+				kind: "scene",
+				label: "当前场景"
+			} : {
+				kind: "scene",
+				path: scenePath,
+				label: scenePath
+			};
+			return createDisplay("godot_editor", "Godot Editor", "scene", "编辑在线场景", `编辑 ${scenePath ?? "当前场景"}`, {
+				...target
+			});
+		}
+	}
+
 	if (toolName.startsWith("mcp_godot_")) {
 		const relativePath: string | undefined = getStringArg(args, "relativePath") ?? getStringArg(args, "scenePath");
 

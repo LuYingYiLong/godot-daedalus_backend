@@ -28,7 +28,10 @@ const READ_TOOLS: string[] = [
 	"mcp_godot_list_scripts",
 	"mcp_godot_read_text_file",
 	"mcp_godot_search_text",
-	"mcp_godot_inspect_scene_tree"
+	"mcp_godot_inspect_scene_tree",
+	"mcp_godot_editor_get_context",
+	"mcp_godot_editor_get_selected_nodes",
+	"mcp_godot_editor_inspect_node"
 ];
 
 const FILE_CREATE_TOOLS: string[] = [
@@ -55,7 +58,8 @@ const SCENE_WRITE_TOOLS: string[] = [
 	"mcp_godot_add_node_to_scene",
 	"mcp_godot_attach_script_to_node",
 	"mcp_godot_connect_signal_in_scene",
-	"mcp_godot_apply_scene_patch"
+	"mcp_godot_apply_scene_patch",
+	"mcp_godot_editor_apply_scene_patch"
 ];
 
 const skills: Record<SkillId, Skill> = {

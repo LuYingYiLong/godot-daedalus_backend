@@ -15,12 +15,28 @@ export const skillIdSchema = z.enum([
 	"backend.helper"
 ]);
 
+export const additionalContextItemSchema = z.object({
+	id: z.string().min(1).max(160),
+	kind: z.enum(["editor_selection", "scene", "node", "file", "folder", "script"]),
+	title: z.string().min(1).max(200),
+	subtitle: z.string().max(400).optional(),
+	pinned: z.boolean().optional(),
+	source: z.enum(["editor", "manual"]),
+	resourcePath: z.string().max(500).optional(),
+	nodePath: z.string().max(500).optional(),
+	nodeType: z.string().max(160).optional(),
+	scriptPath: z.string().max(500).optional(),
+	summary: z.string().max(1200).optional(),
+	data: z.unknown().optional()
+});
+
 export const aiChatParamsSchema = z.object({
 	message: z.string(),
 	promptId: promptIdSchema.optional(),
 	skillId: skillIdSchema.optional(),
 	systemPrompt: z.string().optional(),
 	retryFromRequestId: z.string().min(1).optional(),
+	additionalContext: z.array(additionalContextItemSchema).max(32).optional(),
 	options: z.object({
 		temperature: z.number().min(0).max(2).optional(),
 		topP: z.number().min(0).max(1).optional(),
@@ -360,6 +376,23 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		params: z.object({
 			godotExecutablePath: z.string().min(1).optional(),
 			godotProjectPath: z.string().min(1).optional(),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("editor.context.update"),
+		params: z.record(z.string(), z.unknown()),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("editor.tool.result"),
+		params: z.object({
+			callId: z.string().min(1),
+			ok: z.boolean(),
+			result: z.unknown().optional(),
+			error: z.string().optional(),
 		}),
 	}),
 	z.object({
