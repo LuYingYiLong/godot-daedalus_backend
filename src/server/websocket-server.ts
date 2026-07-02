@@ -602,6 +602,100 @@ function cloneAdditionalContextItems(items: readonly AdditionalContextItem[] | u
 	return items.map((item: AdditionalContextItem): AdditionalContextItem => ({ ...item }));
 }
 
+function getAdditionalContextDataRecord(item: AdditionalContextItem): Record<string, unknown> | undefined {
+	if (item.data === undefined || typeof item.data !== "object" || item.data === null || Array.isArray(item.data)) {
+		return undefined;
+	}
+
+	return item.data as Record<string, unknown>;
+}
+
+function getContextNumber(data: Record<string, unknown> | undefined, key: string): number | undefined {
+	if (data === undefined) {
+		return undefined;
+	}
+
+	const value: unknown = data[key];
+	if (typeof value !== "number" || !Number.isFinite(value)) {
+		return undefined;
+	}
+
+	return Math.floor(value);
+}
+
+function getContextString(data: Record<string, unknown> | undefined, key: string): string {
+	const value: unknown = data?.[key];
+	return typeof value === "string" ? value : "";
+}
+
+function createLineColumnRangeText(data: Record<string, unknown> | undefined): string {
+	const lineStart: number | undefined = getContextNumber(data, "lineStart");
+	const columnStart: number | undefined = getContextNumber(data, "columnStart");
+	const lineEnd: number | undefined = getContextNumber(data, "lineEnd");
+	const columnEnd: number | undefined = getContextNumber(data, "columnEnd");
+	if (lineStart === undefined || columnStart === undefined || lineEnd === undefined || columnEnd === undefined) {
+		return "";
+	}
+
+	return `${lineStart}:${columnStart}-${lineEnd}:${columnEnd}`;
+}
+
+function appendScriptSelectionPromptLines(lines: string[], item: AdditionalContextItem): void {
+	const data: Record<string, unknown> | undefined = getAdditionalContextDataRecord(item);
+	const rangeText: string = createLineColumnRangeText(data);
+	if (rangeText.length > 0) {
+		lines.push(`  - range: ${rangeText} (1-based line/column)`);
+	}
+
+	const hasSelection: boolean = data?.hasSelection === true;
+	const selectedTextPreview: string = getContextString(data, "selectedTextPreview");
+	const lineTextPreview: string = getContextString(data, "lineTextPreview");
+	if (hasSelection && selectedTextPreview.trim().length > 0) {
+		lines.push("  - selectedTextPreview:");
+		lines.push(clipTextByChars(selectedTextPreview, 2000));
+		if (data?.selectedTextTruncated === true) {
+			lines.push("  - selectedTextPreviewTruncated: true");
+		}
+	} else if (lineTextPreview.trim().length > 0) {
+		lines.push(`  - currentLinePreview: ${clipTextByChars(lineTextPreview, 500)}`);
+	}
+
+	lines.push("  - note: 这只是脚本选区/光标附近的短片段；如需上下文，请按 resourcePath 用读取工具按需读取。");
+}
+
+function appendFilesystemSelectionPromptLines(lines: string[], item: AdditionalContextItem): void {
+	const data: Record<string, unknown> | undefined = getAdditionalContextDataRecord(item);
+	const selectedPaths: unknown = data?.selectedPaths;
+	if (!Array.isArray(selectedPaths)) {
+		lines.push("  - note: 文件系统选择只提供资源引用；文件内容需要用 MCP read/search 工具按需读取。");
+		return;
+	}
+
+	const pathLines: string[] = [];
+	for (const selectedPath of selectedPaths.slice(0, 20)) {
+		if (typeof selectedPath !== "object" || selectedPath === null || Array.isArray(selectedPath)) {
+			continue;
+		}
+
+		const selectedPathRecord: Record<string, unknown> = selectedPath as Record<string, unknown>;
+		const resourcePath: string = typeof selectedPathRecord.resourcePath === "string" ? selectedPathRecord.resourcePath : "";
+		if (resourcePath.length === 0) {
+			continue;
+		}
+		const selectedKind: string = typeof selectedPathRecord.kind === "string" ? selectedPathRecord.kind : "file";
+		pathLines.push(`    - ${selectedKind}: ${clipTextByChars(resourcePath, 300)}`);
+	}
+
+	if (pathLines.length > 0) {
+		lines.push("  - selectedPaths:");
+		lines.push(...pathLines);
+	}
+	if (selectedPaths.length > 20 || data?.truncated === true) {
+		lines.push(`  - selectedPathsTruncated: true (${selectedPaths.length} total reported)`);
+	}
+	lines.push("  - note: 大文件和文件夹不内联内容；只在需要时按 resourcePath 读取或搜索。");
+}
+
 function createAdditionalContextPromptSection(items: readonly AdditionalContextItem[] | undefined): string {
 	if (items === undefined || items.length === 0) {
 		return "";
@@ -610,7 +704,7 @@ function createAdditionalContextPromptSection(items: readonly AdditionalContextI
 	const lines: string[] = [
 		"## 用户附加上下文",
 		"以下是用户本轮显式附加的紧凑上下文。不要把这些条目当成长期记忆；它们只对本轮任务生效。大文件和文件夹只提供引用，不内联全文；如需内容，使用可用 MCP 读取工具按需读取。",
-		"编辑器上下文规则：如果 Godot 编辑器在线，并且任务目标明显指向当前打开场景或选中节点，优先使用 godot_editor 读取/检查/patch；如果返回 editor_unavailable、上下文 stale，或目标不在当前编辑器上下文中，回退到离线 .tscn/text/headless 工具。"
+		"编辑器上下文规则：如果 Godot 编辑器在线，并且任务目标明显指向当前打开场景、选中节点、当前脚本/这几行或 FileSystem Dock 选中项，优先使用 godot_editor 读取/检查/patch；如果返回 editor_unavailable、上下文 stale，或目标不在当前编辑器上下文中，回退到离线 .tscn/text/headless 工具。"
 	];
 
 	for (const item of items.slice(0, 20)) {
@@ -639,7 +733,12 @@ function createAdditionalContextPromptSection(items: readonly AdditionalContextI
 		if (item.summary !== undefined && item.summary.trim().length > 0) {
 			lines.push(`  - summary: ${clipTextByChars(item.summary.trim(), 500)}`);
 		}
-		if (item.data !== undefined) {
+		if (item.kind === "script_selection") {
+			appendScriptSelectionPromptLines(lines, item);
+		} else if (item.kind === "filesystem_selection") {
+			appendFilesystemSelectionPromptLines(lines, item);
+		}
+		if (item.data !== undefined && item.kind !== "script_selection" && item.kind !== "filesystem_selection") {
 			lines.push(`  - data: ${clipTextByChars(JSON.stringify(createPreviewValue(item.data)), 1000)}`);
 		}
 	}

@@ -17,7 +17,7 @@ export const skillIdSchema = z.enum([
 
 export const additionalContextItemSchema = z.object({
 	id: z.string().min(1).max(160),
-	kind: z.enum(["editor_selection", "scene", "node", "file", "folder", "script"]),
+	kind: z.enum(["editor_selection", "scene", "node", "file", "folder", "script", "script_selection", "filesystem_selection"]),
 	title: z.string().min(1).max(200),
 	subtitle: z.string().max(400).optional(),
 	pinned: z.boolean().optional(),

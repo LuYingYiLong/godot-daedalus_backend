@@ -109,7 +109,7 @@ export class GodotEditorBridge {
 			tools: [
 				{
 					name: "get_context",
-					description: "返回 Godot 编辑器在线状态、当前场景、选择节点和上下文新鲜度。",
+					description: "返回 Godot 编辑器在线状态、当前场景、选择节点、脚本选区、文件系统选择和上下文新鲜度。",
 					inputSchema: {
 						type: "object",
 						properties: {},
