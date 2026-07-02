@@ -67,7 +67,8 @@ export async function chatWithDeepSeek(
 	params: AiChatParams,
 	options: DeepSeekChatOptions,
 	history: ChatMessage[],
-	systemPrompt: string
+	systemPrompt: string,
+	abortSignal?: AbortSignal | undefined
 ): Promise<string> {
 	const client: OpenAI = createDeepSeekClient(options);
 	const requestBody: ChatCompletionCreateParamsNonStreaming = {
@@ -77,7 +78,7 @@ export async function chatWithDeepSeek(
 
 	applyChatOptions(requestBody, params);
 
-	const completion = await client.chat.completions.create(requestBody);
+	const completion = await client.chat.completions.create(requestBody, { signal: abortSignal });
 
 	const text: string | null | undefined = completion.choices[0]?.message.content;
 	if (!text) {
@@ -91,7 +92,8 @@ export async function* streamChatWithDeepSeek(
 	params: AiChatParams,
 	options: DeepSeekChatOptions,
 	history: ChatMessage[],
-	systemPrompt: string
+	systemPrompt: string,
+	abortSignal?: AbortSignal | undefined
 ): AsyncGenerator<string> {
 	const client: OpenAI = createDeepSeekClient(options);
 	const requestBody: ChatCompletionCreateParamsStreaming = {
@@ -102,7 +104,7 @@ export async function* streamChatWithDeepSeek(
 
 	applyChatOptions(requestBody, params);
 
-	const stream = await client.chat.completions.create(requestBody);
+	const stream = await client.chat.completions.create(requestBody, { signal: abortSignal });
 	for await (const chunk of stream) {
 		const delta: string | null | undefined = (chunk as ChatCompletionChunk).choices[0]?.delta.content;
 		if (delta !== undefined && delta !== null && delta.length > 0) {

@@ -1,7 +1,9 @@
 import type { AiChatParams } from "../protocol/types.js";
 import type { WorkflowPhase, WorkflowPhaseId, WorkflowPlan, WorkflowTodoItem } from "./types.js";
 
-const READ_TOOLS: string[] = [
+type FixedWorkflowPhaseId = "inspect" | "implement" | "review" | "verify" | "summarize";
+
+export const READ_TOOLS: string[] = [
 	"mcp_godot_get_project_summary",
 	"mcp_godot_list_project_files",
 	"mcp_godot_list_scenes",
@@ -11,36 +13,29 @@ const READ_TOOLS: string[] = [
 	"mcp_godot_inspect_scene_tree"
 ];
 
-const VERIFY_TOOLS: string[] = [
+export const VERIFY_TOOLS: string[] = [
 	"mcp_terminal_get_capabilities",
 	"mcp_terminal_run_safe_preset"
 ];
 
-const WRITE_TOOLS: string[] = [
-	"mcp_godot_propose_create_text_file",
+export const WRITE_TOOLS: string[] = [
 	"mcp_godot_create_text_file",
-	"mcp_godot_propose_overwrite_text_file",
 	"mcp_godot_overwrite_text_file",
-	"mcp_godot_propose_replace_text_in_file",
 	"mcp_godot_replace_text_in_file",
-	"mcp_godot_propose_create_scene",
 	"mcp_godot_create_scene",
-	"mcp_godot_propose_add_node_to_scene",
 	"mcp_godot_add_node_to_scene",
-	"mcp_godot_propose_attach_script_to_node",
 	"mcp_godot_attach_script_to_node",
-	"mcp_godot_propose_connect_signal_in_scene",
 	"mcp_godot_connect_signal_in_scene",
-	"mcp_godot_propose_apply_scene_patch",
 	"mcp_godot_apply_scene_patch",
 	"mcp_terminal_run_write_preset",
 	"mcp_terminal_run_godot_scene_script"
 ];
 
-const PHASE_TEMPLATES: Record<WorkflowPhaseId, WorkflowPhase> = {
+const PHASE_TEMPLATES: Record<FixedWorkflowPhaseId, WorkflowPhase> = {
 	inspect: {
 		id: "inspect",
 		title: "理解上下文",
+		toolGroup: "read",
 		toolBudget: "normal",
 		allowedTools: READ_TOOLS,
 		instruction: "读取最小必要上下文，确认相关文件、场景、脚本和项目约束。只做事实收集，不修改文件。"
@@ -48,15 +43,17 @@ const PHASE_TEMPLATES: Record<WorkflowPhaseId, WorkflowPhase> = {
 	implement: {
 		id: "implement",
 		title: "实现修改",
+		toolGroup: "write",
 		skillId: "file.creator",
 		promptId: "godot.assistant",
 		toolBudget: "project_edit",
 		allowedTools: [...READ_TOOLS, ...WRITE_TOOLS],
-		instruction: "基于已收集上下文完成必要修改。优先小步修改，写操作走审批系统。不要声称提案已经写入。"
+		instruction: "基于已收集上下文完成必要修改。优先小步修改，必须使用 create/overwrite/replace/apply/add/attach/connect 等实际写入工具完成修改；这些写入工具会走审批系统。不要使用 propose_* 作为实现结果。"
 	},
 	review: {
 		id: "review",
 		title: "审查结果",
+		toolGroup: "verify",
 		skillId: "gdscript.review",
 		promptId: "gdscript.reviewer",
 		toolBudget: "normal",
@@ -66,6 +63,7 @@ const PHASE_TEMPLATES: Record<WorkflowPhaseId, WorkflowPhase> = {
 	verify: {
 		id: "verify",
 		title: "运行验证",
+		toolGroup: "verify",
 		toolBudget: "normal",
 		allowedTools: [...READ_TOOLS, ...VERIFY_TOOLS],
 		instruction: "运行可用的低成本验证，例如 Godot check-only、类型检查或安全预设。记录通过、失败和未覆盖项。"
@@ -73,6 +71,7 @@ const PHASE_TEMPLATES: Record<WorkflowPhaseId, WorkflowPhase> = {
 	summarize: {
 		id: "summarize",
 		title: "总结交付",
+		toolGroup: "summarize",
 		promptId: "godot.assistant",
 		toolBudget: "simple",
 		allowedTools: [],
@@ -80,7 +79,7 @@ const PHASE_TEMPLATES: Record<WorkflowPhaseId, WorkflowPhase> = {
 	}
 };
 
-function createWorkflowId(): string {
+export function createWorkflowId(): string {
 	return `workflow-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
@@ -88,7 +87,7 @@ function includesAny(text: string, terms: readonly string[]): boolean {
 	return terms.some((term: string): boolean => text.includes(term));
 }
 
-function createPhase(phaseId: WorkflowPhaseId): WorkflowPhase {
+function createPhase(phaseId: FixedWorkflowPhaseId): WorkflowPhase {
 	const phase: WorkflowPhase = PHASE_TEMPLATES[phaseId];
 	return {
 		...phase,
@@ -105,17 +104,19 @@ function createTodos(phases: WorkflowPhase[]): WorkflowTodoItem[] {
 	}));
 }
 
-function createPlan(title: string, phaseIds: WorkflowPhaseId[]): WorkflowPlan {
+function createPlan(title: string, phaseIds: FixedWorkflowPhaseId[]): WorkflowPlan {
 	const phases: WorkflowPhase[] = phaseIds.map(createPhase);
 	return {
 		id: createWorkflowId(),
 		title,
 		phases,
-		todos: createTodos(phases)
+		todos: createTodos(phases),
+		source: "fixed",
+		revision: 0
 	};
 }
 
-function createWorkflowTitle(message: string): string {
+export function createWorkflowTitle(message: string): string {
 	const normalized: string = message.replace(/\s+/g, " ").trim();
 	if (normalized.length <= 24) {
 		return normalized.length > 0 ? normalized : "多阶段任务";
@@ -126,7 +127,7 @@ function createWorkflowTitle(message: string): string {
 
 export function planWorkflow(params: AiChatParams): WorkflowPlan | null {
 	const workflowMode = params.options?.workflow ?? "auto";
-	if (workflowMode === "single") {
+	if (workflowMode === "single" || workflowMode === "llm_planned") {
 		return null;
 	}
 

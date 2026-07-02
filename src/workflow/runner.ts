@@ -14,6 +14,8 @@ export function createWorkflowTodoSnapshot(plan: WorkflowPlan): WorkflowTodoSnap
 	return {
 		workflowId: plan.id,
 		title: plan.title,
+		source: plan.source,
+		revision: plan.revision,
 		phases: plan.phases.map((phase: WorkflowPhase) => ({
 			id: phase.id,
 			title: phase.title,
@@ -64,7 +66,7 @@ export function createPhaseMessage(
 		"## 上一阶段结果",
 		previousResults,
 		"",
-		"请只完成当前阶段。不要跳过后续阶段，不要输出最终交付总结，除非当前阶段是 summarize。"
+		"请只完成当前阶段。不要跳过后续阶段，不要输出最终交付总结，除非当前阶段是最后一步或阶段指令明确要求总结。"
 	].join("\n");
 }
 
@@ -90,6 +92,8 @@ export function createPhasePrompt(phase: WorkflowPhase, skillPrompt: string, mcp
 		`- 阶段目标：${phase.instruction}`,
 		"- 只完成当前阶段，不要提前总结整个任务。",
 		"- 如果需要写入或执行审批工具，按现有审批流程暂停。",
+		"- 当前阶段实际可用工具：",
+		...phase.allowedTools.map((toolName: string): string => `  - ${toolName}`),
 		"",
 		skillPrompt,
 		mcpSystemContext

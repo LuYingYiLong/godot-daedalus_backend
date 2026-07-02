@@ -40,6 +40,7 @@ export type ServerEvent = {
 		| "ai.delta"
 		| "ai.done"
 		| "ai.paused"
+		| "ai.cancelled"
 		| "ai.thinking.delta"
 		| "ai.thinking.done"
 		| "tool.call"

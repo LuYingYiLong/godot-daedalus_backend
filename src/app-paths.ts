@@ -22,3 +22,7 @@ export function getProviderConfigPath(): string {
 export function getDefaultSessionsDir(): string {
 	return join(getAppDataDir(), "data", "sessions");
 }
+
+export function getDefaultArchivedSessionsDir(): string {
+	return join(getAppDataDir(), "data", "archived_sessions");
+}

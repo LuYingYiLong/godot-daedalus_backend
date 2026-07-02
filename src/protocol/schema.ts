@@ -20,6 +20,7 @@ export const aiChatParamsSchema = z.object({
 	promptId: promptIdSchema.optional(),
 	skillId: skillIdSchema.optional(),
 	systemPrompt: z.string().optional(),
+	retryFromRequestId: z.string().min(1).optional(),
 	options: z.object({
 		temperature: z.number().min(0).max(2).optional(),
 		topP: z.number().min(0).max(1).optional(),
@@ -28,7 +29,7 @@ export const aiChatParamsSchema = z.object({
 		responseFormat: z.union([z.literal("text"), z.literal("json")]).optional(),
 		stream: z.boolean().optional(),
 		toolBudget: z.enum(["simple", "normal", "codegen", "project_edit"]).optional(),
-		workflow: z.enum(["auto", "single", "multi_phase"]).optional(),
+		workflow: z.enum(["auto", "single", "multi_phase", "llm_planned"]).optional(),
 	}).optional()
 });
 
@@ -78,6 +79,14 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		id: z.string(),
 		method: z.literal("ai.chat"),
 		params: aiChatParamsSchema,
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("ai.cancel"),
+		params: z.object({
+			requestId: z.string().min(1),
+		}),
 	}),
 	z.object({
 		type: z.literal("request"),
@@ -145,6 +154,36 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		id: z.string(),
 		method: z.literal("session.list"),
 		params: z.object({}).optional(),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("session.archive"),
+		params: z.object({
+			sessionId: z.string().min(1),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("session.archived.list"),
+		params: z.object({}).optional(),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("session.archived.restore"),
+		params: z.object({
+			sessionId: z.string().min(1),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("session.archived.delete"),
+		params: z.object({
+			sessionId: z.string().min(1),
+		}),
 	}),
 	z.object({
 		type: z.literal("request"),
@@ -249,6 +288,14 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		id: z.string(),
 		method: z.literal("approval.list"),
 		params: z.object({}).optional(),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("approval.mode.set"),
+		params: z.object({
+			mode: z.enum(["manual", "auto-safe", "read-only"]),
+		}),
 	}),
 	z.object({
 		type: z.literal("request"),

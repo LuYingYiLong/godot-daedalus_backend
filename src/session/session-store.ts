@@ -1,14 +1,16 @@
 import { createReadStream } from "node:fs";
-import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
-import { getDefaultSessionsDir } from "../app-paths.js";
+import { getDefaultArchivedSessionsDir, getDefaultSessionsDir } from "../app-paths.js";
 import type { ChatMessage } from "../protocol/types.js";
 
 const SESSIONS_DIR: string = getDefaultSessionsDir();
+const ARCHIVED_SESSIONS_DIR: string = getDefaultArchivedSessionsDir();
 const SESSION_ID_PATTERN: RegExp = /^session-[a-zA-Z0-9_-]+$/;
 
 let ensureSessionsDirPromise: Promise<void> | null = null;
+let ensureArchivedSessionsDirPromise: Promise<void> | null = null;
 
 export type SessionMetadata = {
 	id: string;
@@ -17,6 +19,7 @@ export type SessionMetadata = {
 	activeSkillId?: string | undefined;
 	provider?: string | undefined;
 	model?: string | undefined;
+	archivedAt?: string | undefined;
 	createdAt: string;
 	updatedAt: string;
 };
@@ -69,6 +72,10 @@ function getSessionDir(sessionId: string): string {
 	return join(SESSIONS_DIR, assertSafeSessionId(sessionId));
 }
 
+function getArchivedSessionDir(sessionId: string): string {
+	return join(ARCHIVED_SESSIONS_DIR, assertSafeSessionId(sessionId));
+}
+
 async function ensureSessionsDir(): Promise<void> {
 	if (!ensureSessionsDirPromise) {
 		ensureSessionsDirPromise = (async (): Promise<void> => {
@@ -77,6 +84,16 @@ async function ensureSessionsDir(): Promise<void> {
 	}
 
 	await ensureSessionsDirPromise;
+}
+
+async function ensureArchivedSessionsDir(): Promise<void> {
+	if (!ensureArchivedSessionsDirPromise) {
+		ensureArchivedSessionsDirPromise = (async (): Promise<void> => {
+			await mkdir(ARCHIVED_SESSIONS_DIR, { recursive: true });
+		})();
+	}
+
+	await ensureArchivedSessionsDirPromise;
 }
 
 async function createSessionDir(sessionId: string): Promise<string> {
@@ -88,6 +105,10 @@ async function createSessionDir(sessionId: string): Promise<string> {
 
 function metaPath(sessionId: string): string {
 	return join(getSessionDir(sessionId), "metadata.json");
+}
+
+function archivedMetaPath(sessionId: string): string {
+	return join(getArchivedSessionDir(sessionId), "metadata.json");
 }
 
 function messagesPath(sessionId: string): string {
@@ -162,6 +183,46 @@ async function readSessionMetadata(sessionId: string): Promise<SessionMetadata> 
 	} catch {
 		throw new Error(`Session not found: ${sessionId}`);
 	}
+}
+
+async function readArchivedSessionMetadata(sessionId: string): Promise<SessionMetadata> {
+	await ensureArchivedSessionsDir();
+	const metaFile: string = archivedMetaPath(sessionId);
+
+	try {
+		const raw: string = await readFile(metaFile, "utf8");
+		return JSON.parse(raw) as SessionMetadata;
+	} catch {
+		throw new Error(`Archived session not found: ${sessionId}`);
+	}
+}
+
+async function pathExists(path: string): Promise<boolean> {
+	try {
+		await access(path);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+async function listSessionMetadataFromDir(rootDir: string): Promise<SessionMetadata[]> {
+	const entries: string[] = await readdir(rootDir, { withFileTypes: true })
+		.then((items) => items.filter((d) => d.isDirectory()).map((d) => d.name));
+
+	const sessions: SessionMetadata[] = [];
+
+	for (const entry of entries) {
+		try {
+			const raw: string = await readFile(join(rootDir, entry, "metadata.json"), "utf8");
+			sessions.push(JSON.parse(raw) as SessionMetadata);
+		} catch {
+			// Skip invalid sessions
+		}
+	}
+
+	sessions.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+	return sessions;
 }
 
 async function readRecentJsonLines<T>(filePath: string, limit: number): Promise<{ items: T[]; offset: number; total: number }> {
@@ -359,6 +420,41 @@ export async function saveSession(sessionId: string, messages: ChatMessage[], me
 	await writeFile(msgFile, lines.join(""), "utf8");
 }
 
+export async function rewindSessionFromRequest(sessionId: string, requestId: string): Promise<StoredMessage[]> {
+	const stored: StoredSession = await openSession(sessionId);
+	const startIndex: number = stored.messages.findIndex((message: StoredMessage): boolean => message.requestId === requestId);
+	if (startIndex < 0) {
+		return stored.messages;
+	}
+
+	const keptMessages: StoredMessage[] = stored.messages.slice(0, startIndex);
+	const removedRequestIds: Set<string> = new Set(
+		stored.messages
+			.slice(startIndex)
+			.map((message: StoredMessage): string | undefined => message.requestId)
+			.filter((value: string | undefined): value is string => value !== undefined && value.length > 0)
+	);
+	const keptEvents: StoredSessionEvent[] = stored.events.filter((event: StoredSessionEvent): boolean => !removedRequestIds.has(event.requestId));
+	const updatedMetadata: SessionMetadata = {
+		...stored.metadata,
+		updatedAt: new Date().toISOString()
+	};
+
+	await writeFile(metaPath(sessionId), JSON.stringify(updatedMetadata, null, 2), "utf8");
+	await writeFile(
+		messagesPath(sessionId),
+		keptMessages.map((message: StoredMessage): string => JSON.stringify(message) + "\n").join(""),
+		"utf8"
+	);
+	await writeFile(
+		eventsPath(sessionId),
+		keptEvents.map((event: StoredSessionEvent): string => JSON.stringify(event) + "\n").join(""),
+		"utf8"
+	);
+
+	return keptMessages;
+}
+
 export async function appendMessage(sessionId: string, message: ChatMessage): Promise<void> {
 	await ensureSessionsDir();
 	const msgFile: string = messagesPath(sessionId);
@@ -388,28 +484,68 @@ export async function clearSessionEvents(sessionId: string): Promise<void> {
 
 export async function listSessions(): Promise<SessionMetadata[]> {
 	await ensureSessionsDir();
+	return listSessionMetadataFromDir(SESSIONS_DIR);
+}
 
-	const entries: string[] = await readdir(SESSIONS_DIR, { withFileTypes: true })
-		.then((items) => items.filter((d) => d.isDirectory()).map((d) => d.name));
+export async function listArchivedSessions(): Promise<SessionMetadata[]> {
+	await ensureArchivedSessionsDir();
+	return listSessionMetadataFromDir(ARCHIVED_SESSIONS_DIR);
+}
 
-	const sessions: SessionMetadata[] = [];
+export async function archiveSession(sessionId: string): Promise<SessionMetadata> {
+	const safeSessionId: string = assertSafeSessionId(sessionId);
+	await ensureSessionsDir();
+	await ensureArchivedSessionsDir();
 
-	for (const entry of entries) {
-		try {
-			const raw: string = await readFile(join(SESSIONS_DIR, entry, "metadata.json"), "utf8");
-			sessions.push(JSON.parse(raw) as SessionMetadata);
-		} catch {
-			// Skip invalid sessions
-		}
+	const sourceDir: string = getSessionDir(safeSessionId);
+	const targetDir: string = getArchivedSessionDir(safeSessionId);
+	if (await pathExists(targetDir)) {
+		throw new Error(`Archived session already exists: ${safeSessionId}`);
 	}
 
-	sessions.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-	return sessions;
+	const existingMetadata: SessionMetadata = await readSessionMetadata(safeSessionId);
+	const archivedAt: string = new Date().toISOString();
+	const metadata: SessionMetadata = {
+		...existingMetadata,
+		archivedAt,
+		updatedAt: archivedAt
+	};
+	await rename(sourceDir, targetDir);
+	await writeFile(join(targetDir, "metadata.json"), JSON.stringify(metadata, null, 2), "utf8");
+	return metadata;
+}
+
+export async function restoreArchivedSession(sessionId: string): Promise<SessionMetadata> {
+	const safeSessionId: string = assertSafeSessionId(sessionId);
+	await ensureSessionsDir();
+	await ensureArchivedSessionsDir();
+
+	const sourceDir: string = getArchivedSessionDir(safeSessionId);
+	const targetDir: string = getSessionDir(safeSessionId);
+	if (await pathExists(targetDir)) {
+		throw new Error(`Session already exists: ${safeSessionId}`);
+	}
+
+	const archivedMetadata: SessionMetadata = await readArchivedSessionMetadata(safeSessionId);
+	const metadata: SessionMetadata = {
+		...archivedMetadata,
+		archivedAt: undefined,
+		updatedAt: new Date().toISOString()
+	};
+	await rename(sourceDir, targetDir);
+	await writeFile(join(targetDir, "metadata.json"), JSON.stringify(metadata, null, 2), "utf8");
+	return metadata;
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {
 	await ensureSessionsDir();
 	const dir: string = getSessionDir(sessionId);
+	await rm(dir, { recursive: true, force: true });
+}
+
+export async function deleteArchivedSession(sessionId: string): Promise<void> {
+	await ensureArchivedSessionsDir();
+	const dir: string = getArchivedSessionDir(sessionId);
 	await rm(dir, { recursive: true, force: true });
 }
 

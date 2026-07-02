@@ -276,6 +276,23 @@ const TOOL_DEFINITIONS: ChatCompletionTool[] = [
 	{
 		type: "function",
 		function: {
+			name: "mcp_godot_inspect_scene_tree",
+			description: "解析并检查 Godot .tscn 场景树，返回节点、脚本和连接等结构信息",
+			parameters: {
+				type: "object",
+				properties: {
+					relativePath: {
+						type: "string",
+						description: "场景文件的相对路径，例如 'scenes/main.tscn'"
+					}
+				},
+				required: ["relativePath"]
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
 			name: "mcp_godot_propose_create_text_file",
 			description: "提出新建一个文本文件的提案。不会实际写入磁盘。只能创建 .gd/.tres/.tscn/.json/.md/.txt 文件。.tscn 文件必须包含 [gd_scene ...] 头部和至少一个 [node ...] 根节点。不允许覆盖已有文件。需要用户通过 Godot 客户端确认后才会真正写入。",
 			parameters: {

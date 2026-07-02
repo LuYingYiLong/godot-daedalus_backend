@@ -2,13 +2,18 @@ import type { AiChatParams, ChatMessage, PromptId } from "../protocol/types.js";
 import type { SkillId } from "../skills/registry.js";
 import type { ToolBudgetLevel } from "../tools/llm-tools.js";
 
-export type WorkflowPhaseId = "inspect" | "implement" | "review" | "verify" | "summarize";
+export type WorkflowPhaseId = string;
 
 export type WorkflowTodoStatus = "pending" | "running" | "done" | "failed" | "paused";
+
+export type WorkflowSource = "fixed" | "llm";
+
+export type WorkflowToolGroup = "read" | "write" | "verify" | "summarize";
 
 export type WorkflowPhase = {
 	id: WorkflowPhaseId;
 	title: string;
+	toolGroup?: WorkflowToolGroup | undefined;
 	skillId?: SkillId | undefined;
 	promptId?: PromptId | undefined;
 	toolBudget: ToolBudgetLevel;
@@ -28,6 +33,9 @@ export type WorkflowPlan = {
 	title: string;
 	phases: WorkflowPhase[];
 	todos: WorkflowTodoItem[];
+	source?: WorkflowSource | undefined;
+	revision?: number | undefined;
+	maxRevisions?: number | undefined;
 };
 
 export type WorkflowPhaseOutput = {
@@ -43,11 +51,14 @@ export type WorkflowRunState = {
 	originalParams: AiChatParams;
 	history: ChatMessage[];
 	historyBudgetTokens: number;
+	planningContext?: string | undefined;
 };
 
 export type WorkflowTodoSnapshot = {
 	workflowId: string;
 	title: string;
+	source?: WorkflowSource | undefined;
+	revision?: number | undefined;
 	phases: Array<{
 		id: WorkflowPhaseId;
 		title: string;

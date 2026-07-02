@@ -21,12 +21,17 @@ import { getToolDefinitions, getToolDefinitionsForNames, DEFAULT_TOOL_STEPS, res
 import { dispatchToolCalls, ToolApprovalRequiredError, type OnToolEvent } from "../tools/tool-dispatcher.js";
 import { ApprovalGateway } from "../tools/approval-gateway.js";
 import { containsDsmlToolCalls, parseDsmlToolCalls, stripDsmlToolCalls } from "./deepseek-dsml-tools.js";
+import { containsLooseToolCalls, isKnownLooseToolTagName, isPotentialLooseToolTagName, normalizeKnownToolName, parseLooseToolCalls, stripLooseToolCalls } from "./deepseek-loose-tools.js";
 
 const DEFAULT_BASE_URL = "https://api.deepseek.com";
 const DEFAULT_MODEL = "deepseek-v4-flash";
 const FINALIZE_AFTER_TOOL_LIMIT_PROMPT: string =
 	"工具调用阶段已经达到后端限制。请停止请求更多工具，基于目前已经获得的工具结果直接回答用户。"
 	+ "如果信息不完整，请明确说明哪些部分是根据已有信息总结的，哪些部分还需要进一步检查。";
+const RETRY_WITHOUT_TOOL_SYNTAX_PROMPT: string =
+	"上一条候选回复包含内部工具调用标签，但当前阶段不允许调用工具。"
+	+ "请不要输出 XML、DSML、函数调用标签或任何工具请求。"
+	+ "直接基于对话和已有工具结果给用户最终答复；如果缺少信息，请简短说明限制。";
 
 export type DeepSeekAgentResult =
 	| { status: "completed"; text: string }
@@ -51,7 +56,10 @@ export type ApprovedToolResult = {
 
 type StreamedAssistantMessage = {
 	contentText: string;
+	reasoningContent: string;
 	toolCalls: ChatCompletionMessageToolCall[];
+	emittedContentText: string;
+	suppressedToolSyntax: boolean;
 };
 
 type ToolCallAccumulator = {
@@ -82,6 +90,258 @@ function extractTextContent(content: ChatCompletionMessageParam["content"]): str
 
 function isFunctionToolCall(toolCall: ChatCompletionMessageToolCall): toolCall is ChatCompletionMessageFunctionToolCall {
 	return toolCall.type === "function";
+}
+
+function getAllowedToolNames(tools: ChatCompletionTool[]): ReadonlySet<string> {
+	const allowedToolNames: Set<string> = new Set();
+
+	for (const tool of tools) {
+		if (tool.type === "function") {
+			allowedToolNames.add(tool.function.name);
+		}
+	}
+
+	return allowedToolNames;
+}
+
+function normalizeToolCallForAllowedTools(
+	toolCall: ChatCompletionMessageToolCall,
+	allowedToolNames: ReadonlySet<string>
+): ChatCompletionMessageToolCall | null {
+	if (!isFunctionToolCall(toolCall)) {
+		return toolCall;
+	}
+
+	const normalizedName: string = normalizeKnownToolName(toolCall.function.name) ?? toolCall.function.name;
+	if (!allowedToolNames.has(normalizedName)) {
+		return null;
+	}
+
+	if (normalizedName === toolCall.function.name) {
+		return toolCall;
+	}
+
+	return {
+		...toolCall,
+		function: {
+			...toolCall.function,
+			name: normalizedName
+		}
+	};
+}
+
+function filterToolCallsForAllowedTools(
+	toolCalls: ChatCompletionMessageToolCall[],
+	allowedToolNames: ReadonlySet<string>
+): ChatCompletionMessageToolCall[] {
+	const filteredToolCalls: ChatCompletionMessageToolCall[] = [];
+
+	for (const toolCall of toolCalls) {
+		const normalizedToolCall: ChatCompletionMessageToolCall | null = normalizeToolCallForAllowedTools(toolCall, allowedToolNames);
+		if (normalizedToolCall !== null) {
+			filteredToolCalls.push(normalizedToolCall);
+		}
+	}
+
+	return filteredToolCalls;
+}
+
+function containsKnownToolSyntax(text: string | null | undefined): boolean {
+	return containsDsmlToolCalls(text) || containsLooseToolCalls(text);
+}
+
+function stripKnownToolSyntax(text: string): string {
+	return stripLooseToolCalls(stripDsmlToolCalls(text));
+}
+
+function parseTextToolCalls(
+	text: string,
+	step: number,
+	allowedToolNames: ReadonlySet<string>
+): ChatCompletionMessageToolCall[] {
+	const dsmlToolCalls: ChatCompletionMessageToolCall[] = containsDsmlToolCalls(text)
+		? filterToolCallsForAllowedTools(parseDsmlToolCalls(text, `dsml-step-${step}`), allowedToolNames)
+		: [];
+	const looseToolCalls: ChatCompletionMessageToolCall[] = containsLooseToolCalls(text, allowedToolNames)
+		? parseLooseToolCalls(text, `loose-step-${step}`, allowedToolNames)
+		: [];
+
+	return [...dsmlToolCalls, ...looseToolCalls];
+}
+
+function extractToolNames(toolCalls: ChatCompletionMessageToolCall[]): string[] {
+	const toolNames: Set<string> = new Set();
+
+	for (const toolCall of toolCalls) {
+		if (isFunctionToolCall(toolCall)) {
+			toolNames.add(normalizeKnownToolName(toolCall.function.name) ?? toolCall.function.name);
+		}
+	}
+
+	return [...toolNames];
+}
+
+function escapeRegExp(text: string): string {
+	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function parseLooseOpeningTagName(openingTag: string): string | null {
+	const match: RegExpMatchArray | null = /^<\s*([A-Za-z_][A-Za-z0-9_.-]*)\s*>$/u.exec(openingTag);
+	return match?.[1] ?? null;
+}
+
+function isDsmlToolCallsOpeningTag(openingTag: string): boolean {
+	return /^<\s*[｜|]+\s*DSML\s*[｜|]+\s*tool_calls\s*>$/iu.test(openingTag);
+}
+
+function isPotentialToolOpeningFragment(text: string): boolean {
+	if (/^<\s*[｜|]/u.test(text)) {
+		return true;
+	}
+
+	const match: RegExpMatchArray | null = /^<\s*([A-Za-z_][A-Za-z0-9_.-]*)/u.exec(text);
+	return match?.[1] !== undefined && isPotentialLooseToolTagName(match[1]);
+}
+
+function findLooseClosingTagEnd(text: string, tagName: string): number {
+	const closingPattern: RegExp = new RegExp(`<\\/\\s*${escapeRegExp(tagName)}\\s*>`, "iu");
+	const match: RegExpExecArray | null = closingPattern.exec(text);
+	return match === null ? -1 : match.index + match[0].length;
+}
+
+function findDsmlClosingTagEnd(text: string): number {
+	const closingPattern: RegExp = /<\/\s*[｜|]+\s*DSML\s*[｜|]+\s*tool_calls\s*>/iu;
+	const match: RegExpExecArray | null = closingPattern.exec(text);
+	return match === null ? -1 : match.index + match[0].length;
+}
+
+function getUnemittedSuffix(finalText: string, emittedText: string): string {
+	if (emittedText.length === 0) {
+		return finalText;
+	}
+
+	if (finalText.startsWith(emittedText)) {
+		return finalText.slice(emittedText.length);
+	}
+
+	const trimmedEmittedText: string = emittedText.trimEnd();
+	if (trimmedEmittedText.length > 0 && finalText.startsWith(trimmedEmittedText)) {
+		return finalText.slice(trimmedEmittedText.length);
+	}
+
+	return `\n\n${finalText}`;
+}
+
+class ToolSyntaxStreamFilter {
+	private pendingText: string = "";
+	private strippingTagName: string | null = null;
+	private strippingDsmlToolCalls: boolean = false;
+	private emittedText: string = "";
+	private suppressedSyntax: boolean = false;
+
+	push(text: string): string {
+		this.pendingText += text;
+		const visibleText: string = this.drain(false);
+		this.emittedText += visibleText;
+		return visibleText;
+	}
+
+	flush(): string {
+		const visibleText: string = this.drain(true);
+		this.emittedText += visibleText;
+		return visibleText;
+	}
+
+	getEmittedText(): string {
+		return this.emittedText;
+	}
+
+	hasSuppressedSyntax(): boolean {
+		return this.suppressedSyntax;
+	}
+
+	private drain(flush: boolean): string {
+		let visibleText: string = "";
+
+		while (this.pendingText.length > 0) {
+			if (this.strippingTagName !== null) {
+				const closingEnd: number = findLooseClosingTagEnd(this.pendingText, this.strippingTagName);
+				if (closingEnd < 0) {
+					if (flush) {
+						this.pendingText = "";
+						this.strippingTagName = null;
+					}
+					break;
+				}
+
+				this.pendingText = this.pendingText.slice(closingEnd);
+				this.strippingTagName = null;
+				continue;
+			}
+
+			if (this.strippingDsmlToolCalls) {
+				const closingEnd: number = findDsmlClosingTagEnd(this.pendingText);
+				if (closingEnd < 0) {
+					if (flush) {
+						this.pendingText = "";
+						this.strippingDsmlToolCalls = false;
+					}
+					break;
+				}
+
+				this.pendingText = this.pendingText.slice(closingEnd);
+				this.strippingDsmlToolCalls = false;
+				continue;
+			}
+
+			const tagStart: number = this.pendingText.indexOf("<");
+			if (tagStart < 0) {
+				visibleText += this.pendingText;
+				this.pendingText = "";
+				break;
+			}
+
+			if (tagStart > 0) {
+				visibleText += this.pendingText.slice(0, tagStart);
+				this.pendingText = this.pendingText.slice(tagStart);
+				continue;
+			}
+
+			const tagEnd: number = this.pendingText.indexOf(">");
+			if (tagEnd < 0) {
+				if (flush) {
+					if (isPotentialToolOpeningFragment(this.pendingText)) {
+						this.suppressedSyntax = true;
+					} else {
+						visibleText += this.pendingText;
+					}
+					this.pendingText = "";
+				}
+				break;
+			}
+
+			const openingTag: string = this.pendingText.slice(0, tagEnd + 1);
+			const looseTagName: string | null = parseLooseOpeningTagName(openingTag);
+			if (looseTagName !== null && isKnownLooseToolTagName(looseTagName)) {
+				this.suppressedSyntax = true;
+				this.pendingText = this.pendingText.slice(tagEnd + 1);
+				this.strippingTagName = looseTagName;
+				continue;
+			}
+
+			if (isDsmlToolCallsOpeningTag(openingTag)) {
+				this.suppressedSyntax = true;
+				this.pendingText = this.pendingText.slice(tagEnd + 1);
+				this.strippingDsmlToolCalls = true;
+				continue;
+			}
+
+			visibleText += openingTag;
+			this.pendingText = this.pendingText.slice(tagEnd + 1);
+		}
+
+		return visibleText;
+	}
 }
 
 function getReasoningContent(message: unknown): string {
@@ -179,7 +439,9 @@ async function readStreamingAssistantMessage(
 	messages: ChatCompletionMessageParam[],
 	tools: ChatCompletionTool[],
 	step: number,
-	onEvent?: OnToolEvent
+	onEvent?: OnToolEvent,
+	emitContentDeltas: boolean = true,
+	abortSignal?: AbortSignal | undefined
 ): Promise<StreamedAssistantMessage> {
 	const requestBody: ChatCompletionCreateParamsStreaming = {
 		model: options.model ?? process.env.DEEPSEEK_MODEL ?? DEFAULT_MODEL,
@@ -190,9 +452,11 @@ async function readStreamingAssistantMessage(
 
 	applyChatOptions(requestBody, params);
 
-	const stream = await client.chat.completions.create(requestBody);
+	const stream = await client.chat.completions.create(requestBody, { signal: abortSignal });
 	const toolCallAccumulators: Map<number, ToolCallAccumulator> = new Map();
+	const contentFilter: ToolSyntaxStreamFilter = new ToolSyntaxStreamFilter();
 	let contentText = "";
+	let reasoningContent = "";
 	let emittedReasoning = false;
 
 	for await (const chunk of stream) {
@@ -203,6 +467,7 @@ async function readStreamingAssistantMessage(
 
 		const reasoningDelta: string = getReasoningContent(delta);
 		if (reasoningDelta.length > 0) {
+			reasoningContent += reasoningDelta;
 			emittedReasoning = true;
 			onEvent?.({ type: "ai.thinking.delta", text: reasoningDelta });
 		}
@@ -210,7 +475,12 @@ async function readStreamingAssistantMessage(
 		const contentDelta: string = getContentDelta(delta);
 		if (contentDelta.length > 0) {
 			contentText += contentDelta;
-			onEvent?.({ type: "ai.delta", text: contentDelta });
+			if (emitContentDeltas) {
+				const visibleDelta: string = contentFilter.push(contentDelta);
+				if (visibleDelta.length > 0) {
+					onEvent?.({ type: "ai.delta", text: visibleDelta });
+				}
+			}
 		}
 
 		for (const toolCallDelta of getToolCallDeltaList(delta)) {
@@ -222,18 +492,47 @@ async function readStreamingAssistantMessage(
 		onEvent?.({ type: "ai.thinking.done" });
 	}
 
+	if (emitContentDeltas) {
+		const visibleTail: string = contentFilter.flush();
+		if (visibleTail.length > 0) {
+			onEvent?.({ type: "ai.delta", text: visibleTail });
+		}
+	}
+
 	return {
 		contentText,
-		toolCalls: createToolCallsFromAccumulators(toolCallAccumulators)
+		reasoningContent,
+		toolCalls: createToolCallsFromAccumulators(toolCallAccumulators),
+		emittedContentText: emitContentDeltas ? contentFilter.getEmittedText() : "",
+		suppressedToolSyntax: emitContentDeltas && contentFilter.hasSuppressedSyntax()
 	};
 }
 
-function createDsmlLeakFallback(text: string, reason: string): string {
-	const strippedText: string = stripDsmlToolCalls(text);
-	const parsedToolCalls: ChatCompletionMessageToolCall[] = parseDsmlToolCalls(text, "blocked-dsml");
-	const toolNames: string[] = parsedToolCalls
-		.filter(isFunctionToolCall)
-		.map((toolCall: ChatCompletionMessageFunctionToolCall): string => toolCall.function.name);
+function createAssistantToolMessage(
+	contentText: string | null,
+	toolCalls: ChatCompletionMessageToolCall[],
+	reasoningContent: string
+): ChatCompletionMessageParam {
+	const message: Record<string, unknown> = {
+		role: "assistant",
+		content: contentText === null ? contentText : stripKnownToolSyntax(contentText),
+		tool_calls: toolCalls
+	};
+
+	if (reasoningContent.length > 0) {
+		message.reasoning_content = reasoningContent;
+	}
+
+	return message as unknown as ChatCompletionMessageParam;
+}
+
+function createToolSyntaxLeakFallback(text: string, reason: string): string {
+	const strippedText: string = stripKnownToolSyntax(text);
+	const parsedToolCalls: ChatCompletionMessageToolCall[] = [
+		...parseDsmlToolCalls(text, "blocked-dsml"),
+		...parseLooseToolCalls(text, "blocked-loose")
+	];
+	const toolNames: string[] = extractToolNames(parsedToolCalls);
 	const toolText: string = toolNames.length > 0 ? `\n\n模型还尝试调用工具：${toolNames.map((name: string): string => `\`${name}\``).join(", ")}。` : "";
 	const prefix: string = strippedText.length > 0 ? `${strippedText}\n\n` : "";
 
@@ -241,7 +540,7 @@ function createDsmlLeakFallback(text: string, reason: string): string {
 		prefix.trimEnd(),
 		"工具调用没有继续执行，因为当前回复已经进入收束阶段。",
 		`原因：${reason}`,
-		"我已隐藏模型输出中的 DSML 工具调用文本，避免把内部工具协议直接显示给你。",
+		"我已隐藏模型输出中的工具调用文本，避免把内部工具协议直接显示给你。",
 		toolText.trim()
 	].filter((part: string): boolean => part.length > 0).join("\n");
 }
@@ -251,7 +550,8 @@ async function createFinalAnswer(
 	params: AiChatParams,
 	options: DeepSeekChatOptions,
 	messages: ChatCompletionMessageParam[],
-	reason: string
+	reason: string,
+	abortSignal?: AbortSignal | undefined
 ): Promise<string> {
 	const finalMessages: ChatCompletionMessageParam[] = [
 		...messages,
@@ -267,18 +567,54 @@ async function createFinalAnswer(
 
 	applyChatOptions(requestBody, params);
 
-	const completion = await client.chat.completions.create(requestBody);
+	const completion = await client.chat.completions.create(requestBody, { signal: abortSignal });
 	const text: string | null | undefined = completion.choices[0]?.message.content;
 
 	if (!text) {
 		throw new Error("LLM returned empty final response after tool limit");
 	}
 
-	if (containsDsmlToolCalls(text)) {
-		return createDsmlLeakFallback(text, reason);
+	if (containsKnownToolSyntax(text)) {
+		return createToolSyntaxLeakFallback(text, reason);
 	}
 
 	return text;
+}
+
+async function createToollessRetryAnswer(
+	client: OpenAI,
+	params: AiChatParams,
+	options: DeepSeekChatOptions,
+	messages: ChatCompletionMessageParam[],
+	reason: string,
+	abortSignal?: AbortSignal | undefined
+): Promise<string> {
+	const retryMessages: ChatCompletionMessageParam[] = [
+		...messages,
+		{
+			role: "system",
+			content: `${RETRY_WITHOUT_TOOL_SYNTAX_PROMPT}\n\n拦截原因：${reason}`
+		}
+	];
+	const requestBody: ChatCompletionCreateParamsNonStreaming = {
+		model: options.model ?? process.env.DEEPSEEK_MODEL ?? DEFAULT_MODEL,
+		messages: retryMessages
+	};
+
+	applyChatOptions(requestBody, params);
+
+	const completion = await client.chat.completions.create(requestBody, { signal: abortSignal });
+	const text: string | null | undefined = completion.choices[0]?.message.content;
+
+	if (!text) {
+		throw new Error("LLM returned empty response after tool syntax retry");
+	}
+
+	if (containsKnownToolSyntax(text)) {
+		return createToolSyntaxLeakFallback(text, "无工具阶段重试后仍输出工具标签");
+	}
+
+	return stripKnownToolSyntax(text);
 }
 
 async function runAgentLoop(
@@ -293,13 +629,23 @@ async function runAgentLoop(
 	maxSteps: number,
 	initialToolResultChars: number,
 	streamAssistant: boolean,
-	onEvent?: OnToolEvent
+	onEvent?: OnToolEvent,
+	abortSignal?: AbortSignal | undefined
 ): Promise<DeepSeekAgentResult> {
 	let totalToolResultChars: number = initialToolResultChars;
+	const allowedToolNames: ReadonlySet<string> = getAllowedToolNames(tools);
 
 	for (let step: number = startStep; step < maxSteps; step += 1) {
+		if (abortSignal?.aborted) {
+			throw new Error("Request cancelled");
+		}
+
 		let toolCalls: ChatCompletionMessageToolCall[] | undefined;
 		let contentText: string | null;
+		let reasoningContent: string = "";
+		let emittedContentText: string = "";
+		let suppressedStreamToolSyntax: boolean = false;
+		const shouldBufferContentDeltas: boolean = streamAssistant && tools.length > 0;
 
 		if (streamAssistant) {
 			const streamedMessage: StreamedAssistantMessage = await readStreamingAssistantMessage(
@@ -309,10 +655,15 @@ async function runAgentLoop(
 				messages,
 				tools,
 				step,
-				onEvent
+				onEvent,
+				!shouldBufferContentDeltas,
+				abortSignal
 			);
 			toolCalls = streamedMessage.toolCalls;
 			contentText = streamedMessage.contentText.length > 0 ? streamedMessage.contentText : null;
+			reasoningContent = streamedMessage.reasoningContent;
+			emittedContentText = streamedMessage.emittedContentText;
+			suppressedStreamToolSyntax = streamedMessage.suppressedToolSyntax;
 		} else {
 			const requestBody: ChatCompletionCreateParamsNonStreaming = {
 				model: options.model ?? process.env.DEEPSEEK_MODEL ?? DEFAULT_MODEL,
@@ -322,7 +673,7 @@ async function runAgentLoop(
 
 			applyChatOptions(requestBody, params);
 
-			const completion = await client.chat.completions.create(requestBody);
+			const completion = await client.chat.completions.create(requestBody, { signal: abortSignal });
 			const choice = completion.choices[0];
 
 			if (!choice) {
@@ -330,13 +681,18 @@ async function runAgentLoop(
 			}
 
 			const message = choice.message;
+			reasoningContent = getReasoningContent(message);
 			emitReasoningContent(message, onEvent);
 			toolCalls = message.tool_calls;
 			contentText = message.content;
 		}
 
-		if (tools.length > 0 && (!toolCalls || toolCalls.length === 0) && containsDsmlToolCalls(contentText)) {
-			const parsedToolCalls: ChatCompletionMessageToolCall[] = parseDsmlToolCalls(contentText ?? "", `dsml-step-${step}`);
+		if (toolCalls !== undefined && toolCalls.length > 0) {
+			toolCalls = filterToolCallsForAllowedTools(toolCalls, allowedToolNames);
+		}
+
+		if (tools.length > 0 && (!toolCalls || toolCalls.length === 0) && contentText !== null) {
+			const parsedToolCalls: ChatCompletionMessageToolCall[] = parseTextToolCalls(contentText, step, allowedToolNames);
 			if (parsedToolCalls.length > 0) {
 				toolCalls = parsedToolCalls;
 			}
@@ -349,19 +705,33 @@ async function runAgentLoop(
 				throw new Error("LLM returned empty response");
 			}
 
-			return { status: "completed", text };
+			const hasKnownToolSyntax: boolean = containsKnownToolSyntax(text) || suppressedStreamToolSyntax;
+			const finalText: string = hasKnownToolSyntax && tools.length === 0
+				? await createToollessRetryAnswer(client, params, options, messages, "当前阶段没有可执行的工具调用", abortSignal)
+				: hasKnownToolSyntax
+					? createToolSyntaxLeakFallback(text, "当前阶段没有可执行的工具调用")
+					: stripKnownToolSyntax(text);
+			if (streamAssistant && shouldBufferContentDeltas) {
+				onEvent?.({ type: "ai.delta", text: finalText });
+			} else if (streamAssistant && hasKnownToolSyntax) {
+				const suffixText: string = getUnemittedSuffix(finalText, emittedContentText);
+				if (suffixText.length > 0) {
+					onEvent?.({ type: "ai.delta", text: suffixText });
+				}
+			}
+
+			return { status: "completed", text: finalText };
 		}
 
-		const assistantMessage: ChatCompletionMessageParam = {
-			role: "assistant",
-			content: containsDsmlToolCalls(contentText) ? stripDsmlToolCalls(contentText ?? "") : contentText,
-			tool_calls: toolCalls
-		} as ChatCompletionMessageParam;
+		const assistantMessage: ChatCompletionMessageParam = createAssistantToolMessage(contentText, toolCalls, reasoningContent);
 
 		messages.push(assistantMessage);
 
 		let toolResults;
 		try {
+			if (abortSignal?.aborted) {
+				throw new Error("Request cancelled");
+			}
 			toolResults = await dispatchToolCalls(mcpHost, toolCalls, step, gateway, onEvent);
 		} catch (error: unknown) {
 			if (error instanceof ToolApprovalRequiredError) {
@@ -371,11 +741,7 @@ async function runAgentLoop(
 				const continuationMessages: ChatCompletionMessageParam[] = [...messages];
 
 				if (pendingToolCall !== undefined) {
-					continuationMessages[continuationMessages.length - 1] = {
-						role: "assistant",
-						content: containsDsmlToolCalls(contentText) ? stripDsmlToolCalls(contentText ?? "") : contentText,
-						tool_calls: [pendingToolCall]
-					} as ChatCompletionMessageParam;
+					continuationMessages[continuationMessages.length - 1] = createAssistantToolMessage(contentText, [pendingToolCall], reasoningContent);
 				}
 
 				return {
@@ -406,7 +772,8 @@ async function runAgentLoop(
 				params,
 				options,
 				messages,
-				`工具结果总量达到 ${totalToolResultChars} 字符，上限为 ${MAX_TOTAL_TOOL_RESULT_CHARS} 字符`
+				`工具结果总量达到 ${totalToolResultChars} 字符，上限为 ${MAX_TOTAL_TOOL_RESULT_CHARS} 字符`,
+				abortSignal
 			);
 			if (streamAssistant) {
 				onEvent?.({ type: "ai.delta", text: finalText });
@@ -424,7 +791,8 @@ async function runAgentLoop(
 		params,
 		options,
 		messages,
-		`工具调用达到最大步数 ${maxSteps}，当前工具结果总量为 ${totalToolResultChars} 字符`
+		`工具调用达到最大步数 ${maxSteps}，当前工具结果总量为 ${totalToolResultChars} 字符`,
+		abortSignal
 	);
 	if (streamAssistant) {
 		onEvent?.({ type: "ai.delta", text: finalText });
@@ -444,7 +812,8 @@ export async function runDeepSeekAgent(
 	mcpHost: McpHost,
 	gateway: ApprovalGateway,
 	allowedToolNames?: readonly string[] | undefined,
-	onEvent?: OnToolEvent
+	onEvent?: OnToolEvent,
+	abortSignal?: AbortSignal | undefined
 ): Promise<DeepSeekAgentResult> {
 	const client: OpenAI = createDeepSeekClient(options);
 	const tools = allowedToolNames !== undefined
@@ -458,7 +827,7 @@ export async function runDeepSeekAgent(
 
 	const messages: ChatCompletionMessageParam[] = createMessages(params, history, systemPrompt);
 
-	return runAgentLoop(client, params, options, messages, mcpHost, gateway, tools, 0, maxSteps, 0, false, onEvent);
+	return runAgentLoop(client, params, options, messages, mcpHost, gateway, tools, 0, maxSteps, 0, false, onEvent, abortSignal);
 }
 
 export async function runDeepSeekAgentStreaming(
@@ -469,7 +838,8 @@ export async function runDeepSeekAgentStreaming(
 	mcpHost: McpHost,
 	gateway: ApprovalGateway,
 	allowedToolNames?: readonly string[] | undefined,
-	onEvent?: OnToolEvent
+	onEvent?: OnToolEvent,
+	abortSignal?: AbortSignal | undefined
 ): Promise<DeepSeekAgentResult> {
 	const client: OpenAI = createDeepSeekClient(options);
 	const tools = allowedToolNames !== undefined
@@ -483,7 +853,7 @@ export async function runDeepSeekAgentStreaming(
 
 	const messages: ChatCompletionMessageParam[] = createMessages(params, history, systemPrompt);
 
-	return runAgentLoop(client, params, options, messages, mcpHost, gateway, tools, 0, maxSteps, 0, true, onEvent);
+	return runAgentLoop(client, params, options, messages, mcpHost, gateway, tools, 0, maxSteps, 0, true, onEvent, abortSignal);
 }
 
 export async function continueDeepSeekAgent(
@@ -494,7 +864,8 @@ export async function continueDeepSeekAgent(
 	mcpHost: McpHost,
 	gateway: ApprovalGateway,
 	allowedToolNames?: readonly string[] | undefined,
-	onEvent?: OnToolEvent
+	onEvent?: OnToolEvent,
+	abortSignal?: AbortSignal | undefined
 ): Promise<DeepSeekAgentResult> {
 	const client: OpenAI = createDeepSeekClient(options);
 	const tools = allowedToolNames !== undefined
@@ -514,12 +885,13 @@ export async function continueDeepSeekAgent(
 		return {
 			status: "completed",
 			text: await createFinalAnswer(
-				client,
-				params,
-				options,
-				messages,
-				`工具结果总量达到 ${totalToolResultChars} 字符，上限为 ${MAX_TOTAL_TOOL_RESULT_CHARS} 字符`
-			)
+			client,
+			params,
+			options,
+			messages,
+			`工具结果总量达到 ${totalToolResultChars} 字符，上限为 ${MAX_TOTAL_TOOL_RESULT_CHARS} 字符`,
+			abortSignal
+		)
 		};
 	}
 
@@ -540,7 +912,8 @@ export async function continueDeepSeekAgent(
 		maxSteps,
 		totalToolResultChars,
 		false,
-		onEvent
+		onEvent,
+		abortSignal
 	);
 }
 
@@ -552,7 +925,8 @@ export async function continueDeepSeekAgentStreaming(
 	mcpHost: McpHost,
 	gateway: ApprovalGateway,
 	allowedToolNames?: readonly string[] | undefined,
-	onEvent?: OnToolEvent
+	onEvent?: OnToolEvent,
+	abortSignal?: AbortSignal | undefined
 ): Promise<DeepSeekAgentResult> {
 	const client: OpenAI = createDeepSeekClient(options);
 	const tools = allowedToolNames !== undefined
@@ -574,7 +948,8 @@ export async function continueDeepSeekAgentStreaming(
 			params,
 			options,
 			messages,
-			`工具结果总量达到 ${totalToolResultChars} 字符，上限为 ${MAX_TOTAL_TOOL_RESULT_CHARS} 字符`
+			`工具结果总量达到 ${totalToolResultChars} 字符，上限为 ${MAX_TOTAL_TOOL_RESULT_CHARS} 字符`,
+			abortSignal
 		);
 		onEvent?.({ type: "ai.delta", text: finalText });
 
@@ -601,6 +976,7 @@ export async function continueDeepSeekAgentStreaming(
 		maxSteps,
 		totalToolResultChars,
 		true,
-		onEvent
+		onEvent,
+		abortSignal
 	);
 }
