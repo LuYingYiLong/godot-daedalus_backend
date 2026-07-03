@@ -121,7 +121,80 @@ export function describeToolEvent(toolName: string, args: Record<string, unknown
 
 	if (toolName.startsWith("mcp_godot_")) {
 		const relativePath: string | undefined = getStringArg(args, "relativePath") ?? getStringArg(args, "scenePath");
+		const resourcePath: string | undefined = getStringArg(args, "resourcePath") ?? relativePath;
 		const settingKey: string | undefined = getStringArg(args, "key");
+
+		if (toolName.includes("lsp_get_status")) {
+			return createDisplay("godot_diagnostics", "Godot Diagnostics", "read", "检查 LSP 状态", "探测 Godot GDScript LSP", {
+				kind: "unknown",
+				label: "Godot LSP"
+			});
+		}
+
+		if (toolName.includes("lsp_get_file_diagnostics")) {
+			const targetLabel: string = resourcePath ?? "script";
+			return createDisplay("godot_diagnostics", "Godot Diagnostics", "read", "读取脚本诊断", `读取 ${targetLabel} 的 LSP 诊断`, {
+				kind: "file",
+				path: targetLabel,
+				label: targetLabel
+			});
+		}
+
+		if (toolName.includes("lsp_get_document_symbols")) {
+			const targetLabel: string = resourcePath ?? "script";
+			return createDisplay("godot_diagnostics", "Godot Diagnostics", "read", "查看脚本符号", `查看 ${targetLabel} 的符号结构`, {
+				kind: "file",
+				path: targetLabel,
+				label: targetLabel
+			});
+		}
+
+		if (toolName.includes("lsp_hover")) {
+			const targetLabel: string = resourcePath ?? "script";
+			return createDisplay("godot_diagnostics", "Godot Diagnostics", "read", "查看 Hover 信息", `查看 ${targetLabel} 的符号说明`, {
+				kind: "file",
+				path: targetLabel,
+				label: targetLabel
+			});
+		}
+
+		if (toolName.includes("lsp_goto_definition")) {
+			const targetLabel: string = resourcePath ?? "script";
+			return createDisplay("godot_diagnostics", "Godot Diagnostics", "read", "查找定义", `查找 ${targetLabel} 中的定义`, {
+				kind: "file",
+				path: targetLabel,
+				label: targetLabel
+			});
+		}
+
+		if (toolName.includes("dap_get_status")) {
+			return createDisplay("godot_diagnostics", "Godot Diagnostics", "read", "检查 DAP 状态", "探测 Godot DAP 调试会话", {
+				kind: "unknown",
+				label: "Godot DAP"
+			});
+		}
+
+		if (toolName.includes("dap_get_last_error")) {
+			return createDisplay("godot_diagnostics", "Godot Diagnostics", "read", "读取运行错误", "读取 Godot DAP 最近运行错误", {
+				kind: "unknown",
+				label: "last runtime error"
+			});
+		}
+
+		if (toolName.includes("dap_get_stack_trace")) {
+			return createDisplay("godot_diagnostics", "Godot Diagnostics", "read", "读取调用栈", "读取 Godot DAP 调用栈", {
+				kind: "unknown",
+				label: "stack trace"
+			});
+		}
+
+		if (toolName.includes("dap_get_variables")) {
+			const reference: string = String(args["variablesReference"] ?? "variables");
+			return createDisplay("godot_diagnostics", "Godot Diagnostics", "read", "读取变量", `读取变量引用 ${reference}`, {
+				kind: "unknown",
+				label: reference
+			});
+		}
 
 		if (toolName.includes("get_project_log_config")) {
 			return createDisplay("godot", "Godot", "read", "读取日志配置", "解析 Godot 项目日志路径", {

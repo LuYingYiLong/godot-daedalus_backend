@@ -1691,6 +1691,7 @@ function createSessionInfoResult(session: ClientSession, mcpHost: McpHost, histo
 		pendingGuides: session.pendingGuides.length,
 		mcpServers: mcpHost.getConnectedServerIds(),
 		customMcpServerStatus: mcpHost.getCustomServerStatuses(),
+		godotDiagnostics: mcpHost.getDiagnosticsBridge().getCachedStatus(),
 		godotExecutablePath: session.activeWorkspace?.godotExecutablePath ?? session.godotExecutablePath ?? null,
 		godotProjectPath: getSessionProjectPath(session) || null,
 		activeWorkspace: session.activeWorkspace ? {
@@ -1968,6 +1969,7 @@ async function createMcpSystemContext(mcpHost: McpHost, session: ClientSession):
 		sections.push("当前 TypeScript 后端已经连接以下 MCP server。你不能直接连接 MCP server；所有 MCP 数据都由后端读取后注入到本系统提示词中。回答时可以基于这些已注入的 MCP 上下文说明当前可见能力。");
 		sections.push("Godot 路径规则：遇到 `user://`、项目日志或 `debug/file_logging/log_path` 时，不要猜真实系统路径；必须优先使用 Godot 日志配置/日志读取工具解析。修改 `project.godot` 项目设置前，先读取当前值并使用 propose 项目设置工具预览，再调用实际 set/unset 工具等待审批。");
 		sections.push("Godot 编辑器配置可能包含本机隐私路径。读取编辑器设置、最近项目或 `.godot/editor` 状态时，默认使用摘要/脱敏结果；只有用户明确要求原始配置或原始路径时，才把工具参数 `raw` 设为 true。");
+		sections.push("Godot 诊断规则：修改 `.gd` 后优先调用 LSP diagnostics 获取行列诊断，再运行 Godot check-only；遇到运行时报错时优先尝试 DAP last error / stack trace，DAP 不可用时再回退到项目日志。DAP 工具只读，不要尝试 launch、continue、pause、setBreakpoints 或 evaluate。");
 		sections.push("用户自定义 MCP server 的工具会以 `mcp_custom_*` 包装函数提供；这些工具一律按写风险处理，调用前必须经过后端审批，不要尝试用原始 MCP 工具名直接调用。");
 
 		for (const serverId of serverIds) {

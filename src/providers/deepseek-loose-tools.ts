@@ -56,7 +56,25 @@ const RAW_TOOL_NAME_MAP: Readonly<Record<string, string>> = {
 	editor_inspect_node: "mcp_godot_editor_inspect_node",
 	inspect_live_node: "mcp_godot_editor_inspect_node",
 	editor_apply_scene_patch: "mcp_godot_editor_apply_scene_patch",
-	apply_editor_scene_patch: "mcp_godot_editor_apply_scene_patch"
+	apply_editor_scene_patch: "mcp_godot_editor_apply_scene_patch",
+	lsp_get_status: "mcp_godot_lsp_get_status",
+	get_lsp_status: "mcp_godot_lsp_get_status",
+	lsp_get_file_diagnostics: "mcp_godot_lsp_get_file_diagnostics",
+	get_file_diagnostics: "mcp_godot_lsp_get_file_diagnostics",
+	lsp_get_document_symbols: "mcp_godot_lsp_get_document_symbols",
+	get_document_symbols: "mcp_godot_lsp_get_document_symbols",
+	lsp_hover: "mcp_godot_lsp_hover",
+	hover: "mcp_godot_lsp_hover",
+	lsp_goto_definition: "mcp_godot_lsp_goto_definition",
+	goto_definition: "mcp_godot_lsp_goto_definition",
+	dap_get_status: "mcp_godot_dap_get_status",
+	get_dap_status: "mcp_godot_dap_get_status",
+	dap_get_last_error: "mcp_godot_dap_get_last_error",
+	get_last_error: "mcp_godot_dap_get_last_error",
+	dap_get_stack_trace: "mcp_godot_dap_get_stack_trace",
+	get_stack_trace: "mcp_godot_dap_get_stack_trace",
+	dap_get_variables: "mcp_godot_dap_get_variables",
+	get_variables: "mcp_godot_dap_get_variables"
 };
 const RAW_TOOL_NAMES: readonly string[] = Object.keys(RAW_TOOL_NAME_MAP);
 
@@ -84,6 +102,13 @@ const SCENE_PATH_TOOL_NAMES: ReadonlySet<string> = new Set([
 	"mcp_godot_propose_apply_scene_patch",
 	"mcp_godot_apply_scene_patch",
 	"mcp_godot_editor_apply_scene_patch"
+]);
+
+const RESOURCE_PATH_TOOL_NAMES: ReadonlySet<string> = new Set([
+	"mcp_godot_lsp_get_file_diagnostics",
+	"mcp_godot_lsp_get_document_symbols",
+	"mcp_godot_lsp_hover",
+	"mcp_godot_lsp_goto_definition"
 ]);
 
 function decodeXmlEntities(text: string): string {
@@ -195,6 +220,10 @@ function normalizeParameterName(toolName: string, parameterName: string): string
 		if (RELATIVE_PATH_TOOL_NAMES.has(toolName)) {
 			return "relativePath";
 		}
+
+		if (RESOURCE_PATH_TOOL_NAMES.has(toolName)) {
+			return "resourcePath";
+		}
 	}
 
 	if (localParameterName === "preset") {
@@ -217,12 +246,20 @@ function defaultParameterName(toolName: string): string | undefined {
 		return "relativePath";
 	}
 
+	if (RESOURCE_PATH_TOOL_NAMES.has(toolName)) {
+		return "resourcePath";
+	}
+
 	if (toolName === "mcp_godot_search_text") {
 		return "query";
 	}
 
 	if (toolName === "mcp_godot_editor_inspect_node") {
 		return "nodePath";
+	}
+
+	if (toolName === "mcp_godot_dap_get_variables") {
+		return "variablesReference";
 	}
 
 	if (toolName === "mcp_godot_read_project_log") {

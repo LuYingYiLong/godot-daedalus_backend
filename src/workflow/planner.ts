@@ -25,10 +25,20 @@ export const READ_TOOLS: string[] = [
 	"mcp_godot_editor_get_context",
 	"mcp_godot_editor_get_selected_nodes",
 	"mcp_godot_editor_inspect_node",
+	"mcp_godot_lsp_get_status",
+	"mcp_godot_lsp_get_file_diagnostics",
+	"mcp_godot_lsp_get_document_symbols",
+	"mcp_godot_lsp_hover",
+	"mcp_godot_lsp_goto_definition",
+	"mcp_godot_dap_get_status",
+	"mcp_godot_dap_get_last_error",
+	"mcp_godot_dap_get_stack_trace",
+	"mcp_godot_dap_get_variables",
 	CUSTOM_MCP_TOOLS_SENTINEL
 ];
 
 export const VERIFY_TOOLS: string[] = [
+	"mcp_godot_lsp_get_file_diagnostics",
 	"mcp_terminal_get_capabilities",
 	"mcp_terminal_run_safe_preset"
 ];
@@ -86,7 +96,7 @@ const PHASE_TEMPLATES: Record<FixedWorkflowPhaseId, WorkflowPhase> = {
 		toolGroup: "verify",
 		toolBudget: "normal",
 		allowedTools: [...READ_TOOLS, ...VERIFY_TOOLS],
-		instruction: "运行可用的低成本验证，例如 Godot check-only、类型检查或安全预设。记录通过、失败和未覆盖项。"
+		instruction: "运行可用的低成本验证。修改 .gd 后优先读取 LSP diagnostics，再运行 Godot check-only、类型检查或安全预设。记录通过、失败和未覆盖项。"
 	},
 	summarize: {
 		id: "summarize",

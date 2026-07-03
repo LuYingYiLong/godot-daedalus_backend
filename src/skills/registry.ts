@@ -43,6 +43,15 @@ const READ_TOOLS: string[] = [
 	"mcp_godot_editor_get_context",
 	"mcp_godot_editor_get_selected_nodes",
 	"mcp_godot_editor_inspect_node",
+	"mcp_godot_lsp_get_status",
+	"mcp_godot_lsp_get_file_diagnostics",
+	"mcp_godot_lsp_get_document_symbols",
+	"mcp_godot_lsp_hover",
+	"mcp_godot_lsp_goto_definition",
+	"mcp_godot_dap_get_status",
+	"mcp_godot_dap_get_last_error",
+	"mcp_godot_dap_get_stack_trace",
+	"mcp_godot_dap_get_variables",
 	CUSTOM_MCP_TOOLS_SENTINEL
 ];
 
@@ -51,6 +60,7 @@ const FILE_CREATE_TOOLS: string[] = [
 ];
 
 const VERIFY_TOOLS: string[] = [
+	"mcp_godot_lsp_get_file_diagnostics",
 	"mcp_terminal_get_capabilities",
 	"mcp_terminal_run_safe_preset"
 ];

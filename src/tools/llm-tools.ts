@@ -351,6 +351,42 @@ const TOOL_MAP: Record<string, ToolMapping> = {
 		serverId: "godot_editor",
 		toolName: "apply_scene_patch"
 	},
+	"mcp_godot_lsp_get_status": {
+		serverId: "godot_diagnostics",
+		toolName: "lsp_get_status"
+	},
+	"mcp_godot_lsp_get_file_diagnostics": {
+		serverId: "godot_diagnostics",
+		toolName: "lsp_get_file_diagnostics"
+	},
+	"mcp_godot_lsp_get_document_symbols": {
+		serverId: "godot_diagnostics",
+		toolName: "lsp_get_document_symbols"
+	},
+	"mcp_godot_lsp_hover": {
+		serverId: "godot_diagnostics",
+		toolName: "lsp_hover"
+	},
+	"mcp_godot_lsp_goto_definition": {
+		serverId: "godot_diagnostics",
+		toolName: "lsp_goto_definition"
+	},
+	"mcp_godot_dap_get_status": {
+		serverId: "godot_diagnostics",
+		toolName: "dap_get_status"
+	},
+	"mcp_godot_dap_get_last_error": {
+		serverId: "godot_diagnostics",
+		toolName: "dap_get_last_error"
+	},
+	"mcp_godot_dap_get_stack_trace": {
+		serverId: "godot_diagnostics",
+		toolName: "dap_get_stack_trace"
+	},
+	"mcp_godot_dap_get_variables": {
+		serverId: "godot_diagnostics",
+		toolName: "dap_get_variables"
+	},
 	"mcp_terminal_run_godot_scene_script": {
 		serverId: "terminal",
 		toolName: "run_godot_scene_script"
@@ -761,6 +797,155 @@ const TOOL_DEFINITIONS: ChatCompletionTool[] = [
 				type: "object",
 				properties: {},
 				required: []
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_godot_lsp_get_status",
+			description: "探测 Godot GDScript LSP 是否可用，返回 host/port、编辑器设置来源和最近错误。LSP 默认端口通常是 6005。",
+			parameters: {
+				type: "object",
+				properties: {},
+				required: []
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_godot_lsp_get_file_diagnostics",
+			description: "读取指定 GDScript 文件的 Godot LSP 诊断，返回 1-based 行列、severity、message 和 code。修改 .gd 后应优先调用该工具，再运行 Godot check-only。",
+			parameters: {
+				type: "object",
+				properties: {
+					resourcePath: {
+						type: "string",
+						description: "脚本路径，可用 res://、项目相对路径或项目内绝对路径，例如 'res://scripts/player.gd' 或 'scripts/player.gd'。"
+					}
+				},
+				required: ["resourcePath"]
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_godot_lsp_get_document_symbols",
+			description: "读取指定 GDScript 文件的 document symbols 摘要，用于理解类、函数、变量和枚举结构。",
+			parameters: {
+				type: "object",
+				properties: {
+					resourcePath: {
+						type: "string",
+						description: "脚本路径，可用 res://、项目相对路径或项目内绝对路径。"
+					}
+				},
+				required: ["resourcePath"]
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_godot_lsp_hover",
+			description: "读取指定 GDScript 文件某个位置的 hover 信息，用于确认 API、变量或类型含义。line/column 使用 1-based。",
+			parameters: {
+				type: "object",
+				properties: {
+					resourcePath: {
+						type: "string",
+						description: "脚本路径，可用 res://、项目相对路径或项目内绝对路径。"
+					},
+					line: {
+						type: "integer",
+						description: "1-based 行号。"
+					},
+					column: {
+						type: "integer",
+						description: "1-based 列号。"
+					}
+				},
+				required: ["resourcePath", "line", "column"]
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_godot_lsp_goto_definition",
+			description: "读取指定 GDScript 文件某个位置的 definition 位置，用于追踪函数、变量、类或资源定义。line/column 使用 1-based。",
+			parameters: {
+				type: "object",
+				properties: {
+					resourcePath: {
+						type: "string",
+						description: "脚本路径，可用 res://、项目相对路径或项目内绝对路径。"
+					},
+					line: {
+						type: "integer",
+						description: "1-based 行号。"
+					},
+					column: {
+						type: "integer",
+						description: "1-based 列号。"
+					}
+				},
+				required: ["resourcePath", "line", "column"]
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_godot_dap_get_status",
+			description: "探测 Godot DAP 是否可用，并只读检查当前是否可 attach 到正在运行的调试会话。DAP 默认端口通常是 6006。",
+			parameters: {
+				type: "object",
+				properties: {},
+				required: []
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_godot_dap_get_last_error",
+			description: "只读读取当前 Godot DAP stopped/output 事件和顶部调用栈摘要。遇到运行时报错时优先调用；DAP 不可用时回退到项目日志。",
+			parameters: {
+				type: "object",
+				properties: {},
+				required: []
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_godot_dap_get_stack_trace",
+			description: "只读读取当前 Godot 调试会话调用栈和 frame scopes。不会 pause/continue/step，也不会 evaluate。",
+			parameters: {
+				type: "object",
+				properties: {},
+				required: []
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_godot_dap_get_variables",
+			description: "只读读取 DAP variablesReference 对应的变量摘要。variablesReference 来自 mcp_godot_dap_get_stack_trace 的 scopes 或变量结果。",
+			parameters: {
+				type: "object",
+				properties: {
+					variablesReference: {
+						type: "integer",
+						description: "来自 DAP scopes 或变量结果的 variablesReference。"
+					}
+				},
+				required: ["variablesReference"]
 			}
 		}
 	},

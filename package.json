@@ -8,7 +8,7 @@
     "ping": "tsx src/ping-client.ts",
     "mcp": "tsx src/mcp/godot-mcp-server.ts",
     "typecheck": "tsc --noEmit",
-    "test": "npm run typecheck"
+    "test": "npm run typecheck && node --import tsx --test tests/godot-diagnostics.test.ts"
   },
   "keywords": [],
   "author": "",

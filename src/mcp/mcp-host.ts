@@ -1,5 +1,6 @@
 import { buildMcpServerConfigs } from "./mcp-config.js";
 import { buildCustomMcpServerConfigs } from "./custom-mcp-config-store.js";
+import { GODOT_DIAGNOSTICS_SERVER_ID, GodotDiagnosticsBridge } from "./godot-diagnostics-bridge.js";
 import { GODOT_EDITOR_SERVER_ID, GodotEditorBridge } from "./godot-editor-bridge.js";
 import { McpSession } from "./mcp-session.js";
 import type { McpServerConfig } from "./types.js";
@@ -50,6 +51,7 @@ export class McpHost {
 	private customServerStatuses: Map<string, CustomMcpServerRuntimeStatus> = new Map();
 	private activeWorkspaceId?: string | undefined;
 	private readonly editorBridge: GodotEditorBridge = new GodotEditorBridge();
+	private readonly diagnosticsBridge: GodotDiagnosticsBridge = new GodotDiagnosticsBridge();
 
 	async connectAll(): Promise<void> {
 		if (process.env.MCP_AUTO_CONNECT !== "1") {
@@ -69,6 +71,7 @@ export class McpHost {
 	async switchWorkspace(workspace: WorkspaceConfig): Promise<void> {
 		await this.ensureWorkspace(workspace);
 		this.activeWorkspaceId = workspace.id;
+		this.diagnosticsBridge.setWorkspace(workspace);
 		this.syncActiveDynamicTools();
 		console.log(`MCP active workspace: ${workspace.id} -> ${workspace.rootPath}`);
 	}
@@ -272,6 +275,7 @@ export class McpHost {
 
 		if (this.activeWorkspaceId === workspaceId) {
 			this.activeWorkspaceId = undefined;
+			this.diagnosticsBridge.clearWorkspace(workspaceId);
 			this.syncActiveDynamicTools();
 		}
 	}
@@ -282,6 +286,10 @@ export class McpHost {
 
 	getEditorBridge(): GodotEditorBridge {
 		return this.editorBridge;
+	}
+
+	getDiagnosticsBridge(): GodotDiagnosticsBridge {
+		return this.diagnosticsBridge;
 	}
 
 	getSession(id: string): McpSession {
@@ -305,6 +313,7 @@ export class McpHost {
 		}
 
 		const serverIds: string[] = Array.from(sessions.keys());
+		serverIds.push(GODOT_DIAGNOSTICS_SERVER_ID);
 		if (this.editorBridge.isOnline()) {
 			serverIds.push(GODOT_EDITOR_SERVER_ID);
 		}
@@ -324,12 +333,20 @@ export class McpHost {
 			return this.editorBridge.listTools();
 		}
 
+		if (serverId === GODOT_DIAGNOSTICS_SERVER_ID) {
+			return this.diagnosticsBridge.listTools();
+		}
+
 		return this.getSession(serverId).listTools();
 	}
 
 	async callTool(serverId: string, name: string, args: Record<string, unknown>) {
 		if (serverId === GODOT_EDITOR_SERVER_ID) {
 			return this.editorBridge.callTool(name, args);
+		}
+
+		if (serverId === GODOT_DIAGNOSTICS_SERVER_ID) {
+			return this.diagnosticsBridge.callTool(name, args);
 		}
 
 		return this.getSession(serverId).callTool(name, args);
@@ -340,12 +357,20 @@ export class McpHost {
 			return this.editorBridge.listResources();
 		}
 
+		if (serverId === GODOT_DIAGNOSTICS_SERVER_ID) {
+			return this.diagnosticsBridge.listResources();
+		}
+
 		return this.getSession(serverId).listResources();
 	}
 
 	async readResource(serverId: string, uri: string) {
 		if (serverId === GODOT_EDITOR_SERVER_ID) {
 			return this.editorBridge.readResource(uri);
+		}
+
+		if (serverId === GODOT_DIAGNOSTICS_SERVER_ID) {
+			return this.diagnosticsBridge.readResource(uri);
 		}
 
 		return this.getSession(serverId).readResource(uri);
@@ -362,6 +387,7 @@ export class McpHost {
 		this.workspaceCustomTools.clear();
 		this.customServerStatuses.clear();
 		this.activeWorkspaceId = undefined;
+		this.diagnosticsBridge.clearWorkspace();
 		this.syncActiveDynamicTools();
 	}
 }
