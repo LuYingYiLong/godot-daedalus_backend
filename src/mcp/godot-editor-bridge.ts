@@ -104,6 +104,17 @@ export class GodotEditorBridge {
 		return isSocketOpen(this.socket) && this.updatedAtMs > 0;
 	}
 
+	async refreshFilesystem(changedPaths: string[]): Promise<unknown | null> {
+		if (!this.isOnline()) {
+			return null;
+		}
+
+		return await this.requestEditorTool("refresh_filesystem", {
+			changedPaths,
+			scanSources: true
+		});
+	}
+
 	listTools() {
 		return {
 			tools: [

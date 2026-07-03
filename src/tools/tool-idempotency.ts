@@ -49,6 +49,21 @@ const inFlightToolExecutions: Map<string, Promise<IdempotentToolExecutionResult>
 let ledgerLoadPromise: Promise<void> | null = null;
 let ledgerWriteQueue: Promise<void> = Promise.resolve();
 
+const GODOT_PROJECT_MUTATION_TOOLS: ReadonlySet<string> = new Set([
+	"mcp_godot_set_project_setting",
+	"mcp_godot_unset_project_setting",
+	"mcp_godot_create_text_file",
+	"mcp_godot_overwrite_text_file",
+	"mcp_godot_replace_text_in_file",
+	"mcp_godot_delete_file",
+	"mcp_godot_create_scene",
+	"mcp_godot_add_node_to_scene",
+	"mcp_godot_attach_script_to_node",
+	"mcp_godot_connect_signal_in_scene",
+	"mcp_godot_apply_scene_patch",
+	"mcp_godot_editor_apply_scene_patch"
+]);
+
 function normalizeForStableJson(value: unknown): unknown {
 	if (Array.isArray(value)) {
 		return value.map((item: unknown): unknown => normalizeForStableJson(item));
@@ -211,6 +226,61 @@ function getMcpExecutionScope(mcpHost: McpHost): string {
 	return mcpHost.getActiveWorkspaceId() ?? "workspace:none";
 }
 
+function addRefreshPath(paths: Set<string>, value: unknown): void {
+	if (typeof value !== "string") {
+		return;
+	}
+
+	const trimmed: string = value.trim();
+	if (trimmed.length === 0) {
+		return;
+	}
+
+	paths.add(trimmed);
+}
+
+function collectGodotRefreshPaths(args: Record<string, unknown>): string[] {
+	const paths: Set<string> = new Set();
+	addRefreshPath(paths, args.relativePath);
+	addRefreshPath(paths, args.scenePath);
+	addRefreshPath(paths, args.scriptPath);
+	addRefreshPath(paths, args.resourcePath);
+	addRefreshPath(paths, args.path);
+
+	const operations: unknown = args.operations;
+	if (Array.isArray(operations)) {
+		for (const operation of operations) {
+			if (operation === null || typeof operation !== "object") {
+				continue;
+			}
+
+			const operationRecord: Record<string, unknown> = operation as Record<string, unknown>;
+			addRefreshPath(paths, operationRecord.scenePath);
+			addRefreshPath(paths, operationRecord.scriptPath);
+			addRefreshPath(paths, operationRecord.resourcePath);
+			addRefreshPath(paths, operationRecord.path);
+		}
+	}
+
+	return [...paths];
+}
+
+function refreshEditorFilesystemAfterGodotMutation(
+	mcpHost: McpHost,
+	llmToolName: string,
+	args: Record<string, unknown>
+): void {
+	if (!GODOT_PROJECT_MUTATION_TOOLS.has(llmToolName)) {
+		return;
+	}
+
+	const changedPaths: string[] = collectGodotRefreshPaths(args);
+	void mcpHost.getEditorBridge().refreshFilesystem(changedPaths).catch((error: unknown): void => {
+		const message: string = error instanceof Error ? error.message : String(error);
+		console.warn(`[godot_editor] resource filesystem refresh failed after ${llmToolName}: ${message}`);
+	});
+}
+
 async function executeMappedTool(
 	mcpHost: McpHost,
 	serverId: string,
@@ -238,7 +308,9 @@ export async function executeLlmToolWithIdempotency(
 	const identity: ToolExecutionIdentity | undefined = getLlmToolExecutionIdentity(llmToolName, args, getMcpExecutionScope(mcpHost));
 	if (identity === undefined) {
 		const mapping = resolveToolMapping(llmToolName);
-		return executeMappedTool(mcpHost, mapping.serverId, mapping.toolName, args);
+		const result: IdempotentToolExecutionResult = await executeMappedTool(mcpHost, mapping.serverId, mapping.toolName, args);
+		refreshEditorFilesystemAfterGodotMutation(mcpHost, llmToolName, args);
+		return result;
 	}
 
 	await ensureLedgerLoaded();
@@ -246,6 +318,7 @@ export async function executeLlmToolWithIdempotency(
 
 	const existingRecord: ToolExecutionRecord | undefined = completedToolExecutions.get(identity.fingerprint);
 	if (existingRecord !== undefined && !isRecordExpired(existingRecord)) {
+		refreshEditorFilesystemAfterGodotMutation(mcpHost, llmToolName, args);
 		return {
 			content: existingRecord.content,
 			rawContentLength: existingRecord.rawContentLength,
@@ -258,6 +331,7 @@ export async function executeLlmToolWithIdempotency(
 	const existingInFlight: Promise<IdempotentToolExecutionResult> | undefined = inFlightToolExecutions.get(identity.fingerprint);
 	if (existingInFlight !== undefined) {
 		const result: IdempotentToolExecutionResult = await existingInFlight;
+		refreshEditorFilesystemAfterGodotMutation(mcpHost, llmToolName, args);
 		return { ...result, reused: true };
 	}
 
@@ -269,6 +343,7 @@ export async function executeLlmToolWithIdempotency(
 			args,
 			identity.fingerprint
 		);
+		refreshEditorFilesystemAfterGodotMutation(mcpHost, llmToolName, args);
 		const createdAt: string = new Date().toISOString();
 		const record: ToolExecutionRecord = {
 			fingerprint: identity.fingerprint,
