@@ -1,18 +1,24 @@
 {
   "name": "godot-daedalus_backend",
   "version": "1.0.0",
-  "description": "",
+  "description": "TypeScript backend for the Godot Daedalus editor assistant plugin.",
   "main": "index.js",
   "scripts": {
     "dev": "tsx src/main.ts",
     "ping": "tsx src/ping-client.ts",
     "mcp": "tsx src/mcp/godot-mcp-server.ts",
     "typecheck": "tsc --noEmit",
-    "test": "npm run typecheck && node --import tsx --test tests/godot-diagnostics.test.ts"
+    "test": "npm run typecheck && node --import tsx --test \"tests/*.test.ts\""
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "godot",
+    "editor-plugin",
+    "mcp",
+    "websocket",
+    "deepseek"
+  ],
+  "author": "LuYingYiLong",
+  "license": "MIT",
   "type": "module",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

@@ -1,0 +1,48 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { evaluateToolCall, getToolPolicy } from "../src/tools/tool-policy.js";
+
+const readTool: string = "mcp_godot_read_text_file";
+const verifyTool: string = "mcp_terminal_run_safe_preset";
+const proposeTool: string = "mcp_godot_propose_create_text_file";
+const writeTool: string = "mcp_godot_create_text_file";
+const destructiveTool: string = "mcp_godot_delete_file";
+
+test("tool policy classifies representative risks", (): void => {
+	assert.equal(getToolPolicy(readTool)?.risk, "read");
+	assert.equal(getToolPolicy(verifyTool)?.risk, "verify");
+	assert.equal(getToolPolicy(proposeTool)?.risk, "propose");
+	assert.equal(getToolPolicy(writeTool)?.risk, "write");
+	assert.equal(getToolPolicy(destructiveTool)?.risk, "destructive");
+	assert.equal(getToolPolicy("mcp_custom_server_tool_12345678")?.risk, "write");
+});
+
+test("read-only mode only allows read and verify tools", (): void => {
+	assert.equal(evaluateToolCall("read-only", readTool, {}).action, "allow");
+	assert.equal(evaluateToolCall("read-only", verifyTool, {}).action, "allow");
+	assert.equal(evaluateToolCall("read-only", proposeTool, {}).action, "deny");
+	assert.equal(evaluateToolCall("read-only", writeTool, {}).action, "deny");
+	assert.equal(evaluateToolCall("read-only", destructiveTool, {}).action, "deny");
+});
+
+test("manual and auto-safe modes request approval for write risks", (): void => {
+	for (const mode of ["manual", "auto-safe"] as const) {
+		assert.equal(evaluateToolCall(mode, readTool, {}).action, "allow");
+		assert.equal(evaluateToolCall(mode, verifyTool, {}).action, "allow");
+		assert.equal(evaluateToolCall(mode, proposeTool, {}).action, "allow");
+		assert.equal(evaluateToolCall(mode, writeTool, {}).action, "request_approval");
+		assert.equal(evaluateToolCall(mode, destructiveTool, {}).action, "request_approval");
+	}
+});
+
+test("bypass mode still requires approval for destructive tools", (): void => {
+	assert.equal(evaluateToolCall("bypass", readTool, {}).action, "allow");
+	assert.equal(evaluateToolCall("bypass", writeTool, {}).action, "allow");
+	assert.equal(evaluateToolCall("bypass", destructiveTool, {}).action, "request_approval");
+});
+
+test("unknown tools are denied", (): void => {
+	const decision = evaluateToolCall("manual", "mcp_godot_missing_tool", {});
+	assert.equal(decision.action, "deny");
+	assert.match(decision.reason, /未知工具/);
+});
