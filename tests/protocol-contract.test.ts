@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
+import { REQUEST_HANDLER_METHODS } from "../src/server/request-dispatcher.js";
 
 const pluginDir: string = process.env.GODOT_DAEDALUS_PLUGIN_DIR ?? "D:/GodotProjects/example/addons/godot_daedalus";
 
@@ -20,12 +21,6 @@ async function readBackendSchemaMethods(): Promise<string[]> {
 	return unique([...source.matchAll(/method:\s*z\.literal\("([^"]+)"\)/g)].map((match: RegExpMatchArray): string => match[1]!));
 }
 
-async function readBackendServerCases(): Promise<string[]> {
-	const serverPath: string = path.resolve("src/server/websocket-server.ts");
-	const source: string = await fs.readFile(serverPath, "utf8");
-	return unique([...source.matchAll(/case "([^"]+)":/g)].map((match: RegExpMatchArray): string => match[1]!));
-}
-
 async function readFrontendRpcMethods(): Promise<string[]> {
 	const rpcMethodsPath: string = path.join(pluginDir, "scripts", "rpc_methods.gd");
 	const source: string = await fs.readFile(rpcMethodsPath, "utf8");
@@ -34,10 +29,10 @@ async function readFrontendRpcMethods(): Promise<string[]> {
 
 test("backend protocol schema and WebSocket dispatcher stay in sync", async (): Promise<void> => {
 	const schemaMethods: string[] = await readBackendSchemaMethods();
-	const serverCases: string[] = await readBackendServerCases();
+	const dispatcherMethods: string[] = unique([...REQUEST_HANDLER_METHODS]);
 
-	assert.deepEqual(difference(schemaMethods, serverCases), [], "schema methods missing server case");
-	assert.deepEqual(difference(serverCases, schemaMethods), [], "server cases missing schema method");
+	assert.deepEqual(difference(schemaMethods, dispatcherMethods), [], "schema methods missing dispatcher handler");
+	assert.deepEqual(difference(dispatcherMethods, schemaMethods), [], "dispatcher handlers missing schema method");
 });
 
 test("frontend RPC constants match backend protocol schema", async (): Promise<void> => {

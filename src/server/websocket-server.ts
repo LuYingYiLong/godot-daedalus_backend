@@ -29,7 +29,6 @@ import { getDefaultModelProfile, resolveModelProfile } from "../tokens/model-pro
 import { type TokenCounter } from "../tokens/token-counter.js";
 import { createTokenCounter } from "../tokens/token-counter-factory.js";
 import { computeInputBudget, selectMessagesWithinBudget } from "../session/session-compressor.js";
-import { ApprovalGateway } from "../tools/approval-gateway.js";
 import { composeSkillPrompt, getSkill, isSkillId, listSkills } from "../skills/registry.js";
 import type { SkillId } from "../skills/registry.js";
 import {
@@ -72,6 +71,15 @@ import {
 	updateWorkflowPhaseStatus
 } from "../workflow/runner.js";
 import type { WorkflowPhase, WorkflowPlan, WorkflowRunState } from "../workflow/types.js";
+import {
+	clearActiveSession,
+	createClientSession,
+	type ClientSession,
+	type PendingAiContinuation,
+	type PendingGuide,
+	type ThinkingEventBuffer
+} from "./client-session.js";
+import { assertKnownRequestMethod } from "./request-dispatcher.js";
 
 const tokenCounterPromise: Promise<TokenCounter> = createTokenCounter();
 let sessionCompressorPromptCache: string | undefined;
@@ -165,54 +173,10 @@ async function loadSessionCompressorPrompt(): Promise<string> {
 	return trimmedContent;
 }
 
-type ClientSession = {
-	deepseekApiKey?: string | undefined;
-	deepseekModel?: string | undefined;
-	deepseekBaseUrl?: string | undefined;
-	godotExecutablePath?: string | undefined;
-	godotProjectPath?: string | undefined;
-	messages: ChatMessage[];
-	modelProfile: ModelProfile;
-	approvalGateway: ApprovalGateway;
-	activeSkillId?: SkillId | undefined;
-	activeWorkspace?: WorkspaceConfig | undefined;
-	sessionId?: string | undefined;
-	sessionTitle?: string | undefined;
-	summaryMessage?: ChatMessage | undefined;
-	summaryCoveredMessageCount?: number | undefined;
-	pendingAiContinuations: Map<string, PendingAiContinuation>;
-	thinkingEventBuffers: Map<string, ThinkingEventBuffer>;
-	activeAbortControllers: Map<string, AbortController>;
-	inFlightRequestIds: Set<string>;
-	completedRequestIds: Map<string, number>;
-	eventPersistQueue: Promise<void>;
-	pendingGuides: PendingGuide[];
-	fullSessionLoadPromise?: Promise<void> | undefined;
-};
-
-type PendingGuide = {
-	id: string;
-	clientGuideId: string;
-	text: string;
-	anchorRequestId?: string | undefined;
-	createdAt: string;
-	updatedAt: string;
-};
-
 type NextStepHint = {
 	title: string;
 	message: string;
 };
-
-function clearActiveSession(session: ClientSession): void {
-	session.sessionId = undefined;
-	session.sessionTitle = undefined;
-	session.messages = [];
-	session.fullSessionLoadPromise = undefined;
-	session.summaryMessage = undefined;
-	session.summaryCoveredMessageCount = undefined;
-	session.pendingGuides = [];
-}
 
 function isCancellationError(error: unknown, abortSignal?: AbortSignal | undefined): boolean {
 	if (abortSignal?.aborted) {
@@ -302,24 +266,6 @@ function finishRequestExecution(request: ClientRequest, session: ClientSession):
 	session.completedRequestIds.set(request.id, Date.now());
 	pruneCompletedRequestIds(session);
 }
-
-type ThinkingEventBuffer = {
-	sessionId: string;
-	requestId: string;
-	text: string;
-};
-
-type PendingAiContinuation = {
-	params: AiChatParams;
-	options: DeepSeekChatOptions;
-	continuation: DeepSeekAgentContinuation;
-	allowedToolNames?: readonly string[] | undefined;
-	userMessage: string;
-	requestId: string;
-	userCreatedAt: string;
-	stream: boolean;
-	workflowState?: WorkflowRunState | undefined;
-};
 
 type SlashCommandResult =
 	| { type: "handled" }
@@ -3954,19 +3900,7 @@ export function createServer(port: number, mcpHost: McpHost): WebSocketServer {
 	const server: WebSocketServer = new WebSocketServer({ port });
 
 	server.on("connection", (socket: WebSocket, request): void => {
-		const session: ClientSession = {
-			messages: [],
-			modelProfile: getDefaultModelProfile(),
-			approvalGateway: new ApprovalGateway(),
-			activeWorkspace: getDefaultWorkspace(),
-			pendingAiContinuations: new Map(),
-			thinkingEventBuffers: new Map(),
-			activeAbortControllers: new Map(),
-			inFlightRequestIds: new Set(),
-			completedRequestIds: new Map(),
-			pendingGuides: [],
-			eventPersistQueue: Promise.resolve()
-		};
+		const session: ClientSession = createClientSession(getDefaultWorkspace());
 		const remoteAddress: string = request.socket.remoteAddress ?? "unknown";
 		console.log(`Client connected: ${remoteAddress}`);
 
@@ -4008,6 +3942,7 @@ export function createServer(port: number, mcpHost: McpHost): WebSocketServer {
 			}
 
 			const requestData: ClientRequest = validationResult.data;
+			assertKnownRequestMethod(requestData.method);
 			if (!beginRequestExecution(socket, requestData, session)) {
 				return;
 			}
