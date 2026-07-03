@@ -1,13 +1,8 @@
 import { createServer } from "./server/websocket-server.js";
 import { McpHost } from "./mcp/mcp-host.js";
+import { getBackendPortFromEnv } from "./server/backend-runtime.js";
 
-const DEFAULT_PORT: number = 38180;
-const portText: string = process.env.PORT ?? String(DEFAULT_PORT);
-const port: number = Number.parseInt(portText, 10);
-
-if (!Number.isInteger(port) || port <= 0 || port > 65535) {
-	throw new Error(`Invalid PORT: ${portText}`);
-}
+const port: number = getBackendPortFromEnv();
 
 const mcpHost: McpHost = new McpHost();
 

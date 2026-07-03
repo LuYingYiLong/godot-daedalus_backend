@@ -92,6 +92,11 @@ import {
 	type PendingApprovalState
 } from "../session/approval-persistence.js";
 import { createBackendHealthResult } from "./backend-health.js";
+import {
+	createSlashCommandListResult,
+	handleSlashCommand,
+	type SlashCommandResult
+} from "./slash-commands.js";
 
 const tokenCounterPromise: Promise<TokenCounter> = createTokenCounter();
 let sessionCompressorPromptCache: string | undefined;
@@ -290,11 +295,6 @@ function finishRequestExecution(request: ClientRequest, session: ClientSession):
 	session.completedRequestIds.set(request.id, Date.now());
 	pruneCompletedRequestIds(session);
 }
-
-type SlashCommandResult =
-	| { type: "handled" }
-	| { type: "ai"; params: AiChatParams }
-	| { type: "none" };
 
 class WorkflowExecutionError extends Error {
 	readonly plan: WorkflowPlan;
@@ -1948,194 +1948,6 @@ function createSessionInfoResult(session: ClientSession, mcpHost: McpHost, histo
 	};
 }
 
-function formatSessionInfo(session: ClientSession, mcpHost: McpHost): string {
-	const info = createSessionInfoResult(session, mcpHost);
-	return [
-		"## 当前上下文",
-		`- Provider configured: ${String(info.providerConfigured)}`,
-		`- Model: ${String(info.model)}`,
-		`- Active skill: ${String(info.activeSkillId ?? "none")}`,
-		`- History messages: ${String(info.historyMessagesStored)}`,
-		`- Context window: ${String(info.contextWindowTokens)} tokens`,
-		`- Default output reserve: ${String(info.defaultOutputReserveTokens)} tokens`,
-		`- Safety margin: ${String(info.safetyMarginTokens)} tokens`,
-		`- Approval mode: ${String(info.approvalMode)}`,
-		`- Pending approvals: ${String(info.pendingApprovals)}`,
-		`- MCP servers: ${JSON.stringify(info.mcpServers)}`,
-		`- Godot project: ${String(info.godotProjectPath ?? "")}`
-	].join("\n");
-}
-
-function formatPendingApprovals(session: ClientSession): string {
-	const pending = session.approvalGateway.listPending();
-	if (pending.length === 0) {
-		return "当前没有待审批工具调用。";
-	}
-
-	return [
-		"## 待审批工具调用",
-		...pending.map((approval): string => [
-			`- ${approval.approvalId}`,
-			`  - Tool: ${approval.llmToolName}`,
-			`  - Reason: ${approval.reason}`,
-			`  - Args: \`${JSON.stringify(approval.args)}\``
-		].join("\n"))
-	].join("\n");
-}
-
-function formatSkillList(): string {
-	return [
-		"## 可用 Skills",
-		...listSkills().map((skill): string => `- \`${skill.id}\`：${skill.name} - ${skill.description}`)
-	].join("\n");
-}
-
-function createSlashHelpText(): string {
-	return [
-		"## 可用指令",
-		"- `/help`：显示指令帮助。",
-		"- `/context`：显示当前模型、上下文窗口、MCP 和审批信息。",
-		"- `/approvals`：显示待审批工具调用。",
-		"- `/skills`：列出可用 skills。",
-		"- `/skill <skillId>`：激活会话默认 skill，例如 `/skill gdscript.review`。",
-		"- `/skill off`：关闭会话默认 skill。",
-		"- `/reset`：清空当前会话历史。",
-		"- `/init`：检查当前 Godot 项目，并请求生成项目根目录 `AGENTS.md`。"
-	].join("\n");
-}
-
-function sendChatText(socket: WebSocket, request: ClientRequest, text: string, session: ClientSession, mcpHost: McpHost): void {
-	if (request.method !== "ai.chat" || request.params.options?.stream !== true) {
-		sendJson(socket, {
-			type: "response",
-			id: request.id,
-			ok: true,
-			result: {
-				text,
-				context: createSessionInfoResult(session, mcpHost)
-			}
-		});
-		return;
-	}
-
-	for (let index: number = 0; index < text.length; index += 1) {
-		sendJson(socket, {
-			type: "event",
-			id: request.id,
-			event: "ai.delta",
-			data: { text: text[index] }
-		});
-	}
-
-	sendJson(socket, {
-		type: "event",
-		id: request.id,
-		event: "ai.done",
-		data: {
-			text,
-			context: createSessionInfoResult(session, mcpHost)
-		}
-	});
-}
-
-async function handleSlashCommand(
-	socket: WebSocket,
-	request: ClientRequest,
-	session: ClientSession,
-	mcpHost: McpHost
-): Promise<SlashCommandResult> {
-	if (request.method !== "ai.chat") {
-		return { type: "none" };
-	}
-
-	const inputText: string = request.params.message.trim();
-	if (!inputText.startsWith("/")) {
-		return { type: "none" };
-	}
-
-	const [rawCommand = "", ...restParts] = inputText.split(/\s+/);
-	const command: string = rawCommand.toLowerCase();
-	const restText: string = restParts.join(" ").trim();
-
-	if (command === "/help") {
-		sendChatText(socket, request, createSlashHelpText(), session, mcpHost);
-		return { type: "handled" };
-	}
-
-	if (command === "/context") {
-		sendChatText(socket, request, formatSessionInfo(session, mcpHost), session, mcpHost);
-		return { type: "handled" };
-	}
-
-	if (command === "/approvals") {
-		sendChatText(socket, request, formatPendingApprovals(session), session, mcpHost);
-		return { type: "handled" };
-	}
-
-	if (command === "/skills") {
-		sendChatText(socket, request, formatSkillList(), session, mcpHost);
-		return { type: "handled" };
-	}
-
-	if (command === "/skill") {
-		if (restText.length === 0) {
-			const activeText: string = session.activeSkillId ?? "none";
-			sendChatText(socket, request, `当前激活 skill：\`${activeText}\`\n\n${formatSkillList()}`, session, mcpHost);
-			return { type: "handled" };
-		}
-
-		if (restText === "off" || restText === "none") {
-			session.activeSkillId = undefined;
-			sendChatText(socket, request, "已关闭会话默认 skill。", session, mcpHost);
-			return { type: "handled" };
-		}
-
-		if (!isSkillId(restText)) {
-			sendChatText(socket, request, `未知 skill：\`${restText}\`\n\n${formatSkillList()}`, session, mcpHost);
-			return { type: "handled" };
-		}
-
-		session.activeSkillId = restText;
-		const skill = getSkill(restText);
-		sendChatText(socket, request, `已激活 skill：\`${skill.id}\` - ${skill.name}`, session, mcpHost);
-		return { type: "handled" };
-	}
-
-	if (command === "/reset") {
-		session.messages = [];
-		session.fullSessionLoadPromise = undefined;
-		sendChatText(socket, request, "已清空当前会话历史。", session, mcpHost);
-		return { type: "handled" };
-	}
-
-	if (command === "/init") {
-		session.messages = [];
-		session.fullSessionLoadPromise = undefined;
-		const extraInstruction: string = restText.length > 0
-			? `\n\n用户补充要求：${restText}`
-			: "";
-
-		return {
-			type: "ai",
-			params: {
-				...request.params,
-				promptId: "godot.assistant",
-				skillId: "godot.project_init",
-				message: [
-					"请初始化当前 Godot 项目的 AI 协作上下文。",
-					"请通过 MCP 工具检查项目摘要、场景、脚本、插件和关键配置。",
-					"请生成适合项目根目录的 AGENTS.md 内容，并调用文件创建工具请求创建 `AGENTS.md`。",
-					"如果 `AGENTS.md` 已存在，请读取并总结现有内容，不要覆盖；说明是否建议更新。",
-					"文件创建工具需要用户审批时，请明确告知审批 ID 和用户需要在 Godot 客户端 Approvals 区域批准。"
-				].join("\n") + extraInstruction
-			}
-		};
-	}
-
-	sendChatText(socket, request, `未知指令：\`${command}\`\n\n${createSlashHelpText()}`, session, mcpHost);
-	return { type: "handled" };
-}
-
 function createSafeMarkdownFence(content: string, language: string = "text"): string {
 	const backtickRuns: RegExpMatchArray | null = content.match(/`+/g);
 	const longestRun: number = backtickRuns?.reduce((maxLength: number, run: string): number => Math.max(maxLength, run.length), 0) ?? 0;
@@ -2297,6 +2109,15 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 			});
 			break;
 
+		case "command.list":
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: true,
+				result: createSlashCommandListResult()
+			});
+			break;
+
 		case "provider.configure":
 			session.deepseekApiKey = request.params.apiKey;
 			session.deepseekModel = request.params.model;
@@ -2447,7 +2268,13 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 
 		case "ai.chat": {
 			await waitForFullSessionLoad(session);
-			const slashCommandResult: SlashCommandResult = await handleSlashCommand(socket, request, session, mcpHost);
+			const slashCommandResult: SlashCommandResult = await handleSlashCommand({
+				socket,
+				request,
+				session,
+				mcpHost,
+				createSessionInfo: createSessionInfoResult
+			});
 			if (slashCommandResult.type === "handled") {
 				break;
 			}

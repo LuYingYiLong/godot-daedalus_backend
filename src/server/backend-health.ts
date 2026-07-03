@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { getBackendPortFromEnv, getBackendRuntimeMode, type BackendRuntimeMode } from "./backend-runtime.js";
 
 const BACKEND_HEALTH_NAME: string = "godot-daedalus-backend";
 const PACKAGE_ROOT: string = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -15,7 +16,8 @@ export type BackendHealthResult = {
 	name: string;
 	version: string;
 	pid: number;
-	mode: "development" | "runtime";
+	mode: BackendRuntimeMode;
+	port: number;
 };
 
 let cachedPackageVersion: string | null = null;
@@ -46,19 +48,12 @@ export function getBackendPackageVersion(): string {
 	return cachedPackageVersion;
 }
 
-export function getBackendRuntimeMode(): "development" | "runtime" {
-	if (process.env.NODE_ENV === "development" || process.env.npm_lifecycle_event === "dev") {
-		return "development";
-	}
-
-	return "runtime";
-}
-
 export function createBackendHealthResult(): BackendHealthResult {
 	return {
 		name: BACKEND_HEALTH_NAME,
 		version: getBackendPackageVersion(),
 		pid: process.pid,
-		mode: getBackendRuntimeMode()
+		mode: getBackendRuntimeMode(),
+		port: getBackendPortFromEnv()
 	};
 }

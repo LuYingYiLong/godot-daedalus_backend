@@ -107,7 +107,7 @@ export async function startBackend(port: number = DEFAULT_BACKEND_PORT): Promise
 		["--import", "tsx", entryPath],
 		{
 			cwd: packageRoot,
-			env: { ...process.env, PORT: String(port) },
+			env: { ...process.env, DAEDALUS_BACKEND_MODE: "runtime", PORT: String(port) },
 			detached: true,
 			windowsHide: true,
 			stdio: ["ignore", "pipe", "pipe"]
