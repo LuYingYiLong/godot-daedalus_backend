@@ -1,10 +1,11 @@
 {
   "name": "godot-daedalus_backend",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "TypeScript backend for the Godot Daedalus editor assistant plugin.",
   "main": "./src/main.ts",
   "bin": {
     "godot-daedalus-backend": "bin/godot-daedalus-backend.js",
+    "godot-daedalus-manager": "bin/godot-daedalus-manager.js",
     "godot-daedalus-mcp": "bin/godot-daedalus-mcp.js",
     "godot-daedalus-terminal-mcp": "bin/godot-daedalus-terminal-mcp.js"
   },

@@ -71,6 +71,29 @@ Then run:
 npm run daedalus
 ```
 
+## Daedalus Manager
+
+The package also ships `godot-daedalus-manager`, a JSON-first manager CLI used by the Godot plugin for stable install, update, launch, rollback, and diagnostics workflows.
+
+```powershell
+godot-daedalus-manager --json status --project "D:\GodotProjects\example"
+godot-daedalus-manager --json backend install
+godot-daedalus-manager --json backend start --port 38180
+godot-daedalus-manager --json backend stop
+godot-daedalus-manager --json backend rollback
+```
+
+Backend installs are versioned under `%APPDATA%\.godot_daedalus\backend\versions\<version>`. The manager switches `%APPDATA%\.godot_daedalus\backend\current.json` after a new version is staged, avoiding in-place edits of a running `node_modules` directory.
+
+Frontend plugin updates are staged rather than hot-applied. GitHub releases should provide:
+
+```text
+godot-daedalus-plugin-vX.Y.Z.zip
+godot-daedalus-plugin-vX.Y.Z.manifest.json
+```
+
+The zip must contain `addons/godot_daedalus/plugin.cfg`. The manifest must include `version`, `tag`, `sha256`, `assetName`, and optionally `minGodotVersion`.
+
 ## Run The Godot MCP Server
 
 The standalone Godot MCP server requires a Godot project path:
