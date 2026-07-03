@@ -1,6 +1,6 @@
 import WebSocket from "ws";
 
-const url: string = process.env.WS_URL ?? "ws://localhost:8080";
+const url: string = process.env.WS_URL ?? "ws://localhost:38180";
 const socket: WebSocket = new WebSocket(url);
 
 socket.on("open", (): void => {

@@ -1,7 +1,7 @@
 import { createServer } from "./server/websocket-server.js";
 import { McpHost } from "./mcp/mcp-host.js";
 
-const DEFAULT_PORT: number = 8080;
+const DEFAULT_PORT: number = 38180;
 const portText: string = process.env.PORT ?? String(DEFAULT_PORT);
 const port: number = Number.parseInt(portText, 10);
 

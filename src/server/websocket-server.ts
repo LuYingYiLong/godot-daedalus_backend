@@ -91,6 +91,7 @@ import {
 	serializePendingApprovalState,
 	type PendingApprovalState
 } from "../session/approval-persistence.js";
+import { createBackendHealthResult } from "./backend-health.js";
 
 const tokenCounterPromise: Promise<TokenCounter> = createTokenCounter();
 let sessionCompressorPromptCache: string | undefined;
@@ -2292,12 +2293,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 				type: "response",
 				id: request.id,
 				ok: true,
-				result: {
-					name: "godot-daedalus-backend",
-					version: "1.0.1",
-					pid: process.pid,
-					mode: process.env.NODE_ENV === "development" || process.env.npm_lifecycle_event === "dev" ? "development" : "runtime"
-				}
+				result: createBackendHealthResult()
 			});
 			break;
 

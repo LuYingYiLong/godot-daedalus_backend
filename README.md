@@ -40,7 +40,7 @@ npm install godot-daedalus_backend
 After installing the package, start it through the published bin command:
 
 ```powershell
-$env:PORT = "8080"
+$env:PORT = "38180"
 godot-daedalus-backend
 ```
 
