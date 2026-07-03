@@ -1,14 +1,32 @@
 {
   "name": "godot-daedalus_backend",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "TypeScript backend for the Godot Daedalus editor assistant plugin.",
-  "main": "index.js",
+  "main": "./src/main.ts",
+  "bin": {
+    "godot-daedalus-backend": "bin/godot-daedalus-backend.js",
+    "godot-daedalus-mcp": "bin/godot-daedalus-mcp.js",
+    "godot-daedalus-terminal-mcp": "bin/godot-daedalus-terminal-mcp.js"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "scripts/deepseek-tokenizer-server.py",
+    "README.md"
+  ],
   "scripts": {
+    "start": "tsx src/main.ts",
     "dev": "tsx src/main.ts",
     "ping": "tsx src/ping-client.ts",
     "mcp": "tsx src/mcp/godot-mcp-server.ts",
+    "terminal:mcp": "tsx src/mcp/terminal-mcp-server.ts",
     "typecheck": "tsc --noEmit",
-    "test": "npm run typecheck && node --import tsx --test \"tests/*.test.ts\""
+    "test": "npm run typecheck && node --import tsx --test \"tests/*.test.ts\"",
+    "pack:check": "npm pack --dry-run",
+    "prepublishOnly": "npm test"
+  },
+  "engines": {
+    "node": ">=20.19"
   },
   "keywords": [
     "godot",

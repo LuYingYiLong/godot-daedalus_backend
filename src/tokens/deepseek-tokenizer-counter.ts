@@ -1,11 +1,13 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { TokenCounter } from "./token-counter.js";
 import type { ChatMessage } from "../protocol/types.js";
 
-const TOKENIZER_SCRIPT: string = resolve("scripts/deepseek-tokenizer-server.py");
-const DEFAULT_TOKENIZER_DIR: string = resolve("scripts/tokenizer");
+const PACKAGE_ROOT: string = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const TOKENIZER_SCRIPT: string = resolve(PACKAGE_ROOT, "scripts/deepseek-tokenizer-server.py");
+const DEFAULT_TOKENIZER_DIR: string = resolve(PACKAGE_ROOT, "scripts/tokenizer");
 const START_TIMEOUT_MS: number = 30_000;
 const REQUEST_TIMEOUT_MS: number = 10_000;
 

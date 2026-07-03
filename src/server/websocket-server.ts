@@ -3899,6 +3899,10 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 export function createServer(port: number, mcpHost: McpHost): WebSocketServer {
 	const server: WebSocketServer = new WebSocketServer({ port });
 
+	server.on("headers", (headers: string[]): void => {
+		headers.push("X-Godot-Daedalus: websocket");
+	});
+
 	server.on("connection", (socket: WebSocket, request): void => {
 		const session: ClientSession = createClientSession(getDefaultWorkspace());
 		const remoteAddress: string = request.socket.remoteAddress ?? "unknown";
