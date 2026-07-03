@@ -36,6 +36,16 @@ export type StoredSessionEvent = {
 	createdAt: string;
 };
 
+export type StoredApprovalEvent = {
+	id: string;
+	schemaVersion: 1;
+	approvalId: string;
+	requestId: string;
+	event: string;
+	data: unknown;
+	createdAt: string;
+};
+
 export type StoredSession = {
 	metadata: SessionMetadata;
 	messages: StoredMessage[];
@@ -68,7 +78,7 @@ function assertSafeSessionId(sessionId: string): string {
 	return sessionId;
 }
 
-function getSessionDir(sessionId: string): string {
+export function getSessionDir(sessionId: string): string {
 	return join(SESSIONS_DIR, assertSafeSessionId(sessionId));
 }
 
@@ -119,6 +129,10 @@ function eventsPath(sessionId: string): string {
 	return join(getSessionDir(sessionId), "events.jsonl");
 }
 
+function approvalEventsPath(sessionId: string): string {
+	return join(getSessionDir(sessionId), "approval-events.jsonl");
+}
+
 export async function createSession(title: string, workspaceId?: string, skillId?: string): Promise<SessionMetadata> {
 	const timestamp: string = new Date().toISOString();
 	const dateStr: string = timestamp.slice(0, 10).replace(/-/g, "");
@@ -137,6 +151,7 @@ export async function createSession(title: string, workspaceId?: string, skillId
 	await writeFile(join(dir, "metadata.json"), JSON.stringify(metadata, null, 2), "utf8");
 	await writeFile(join(dir, "messages.jsonl"), "", "utf8");
 	await writeFile(join(dir, "events.jsonl"), "", "utf8");
+	await writeFile(join(dir, "approval-events.jsonl"), "", "utf8");
 
 	return metadata;
 }
@@ -451,6 +466,18 @@ export async function rewindSessionFromRequest(sessionId: string, requestId: str
 		keptEvents.map((event: StoredSessionEvent): string => JSON.stringify(event) + "\n").join(""),
 		"utf8"
 	);
+	try {
+		const rawApprovalEvents: string = await readFile(approvalEventsPath(sessionId), "utf8");
+		const keptApprovalEvents: StoredApprovalEvent[] = parseJsonLines<StoredApprovalEvent>(rawApprovalEvents)
+			.filter((event: StoredApprovalEvent): boolean => !removedRequestIds.has(event.requestId));
+		await writeFile(
+			approvalEventsPath(sessionId),
+			keptApprovalEvents.map((event: StoredApprovalEvent): string => JSON.stringify(event) + "\n").join(""),
+			"utf8"
+		);
+	} catch {
+		// Older sessions may not have approval persistence yet.
+	}
 
 	return keptMessages;
 }
@@ -475,6 +502,33 @@ export async function appendSessionEvent(sessionId: string, requestId: string, e
 	};
 	const line: string = JSON.stringify(record) + "\n";
 	await writeFile(eventFile, line, { encoding: "utf8", flag: "a" });
+}
+
+export async function appendApprovalEvent(sessionId: string, approvalId: string, requestId: string, event: string, data: unknown): Promise<void> {
+	await ensureSessionsDir();
+	const eventFile: string = approvalEventsPath(sessionId);
+	const timestamp: string = new Date().toISOString();
+	const record: StoredApprovalEvent = {
+		id: `approval-event-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+		schemaVersion: 1,
+		approvalId,
+		requestId,
+		event,
+		data,
+		createdAt: timestamp
+	};
+	const line: string = JSON.stringify(record) + "\n";
+	await writeFile(eventFile, line, { encoding: "utf8", flag: "a" });
+}
+
+export async function readApprovalEvents(sessionId: string): Promise<StoredApprovalEvent[]> {
+	await ensureSessionsDir();
+	try {
+		const rawLines: string = await readFile(approvalEventsPath(sessionId), "utf8");
+		return parseJsonLines<StoredApprovalEvent>(rawLines);
+	} catch {
+		return [];
+	}
 }
 
 export async function clearSessionEvents(sessionId: string): Promise<void> {

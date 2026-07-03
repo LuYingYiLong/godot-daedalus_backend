@@ -86,18 +86,38 @@ export function createPhaseParams(originalParams: AiChatParams, phase: WorkflowP
 }
 
 export function createPhasePrompt(phase: WorkflowPhase, skillPrompt: string, mcpSystemContext: string): string {
+	const toolGroupRules: string[] = createPhaseToolGroupRules(phase);
 	return [
 		"## 工作流阶段约束",
 		`- 当前阶段：${phase.title}（${phase.id}）`,
 		`- 阶段目标：${phase.instruction}`,
 		"- 只完成当前阶段，不要提前总结整个任务。",
 		"- 如果需要写入或执行审批工具，按现有审批流程暂停。",
+		...toolGroupRules,
 		"- 当前阶段实际可用工具：",
 		...phase.allowedTools.map((toolName: string): string => `  - ${toolName}`),
 		"",
 		skillPrompt,
 		mcpSystemContext
 	].filter((part: string): boolean => part.length > 0).join("\n\n");
+}
+
+function createPhaseToolGroupRules(phase: WorkflowPhase): string[] {
+	if (phase.toolGroup === "write") {
+		return [
+			"- 当前是写入/提案阶段：如果阶段目标是预览、提案或 diff，必须调用对应 propose_* 工具。",
+			"- 如果阶段目标是实际创建、修改、删除或应用补丁，必须调用实际写入工具；写入工具触发审批时按现有流程暂停。",
+			"- 不要只输出计划、意图或“稍后将执行”；后端会把未调用当前阶段所需工具的阶段视为未完成。"
+		];
+	}
+
+	if (phase.toolGroup === "verify") {
+		return [
+			"- 当前是验证阶段：优先实际调用诊断或验证工具，不要只描述验证计划。"
+		];
+	}
+
+	return [];
 }
 
 export function appendPhaseOutput(outputs: WorkflowPhaseOutput[], phase: WorkflowPhase, text: string): WorkflowPhaseOutput[] {

@@ -44,13 +44,21 @@ export const VERIFY_TOOLS: string[] = [
 ];
 
 export const WRITE_TOOLS: string[] = [
+	"mcp_godot_propose_create_text_file",
 	"mcp_godot_create_text_file",
+	"mcp_godot_propose_overwrite_text_file",
 	"mcp_godot_overwrite_text_file",
+	"mcp_godot_propose_replace_text_in_file",
 	"mcp_godot_replace_text_in_file",
+	"mcp_godot_propose_create_scene",
 	"mcp_godot_create_scene",
+	"mcp_godot_propose_add_node_to_scene",
 	"mcp_godot_add_node_to_scene",
+	"mcp_godot_propose_attach_script_to_node",
 	"mcp_godot_attach_script_to_node",
+	"mcp_godot_propose_connect_signal_in_scene",
 	"mcp_godot_connect_signal_in_scene",
+	"mcp_godot_propose_apply_scene_patch",
 	"mcp_godot_apply_scene_patch",
 	"mcp_godot_editor_apply_scene_patch",
 	"mcp_godot_propose_set_project_setting",

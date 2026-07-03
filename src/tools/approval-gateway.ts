@@ -20,7 +20,6 @@ export type ApprovalResult =
 
 export class ApprovalGateway {
 	private pendingApprovals: Map<string, PendingApproval> = new Map();
-	private approvalIdCounter: number = 0;
 	private mode: ApprovalMode;
 
 	constructor(mode: ApprovalMode = "manual") {
@@ -41,6 +40,26 @@ export class ApprovalGateway {
 
 	getPending(approvalId: string): PendingApproval | undefined {
 		return this.pendingApprovals.get(approvalId);
+	}
+
+	replacePending(pendingApprovals: PendingApproval[]): void {
+		this.pendingApprovals.clear();
+		for (const pendingApproval of pendingApprovals) {
+			this.pendingApprovals.set(pendingApproval.approvalId, pendingApproval);
+		}
+	}
+
+	upsertPending(pendingApproval: PendingApproval): void {
+		this.pendingApprovals.set(pendingApproval.approvalId, pendingApproval);
+	}
+
+	removePending(approvalId: string): PendingApproval | undefined {
+		const pending: PendingApproval | undefined = this.pendingApprovals.get(approvalId);
+		if (pending !== undefined) {
+			this.pendingApprovals.delete(approvalId);
+		}
+
+		return pending;
 	}
 
 	async evaluate(
@@ -67,8 +86,7 @@ export class ApprovalGateway {
 			}
 		}
 
-		const approvalId: string = `approval-${this.approvalIdCounter}`;
-		this.approvalIdCounter += 1;
+		const approvalId: string = `approval-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
 		const pending: PendingApproval = {
 			approvalId,
@@ -92,9 +110,8 @@ export class ApprovalGateway {
 			throw new Error(`Approval not found: ${approvalId}`);
 		}
 
-		this.pendingApprovals.delete(approvalId);
-
 		const result = await executeLlmToolWithIdempotency(mcpHost, pending.llmToolName, pending.args);
+		this.pendingApprovals.delete(approvalId);
 		return { content: result.content, cached: result.reused };
 	}
 

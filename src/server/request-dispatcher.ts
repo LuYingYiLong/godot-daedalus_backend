@@ -12,6 +12,7 @@ export type RequestHandler = (
 
 export const REQUEST_HANDLER_METHODS: readonly ClientRequest["method"][] = [
 	"ping",
+	"backend.health",
 	"provider.configure",
 	"provider.config.get",
 	"provider.config.set",

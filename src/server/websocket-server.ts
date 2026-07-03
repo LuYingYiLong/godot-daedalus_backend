@@ -10,7 +10,7 @@ import {
 	type DeepSeekAgentContinuation,
 	type DeepSeekAgentResult
 } from "../providers/deepseek-agent.js";
-import type { OnToolEvent } from "../tools/tool-dispatcher.js";
+import type { OnToolEvent, ToolEvent } from "../tools/tool-dispatcher.js";
 import { chatWithDeepSeek, createDeepSeekClient, type DeepSeekChatOptions } from "../providers/deepseek-client.js";
 import { McpHost } from "../mcp/mcp-host.js";
 import type { CustomMcpServerRuntimeStatus } from "../mcp/mcp-host.js";
@@ -44,7 +44,7 @@ import {
 	archiveSession, deleteArchivedSession, deleteSession, listArchivedSessions, renameSession, restoreArchivedSession,
 	rewindSessionFromRequest,
 	readSummary, writeSummary,
-	appendSessionEvent, clearSessionEvents,
+	appendSessionEvent, appendApprovalEvent, clearSessionEvents, readApprovalEvents,
 	openSessionRecentTimeline, openSessionTimelinePage,
 	type SessionMetadata,
 	type SessionSummary,
@@ -80,6 +80,17 @@ import {
 	type ThinkingEventBuffer
 } from "./client-session.js";
 import { assertKnownRequestMethod } from "./request-dispatcher.js";
+import { getToolPolicy } from "../tools/tool-policy.js";
+import type { PendingApproval } from "../tools/approval-gateway.js";
+import { getLlmToolExecutionIdentity } from "../tools/tool-idempotency.js";
+import { resolveToolMapping } from "../tools/llm-tools.js";
+import {
+	createPersistedApprovalRequestedData,
+	createRuntimePendingContinuation,
+	foldPendingApprovalStates,
+	serializePendingApprovalState,
+	type PendingApprovalState
+} from "../session/approval-persistence.js";
 
 const tokenCounterPromise: Promise<TokenCounter> = createTokenCounter();
 let sessionCompressorPromptCache: string | undefined;
@@ -97,6 +108,18 @@ const DEFAULT_NEXT_STEP_HINT_COUNT: number = 3;
 const MAX_NEXT_STEP_HINT_COUNT: number = 5;
 const MAX_NEXT_STEP_HINT_MESSAGE_CHARS: number = 320;
 const MAX_GUIDE_TEXT_CHARS: number = 4000;
+
+type WorkflowPhaseToolStats = {
+	toolEvents: number;
+	proposeToolEvents: number;
+	writeToolEvents: number;
+	approvalEvents: number;
+};
+
+type WorkflowPhaseRunResult = {
+	agentResult: DeepSeekAgentResult;
+	toolStats: WorkflowPhaseToolStats;
+};
 
 function fingerprintText(text: string): string {
 	if (text.length === 0) {
@@ -1085,6 +1108,73 @@ function createToolEventForwarder(socket: WebSocket, requestId: string, session:
 	};
 }
 
+function createEmptyWorkflowPhaseToolStats(): WorkflowPhaseToolStats {
+	return {
+		toolEvents: 0,
+		proposeToolEvents: 0,
+		writeToolEvents: 0,
+		approvalEvents: 0
+	};
+}
+
+function updateWorkflowPhaseToolStats(stats: WorkflowPhaseToolStats, event: ToolEvent): void {
+	if (!event.type.startsWith("tool.")) {
+		return;
+	}
+
+	stats.toolEvents += 1;
+
+	if (event.type === "tool.approval_required") {
+		stats.approvalEvents += 1;
+	}
+
+	const toolName: string | undefined = "toolName" in event ? event.toolName : undefined;
+	if (toolName === undefined) {
+		return;
+	}
+
+	const policy = getToolPolicy(toolName);
+	if (policy?.risk === "propose") {
+		stats.proposeToolEvents += 1;
+	}
+	if (policy?.risk === "write" || policy?.risk === "destructive") {
+		stats.writeToolEvents += 1;
+	}
+}
+
+function shouldRequireWorkflowWriteTool(phase: WorkflowPhase): boolean {
+	return phase.toolGroup === "write";
+}
+
+function didWorkflowWritePhaseExecute(phase: WorkflowPhase, stats: WorkflowPhaseToolStats): boolean {
+	if (stats.writeToolEvents > 0 || stats.approvalEvents > 0) {
+		return true;
+	}
+
+	return isWorkflowProposalPhase(phase) && stats.proposeToolEvents > 0;
+}
+
+function isWorkflowProposalPhase(phase: WorkflowPhase): boolean {
+	const text: string = `${phase.id}\n${phase.title}\n${phase.instruction}`.toLowerCase();
+	return text.includes("propose")
+		|| text.includes("preview")
+		|| text.includes("diff")
+		|| text.includes("预览")
+		|| text.includes("提案")
+		|| text.includes("方案");
+}
+
+function createWorkflowWriteGuardRetryMessage(phaseMessage: string): string {
+	return [
+		phaseMessage,
+		"",
+		"## 后端执行守卫",
+		"上一次候选回复没有实际调用当前阶段需要的 propose/write 工具，也没有触发审批，因此当前阶段还没有完成。",
+		"如果当前阶段是预览/提案，请调用允许的 propose_* 工具；如果当前阶段是实际修改，请调用写入工具并按审批流程暂停。",
+		"不要只描述计划、步骤或意图。"
+	].join("\n");
+}
+
 function createPendingAiContinuation(
 	params: AiChatParams,
 	options: DeepSeekChatOptions,
@@ -1115,6 +1205,155 @@ function createPendingAiContinuation(
 	}
 
 	return pendingContinuation;
+}
+
+async function persistApprovalRequested(
+	session: ClientSession,
+	mcpHost: McpHost,
+	approvalId: string,
+	pendingContinuation: PendingAiContinuation
+): Promise<void> {
+	if (session.sessionId === undefined) {
+		return;
+	}
+
+	const pendingApproval: PendingApproval | undefined = session.approvalGateway.getPending(approvalId);
+	if (pendingApproval === undefined) {
+		return;
+	}
+
+	await appendApprovalEvent(
+		session.sessionId,
+		approvalId,
+		pendingContinuation.requestId,
+		"requested",
+		createPersistedApprovalRequestedData(pendingApproval, pendingContinuation, mcpHost.getActiveWorkspaceId())
+	);
+}
+
+async function registerPendingApprovalContinuation(
+	session: ClientSession,
+	mcpHost: McpHost,
+	approvalId: string,
+	pendingContinuation: PendingAiContinuation
+): Promise<void> {
+	session.pendingAiContinuations.set(approvalId, pendingContinuation);
+	await persistApprovalRequested(session, mcpHost, approvalId, pendingContinuation);
+}
+
+async function loadHydratedPendingApprovalStates(
+	session: ClientSession,
+	apiKey?: string | undefined
+): Promise<{ states: PendingApprovalState[]; hadEvents: boolean }> {
+	if (session.sessionId === undefined) {
+		return {
+			states: createMemoryPendingApprovalStates(session),
+			hadEvents: false
+		};
+	}
+
+	const approvalEvents = await readApprovalEvents(session.sessionId);
+	if (approvalEvents.length === 0) {
+		return {
+			states: createMemoryPendingApprovalStates(session),
+			hadEvents: false
+		};
+	}
+
+	const states: PendingApprovalState[] = foldPendingApprovalStates(approvalEvents);
+	session.approvalGateway.replacePending(states.map((state: PendingApprovalState): PendingApproval => state.approval));
+	const pendingIds: Set<string> = new Set(states.map((state: PendingApprovalState): string => state.approval.approvalId));
+	for (const approvalId of session.pendingAiContinuations.keys()) {
+		if (!pendingIds.has(approvalId)) {
+			session.pendingAiContinuations.delete(approvalId);
+		}
+	}
+
+	if (apiKey !== undefined) {
+		for (const state of states) {
+			if (state.continuation !== undefined) {
+				session.pendingAiContinuations.set(state.approval.approvalId, createRuntimePendingContinuation(state.continuation, apiKey));
+			}
+		}
+	}
+
+	return {
+		states,
+		hadEvents: true
+	};
+}
+
+function createMemoryPendingApprovalStates(session: ClientSession): PendingApprovalState[] {
+	return session.approvalGateway.listPending().map((pendingApproval: PendingApproval): PendingApprovalState => {
+		const timestamp: string = new Date(pendingApproval.createdAt).toISOString();
+		return {
+			approval: pendingApproval,
+			status: "pending",
+			restored: false,
+			interrupted: false,
+			requestId: "",
+			createdAt: timestamp,
+			updatedAt: timestamp
+		};
+	});
+}
+
+function findPendingApprovalState(states: PendingApprovalState[], approvalId: string): PendingApprovalState | undefined {
+	return states.find((state: PendingApprovalState): boolean => state.approval.approvalId === approvalId);
+}
+
+async function restorePendingContinuationForApproval(
+	session: ClientSession,
+	state: PendingApprovalState | undefined,
+	apiKey: string | undefined
+): Promise<PendingAiContinuation | undefined> {
+	const approvalId: string | undefined = state?.approval.approvalId;
+	if (approvalId !== undefined) {
+		const existingContinuation: PendingAiContinuation | undefined = session.pendingAiContinuations.get(approvalId);
+		if (existingContinuation !== undefined) {
+			return existingContinuation;
+		}
+	}
+
+	if (state?.continuation === undefined || apiKey === undefined) {
+		return undefined;
+	}
+
+	const restoredContinuation: PendingAiContinuation = createRuntimePendingContinuation(state.continuation, apiKey);
+	session.pendingAiContinuations.set(state.approval.approvalId, restoredContinuation);
+	return restoredContinuation;
+}
+
+async function validatePendingApprovalBeforeExecution(
+	session: ClientSession,
+	mcpHost: McpHost,
+	pendingApproval: PendingApproval
+): Promise<string | null> {
+	const decision = await session.approvalGateway.evaluate(pendingApproval.llmToolName, pendingApproval.args, pendingApproval.toolCallId);
+	if (decision.action === "deny") {
+		return decision.reason;
+	}
+
+	try {
+		resolveToolMapping(pendingApproval.llmToolName);
+	} catch (error: unknown) {
+		return error instanceof Error ? error.message : "审批工具当前不可用";
+	}
+
+	const currentIdentity = getLlmToolExecutionIdentity(
+		pendingApproval.llmToolName,
+		pendingApproval.args,
+		mcpHost.getActiveWorkspaceId()
+	);
+	if (
+		pendingApproval.executionFingerprint !== undefined
+		&& currentIdentity !== undefined
+		&& currentIdentity.fingerprint !== pendingApproval.executionFingerprint
+	) {
+		return "当前 workspace 与创建审批时不一致，不能执行该审批。";
+	}
+
+	return null;
 }
 
 function sendAiPaused(socket: WebSocket, requestId: string, agentResult: Extract<DeepSeekAgentResult, { status: "approval_required" }>): void {
@@ -1152,7 +1391,7 @@ async function sendContinuedAgentResult(
 			pendingContinuation.stream,
 			pendingContinuation.workflowState
 		);
-		session.pendingAiContinuations.set(agentResult.approvalId, nextPendingContinuation);
+		await registerPendingApprovalContinuation(session, mcpHost, agentResult.approvalId, nextPendingContinuation);
 		sendAiPaused(socket, requestId, agentResult);
 		return;
 	}
@@ -1223,11 +1462,20 @@ async function runWorkflowPhase(
 	persistRequestId: string,
 	streamPhase: boolean,
 	abortSignal?: AbortSignal | undefined
-): Promise<DeepSeekAgentResult> {
-	const onToolEvent: OnToolEvent = createToolEventForwarder(socket, requestId, session, persistRequestId);
-	return streamPhase
+): Promise<WorkflowPhaseRunResult> {
+	const toolStats: WorkflowPhaseToolStats = createEmptyWorkflowPhaseToolStats();
+	const forwardToolEvent: OnToolEvent = createToolEventForwarder(socket, requestId, session, persistRequestId);
+	const onToolEvent: OnToolEvent = (event: ToolEvent): void => {
+		updateWorkflowPhaseToolStats(toolStats, event);
+		forwardToolEvent(event);
+	};
+	const agentResult: DeepSeekAgentResult = streamPhase
 		? await runDeepSeekAgentStreaming(params, options, history, fullSystemPrompt, mcpHost, session.approvalGateway, phase.allowedTools, onToolEvent, abortSignal)
 		: await runDeepSeekAgent(params, options, history, fullSystemPrompt, mcpHost, session.approvalGateway, phase.allowedTools, onToolEvent, abortSignal);
+	return {
+		agentResult,
+		toolStats
+	};
 }
 
 async function createWorkflowPhasePrompt(
@@ -1336,21 +1584,59 @@ async function continueWorkflowExecution(
 		].filter((section: string): boolean => section.length > 0).join("\n\n");
 		const fullSystemPrompt: string = await createWorkflowPhasePrompt(phase, phaseParams, mcpHost, session, requestId, guidePromptSection);
 		let agentResult: DeepSeekAgentResult;
+		let phaseToolStats: WorkflowPhaseToolStats = createEmptyWorkflowPhaseToolStats();
 		try {
-			agentResult = agentResultOverride ?? await runWorkflowPhase(
-				socket,
-				phaseParams,
-				options,
-				state.history,
-				fullSystemPrompt,
-				phase,
-				mcpHost,
-				session,
-				requestId,
-				persistRequestId,
-				streamPhase,
-				abortSignal
-			);
+			if (agentResultOverride !== undefined) {
+				agentResult = agentResultOverride;
+				phaseToolStats.approvalEvents = 1;
+				phaseToolStats.writeToolEvents = 1;
+			} else {
+				let phaseRunResult: WorkflowPhaseRunResult = await runWorkflowPhase(
+					socket,
+					phaseParams,
+					options,
+					state.history,
+					fullSystemPrompt,
+					phase,
+					mcpHost,
+					session,
+					requestId,
+					persistRequestId,
+					streamPhase,
+					abortSignal
+				);
+				agentResult = phaseRunResult.agentResult;
+				phaseToolStats = phaseRunResult.toolStats;
+
+				if (
+					agentResult.status === "completed"
+					&& shouldRequireWorkflowWriteTool(phase)
+					&& !didWorkflowWritePhaseExecute(phase, phaseToolStats)
+				) {
+					const retryPhaseParams: AiChatParams = createPhaseParams(
+						state.originalParams,
+						phase,
+						createWorkflowWriteGuardRetryMessage(phaseMessage),
+						false
+					);
+					phaseRunResult = await runWorkflowPhase(
+						socket,
+						retryPhaseParams,
+						options,
+						state.history,
+						fullSystemPrompt,
+						phase,
+						mcpHost,
+						session,
+						requestId,
+						persistRequestId,
+						false,
+						abortSignal
+					);
+					agentResult = phaseRunResult.agentResult;
+					phaseToolStats = phaseRunResult.toolStats;
+				}
+			}
 		} catch (error: unknown) {
 			throw new WorkflowExecutionError(error instanceof Error ? error.message : "Workflow phase failed", plan, error);
 		}
@@ -1359,7 +1645,7 @@ async function continueWorkflowExecution(
 		if (agentResult.status === "approval_required") {
 			plan = updateWorkflowPhaseStatus(plan, phase.id, "paused");
 			const pausedState: WorkflowRunState = { ...state, plan, phaseIndex: index, phaseOutputs };
-			session.pendingAiContinuations.set(agentResult.approvalId, createWorkflowPendingContinuation(
+			const pendingContinuation: PendingAiContinuation = createWorkflowPendingContinuation(
 				phaseParams,
 				options,
 				agentResult,
@@ -1368,10 +1654,20 @@ async function continueWorkflowExecution(
 				persistRequestId,
 				userCreatedAt,
 				streamPhase
-			));
+			);
+			await registerPendingApprovalContinuation(session, mcpHost, agentResult.approvalId, pendingContinuation);
 			sendWorkflowTodoSnapshot(socket, requestId, session, plan, persistRequestId);
 			sendAiPaused(socket, requestId, agentResult);
 			return;
+		}
+
+		if (shouldRequireWorkflowWriteTool(phase) && !didWorkflowWritePhaseExecute(phase, phaseToolStats)) {
+			const guardMessage: string = `写入阶段「${phase.title}」没有实际调用写入工具或触发审批，已阻止将该 Todo 标记为完成。`;
+			throw new WorkflowExecutionError(
+				guardMessage,
+				plan,
+				new Error(guardMessage)
+			);
 		}
 
 		phaseOutputs = appendPhaseOutput(phaseOutputs, phase, agentResult.text);
@@ -1991,6 +2287,20 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 			});
 			break;
 
+		case "backend.health":
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: true,
+				result: {
+					name: "godot-daedalus-backend",
+					version: "1.0.1",
+					pid: process.pid,
+					mode: process.env.NODE_ENV === "development" || process.env.npm_lifecycle_event === "dev" ? "development" : "runtime"
+				}
+			});
+			break;
+
 		case "provider.configure":
 			session.deepseekApiKey = request.params.apiKey;
 			session.deepseekModel = request.params.model;
@@ -2259,7 +2569,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 					const agentResult: DeepSeekAgentResult = await runDeepSeekAgentStreaming(params, options, history, fullSystemPrompt, mcpHost, session.approvalGateway, allowedToolNames, onToolEvent, abortController.signal);
 
 					if (agentResult.status === "approval_required") {
-						session.pendingAiContinuations.set(agentResult.approvalId, createPendingAiContinuation(
+						const pendingContinuation: PendingAiContinuation = createPendingAiContinuation(
 							params,
 							options,
 							agentResult.continuation,
@@ -2268,7 +2578,8 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 							request.id,
 							turnStartedAt,
 							true
-						));
+						);
+						await registerPendingApprovalContinuation(session, mcpHost, agentResult.approvalId, pendingContinuation);
 						sendAiPaused(socket, request.id, agentResult);
 						break;
 					}
@@ -2294,7 +2605,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 					const agentResult: DeepSeekAgentResult = await runDeepSeekAgent(params, options, history, fullSystemPrompt, mcpHost, session.approvalGateway, allowedToolNames, onToolEvent, abortController.signal);
 
 					if (agentResult.status === "approval_required") {
-						session.pendingAiContinuations.set(agentResult.approvalId, createPendingAiContinuation(
+						const pendingContinuation: PendingAiContinuation = createPendingAiContinuation(
 							params,
 							options,
 							agentResult.continuation,
@@ -2303,7 +2614,8 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 							request.id,
 							turnStartedAt,
 							false
-						));
+						);
+						await registerPendingApprovalContinuation(session, mcpHost, agentResult.approvalId, pendingContinuation);
 						sendJson(socket, {
 							type: "response",
 							id: request.id,
@@ -2495,6 +2807,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 
 		case "session.info":
 			await waitForFullSessionLoad(session);
+			await loadHydratedPendingApprovalStates(session);
 			sendJson(socket, {
 				type: "response",
 				id: request.id,
@@ -3556,16 +3869,19 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 		}
 
 		case "approval.list":
+		{
+			const hydrated = await loadHydratedPendingApprovalStates(session);
 			sendJson(socket, {
 				type: "response",
 				id: request.id,
 				ok: true,
 				result: {
-					pending: session.approvalGateway.listPending(),
+					pending: hydrated.states.map(serializePendingApprovalState),
 					mode: session.approvalGateway.getMode()
 				}
 			});
 			break;
+		}
 
 		case "approval.mode.set":
 			session.approvalGateway.setMode(request.params.mode);
@@ -3584,6 +3900,8 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 			const abortController: AbortController = new AbortController();
 			session.activeAbortControllers.set(request.id, abortController);
 			try {
+				const apiKey: string | undefined = await ensureProviderConfigured(session);
+				const hydrated = await loadHydratedPendingApprovalStates(session, apiKey);
 				const pending = session.approvalGateway.getPending(request.params.approvalId);
 				if (!pending) {
 					sendJson(socket, {
@@ -3595,8 +3913,54 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 					break;
 				}
 
-				const pendingContinuation: PendingAiContinuation | undefined = session.pendingAiContinuations.get(request.params.approvalId);
+				const validationError: string | null = await validatePendingApprovalBeforeExecution(session, mcpHost, pending);
+				if (validationError !== null) {
+					if (session.sessionId !== undefined) {
+						await appendApprovalEvent(session.sessionId, pending.approvalId, findPendingApprovalState(hydrated.states, pending.approvalId)?.requestId ?? request.id, "failed", {
+							message: validationError
+						});
+					}
+					sendJson(socket, {
+						type: "response",
+						id: request.id,
+						ok: false,
+						error: { code: "approval_validation_failed", message: validationError }
+					});
+					break;
+				}
+
+				const pendingState: PendingApprovalState | undefined = findPendingApprovalState(hydrated.states, request.params.approvalId);
+				const pendingContinuation: PendingAiContinuation | undefined = await restorePendingContinuationForApproval(session, pendingState, apiKey);
+				if (pendingState?.continuation !== undefined && pendingContinuation === undefined) {
+					const message: string = "当前没有可用的 DeepSeek API key，无法恢复审批后的 LLM continuation。请先配置 provider 后重试。";
+					if (session.sessionId !== undefined) {
+						await appendApprovalEvent(session.sessionId, pending.approvalId, pendingState.requestId, "failed", { message });
+					}
+					sendJson(socket, {
+						type: "response",
+						id: request.id,
+						ok: false,
+						error: { code: "provider_not_configured", message }
+					});
+					break;
+				}
+				const approvalPersistRequestId: string = pendingContinuation?.requestId ?? pendingState?.requestId ?? request.id;
+				if (session.sessionId !== undefined) {
+					await appendApprovalEvent(session.sessionId, pending.approvalId, approvalPersistRequestId, "approved", {
+						approvedAt: new Date().toISOString()
+					});
+					await appendApprovalEvent(session.sessionId, pending.approvalId, approvalPersistRequestId, "executing", {
+						startedAt: new Date().toISOString()
+					});
+				}
 				const result = await session.approvalGateway.approve(request.params.approvalId, mcpHost);
+				if (session.sessionId !== undefined) {
+					await appendApprovalEvent(session.sessionId, pending.approvalId, approvalPersistRequestId, "executed", {
+						resultChars: result.content.length,
+						cached: result.cached === true,
+						executedAt: new Date().toISOString()
+					});
+				}
 
 				sendJson(socket, {
 					type: "response",
@@ -3693,6 +4057,11 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 					sendAiCancelled(socket, request.id);
 					break;
 				}
+				if (session.sessionId !== undefined) {
+					await appendApprovalEvent(session.sessionId, request.params.approvalId, request.id, "failed", {
+						message: error instanceof Error ? error.message : "Approval failed"
+					});
+				}
 				sendJson(socket, {
 					type: "response",
 					id: request.id,
@@ -3710,7 +4079,15 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 
 		case "approval.reject": {
 			try {
+				const hydrated = await loadHydratedPendingApprovalStates(session);
+				const pendingState: PendingApprovalState | undefined = findPendingApprovalState(hydrated.states, request.params.approvalId);
 				const rejected = session.approvalGateway.reject(request.params.approvalId);
+				session.pendingAiContinuations.delete(request.params.approvalId);
+				if (session.sessionId !== undefined) {
+					await appendApprovalEvent(session.sessionId, request.params.approvalId, pendingState?.requestId ?? request.id, "rejected", {
+						rejectedAt: new Date().toISOString()
+					});
+				}
 				sendJson(socket, {
 					type: "response",
 					id: request.id,

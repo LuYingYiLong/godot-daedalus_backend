@@ -46,6 +46,8 @@ test("session store creates, opens, pages, rewinds, archives, restores, and dele
 		await store.appendSessionEvent(metadata.id, "req-1", "tool.call", { toolName: "mcp_godot_read_text_file" });
 		await store.appendMessage(metadata.id, secondMessage);
 		await store.appendSessionEvent(metadata.id, "req-2", "workflow.todo.updated", { phases: [] });
+		await store.appendApprovalEvent(metadata.id, "approval-req-2", "req-2", "requested", { approvalId: "approval-req-2" });
+		assert.equal((await store.readApprovalEvents(metadata.id)).length, 1);
 
 		const opened = await store.openSession(metadata.id);
 		assert.equal(opened.messages.length, 2);
@@ -65,6 +67,7 @@ test("session store creates, opens, pages, rewinds, archives, restores, and dele
 		assert.equal(rewound.length, 1);
 		assert.equal(rewound[0]?.requestId, "req-1");
 		assert.equal((await store.openSession(metadata.id)).events.length, 1);
+		assert.equal((await store.readApprovalEvents(metadata.id)).length, 0);
 
 		const renamed = await store.renameSession(metadata.id, "Renamed");
 		assert.equal(renamed.title, "Renamed");
