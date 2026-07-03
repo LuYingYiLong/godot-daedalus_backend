@@ -7,6 +7,7 @@ import { FRONTEND_ADDON_DIR_NAME, FRONTEND_REPOSITORY, type FrontendManifest, ty
 import { ManagerError } from "./manager-error.js";
 import { assertInside, getManagerPaths, resolveProjectPluginDir, type ManagerPaths } from "./paths.js";
 import { readJsonFile, writeJsonFile } from "./json-file.js";
+import { getCachedOrFetchLatestVersion, type LatestVersionOptions } from "./latest-cache.js";
 import { runCommand } from "./process.js";
 
 export async function getInstalledFrontendVersion(projectPath: string | undefined): Promise<string | null> {
@@ -21,7 +22,11 @@ export async function getInstalledFrontendVersion(projectPath: string | undefine
 	return match?.[1] ?? null;
 }
 
-export async function getLatestFrontendVersion(): Promise<string | null> {
+export async function getLatestFrontendVersion(options: LatestVersionOptions = {}): Promise<string | null> {
+	return getCachedOrFetchLatestVersion("frontend", fetchLatestFrontendVersion, options);
+}
+
+async function fetchLatestFrontendVersion(): Promise<string | null> {
 	const response: Response = await fetch(`https://api.github.com/repos/${FRONTEND_REPOSITORY}/releases/latest`, {
 		headers: { "User-Agent": "godot-daedalus-manager" }
 	});

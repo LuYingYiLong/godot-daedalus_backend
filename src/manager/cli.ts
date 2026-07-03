@@ -30,13 +30,13 @@ async function handleCommand(args: ParsedArgs): Promise<ManagerResult> {
 	}
 
 	if (first === "status") {
-		return { ok: true, status: await readStatus(getOptionalStringOption(args, "project")) };
+		return { ok: true, status: await readStatus(getOptionalStringOption(args, "project"), { includeLatest: !hasFlag(args, "no-latest") }) };
 	}
 
 	if (first === "doctor") {
 		return {
 			ok: true,
-			status: await readStatus(getOptionalStringOption(args, "project")),
+			status: await readStatus(getOptionalStringOption(args, "project"), { includeLatest: !hasFlag(args, "no-latest") }),
 			node: process.version,
 			platform: process.platform
 		};
@@ -65,7 +65,7 @@ async function handleCommand(args: ParsedArgs): Promise<ManagerResult> {
 
 	if (first === "frontend") {
 		if (second === "check") {
-			return { ok: true, status: (await readStatus(getOptionalStringOption(args, "project"))).frontend };
+			return { ok: true, status: (await readStatus(getOptionalStringOption(args, "project"), { includeLatest: !hasFlag(args, "no-latest") })).frontend };
 		}
 		if (second === "download" || second === "stage") {
 			const version: string | null = getStringOption(args, "version") ?? await getLatestFrontendVersion();
@@ -144,6 +144,10 @@ function getNumberOption(args: ParsedArgs, name: string): number | null {
 	return parsed;
 }
 
+function hasFlag(args: ParsedArgs, name: string): boolean {
+	return args.options.get(name) === true;
+}
+
 function writeResult(result: ManagerResult, json: boolean): void {
 	if (json) {
 		console.log(JSON.stringify(result, null, 2));
@@ -165,14 +169,14 @@ function getHelpText(): string {
 		"godot-daedalus-manager [--json] <command>",
 		"",
 		"Commands:",
-		"  status [--project <path>]",
-		"  doctor [--project <path>]",
+		"  status [--project <path>] [--no-latest]",
+		"  doctor [--project <path>] [--no-latest]",
 		"  backend install|update [--version <version>]",
 		"  backend start [--port <port>]",
 		"  backend stop",
 		"  backend health [--url <ws://...>]",
 		"  backend rollback",
-		"  frontend check [--project <path>]",
+		"  frontend check [--project <path>] [--no-latest]",
 		"  frontend download|stage [--version <version>]",
 		"  frontend apply --project <path>",
 		"  frontend rollback --project <path>"

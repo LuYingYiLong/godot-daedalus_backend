@@ -11,6 +11,7 @@ export type ManagerPaths = {
 	backendRuntimeDir: string;
 	backendPidPath: string;
 	logsDir: string;
+	updateCachePath: string;
 	frontendDir: string;
 	frontendDownloadsDir: string;
 	frontendStagedDir: string;
@@ -38,6 +39,7 @@ export function getManagerPaths(): ManagerPaths {
 		backendRuntimeDir: join(backendDir, "runtime"),
 		backendPidPath: join(backendDir, "runtime", "backend.pid.json"),
 		logsDir: join(appDir, "logs"),
+		updateCachePath: join(appDir, "update-cache.json"),
 		frontendDir,
 		frontendDownloadsDir: join(frontendDir, "downloads"),
 		frontendStagedDir: join(frontendDir, "staged"),

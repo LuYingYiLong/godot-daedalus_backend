@@ -10,6 +10,7 @@ import { validateFrontendManifest } from "../src/manager/frontend.js";
 import { readJsonFile, writeJsonFile } from "../src/manager/json-file.js";
 import type { BackendCurrentFile } from "../src/manager/types.js";
 import { installBackend, rollbackBackend } from "../src/manager/backend.js";
+import { getCachedOrFetchLatestVersion } from "../src/manager/latest-cache.js";
 
 test("manager semver parser compares stable versions", (): void => {
 	assert.deepEqual(parseSemver("v1.2.3"), [1, 2, 3]);
@@ -67,6 +68,55 @@ test("manager json file writes atomically readable current metadata", async (): 
 	assert.deepEqual(await readJsonFile<BackendCurrentFile>(filePath), value);
 	assert.equal(await readFile(filePath, "utf8"), `${JSON.stringify(value, null, 2)}\n`);
 	await rm(root, { recursive: true, force: true });
+});
+
+test("manager latest cache avoids repeated network checks", async (): Promise<void> => {
+	const root: string = await mkdtemp(join(tmpdir(), "daedalus-manager-cache-"));
+	const previousAppDir: string | undefined = process.env.GODOT_DAEDALUS_APP_DIR;
+	process.env.GODOT_DAEDALUS_APP_DIR = join(root, "app");
+	try {
+		let fetchCount: number = 0;
+		const firstVersion: string | null = await getCachedOrFetchLatestVersion("frontend", async (): Promise<string> => {
+			fetchCount += 1;
+			return "1.0.0";
+		});
+		const secondVersion: string | null = await getCachedOrFetchLatestVersion("frontend", async (): Promise<string> => {
+			fetchCount += 1;
+			return "1.0.1";
+		});
+		assert.equal(firstVersion, "1.0.0");
+		assert.equal(secondVersion, "1.0.0");
+		assert.equal(fetchCount, 1);
+	} finally {
+		if (previousAppDir === undefined) {
+			delete process.env.GODOT_DAEDALUS_APP_DIR;
+		} else {
+			process.env.GODOT_DAEDALUS_APP_DIR = previousAppDir;
+		}
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("manager latest cache can skip network entirely", async (): Promise<void> => {
+	const root: string = await mkdtemp(join(tmpdir(), "daedalus-manager-cache-skip-"));
+	const previousAppDir: string | undefined = process.env.GODOT_DAEDALUS_APP_DIR;
+	process.env.GODOT_DAEDALUS_APP_DIR = join(root, "app");
+	try {
+		let fetchCount: number = 0;
+		const version: string | null = await getCachedOrFetchLatestVersion("backend", async (): Promise<string> => {
+			fetchCount += 1;
+			return "1.0.4";
+		}, { skipNetwork: true });
+		assert.equal(version, null);
+		assert.equal(fetchCount, 0);
+	} finally {
+		if (previousAppDir === undefined) {
+			delete process.env.GODOT_DAEDALUS_APP_DIR;
+		} else {
+			process.env.GODOT_DAEDALUS_APP_DIR = previousAppDir;
+		}
+		await rm(root, { recursive: true, force: true });
+	}
 });
 
 test("frontend package fixture has addon layout", async (): Promise<void> => {

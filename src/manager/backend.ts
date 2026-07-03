@@ -7,11 +7,16 @@ import { BACKEND_BIN_NAME, BACKEND_PACKAGE_NAME, DEFAULT_BACKEND_PORT, type Back
 import { ManagerError } from "./manager-error.js";
 import { assertInside, getManagerPaths, type ManagerPaths } from "./paths.js";
 import { readJsonFile, writeJsonFile } from "./json-file.js";
+import { getCachedOrFetchLatestVersion, type LatestVersionOptions } from "./latest-cache.js";
 import { runCommand, stopProcess, isProcessAlive, type CommandResult } from "./process.js";
 
 const MAX_BACKEND_VERSIONS: number = 3;
 
-export async function getLatestBackendVersion(): Promise<string | null> {
+export async function getLatestBackendVersion(options: LatestVersionOptions = {}): Promise<string | null> {
+	return getCachedOrFetchLatestVersion("backend", fetchLatestBackendVersion, options);
+}
+
+async function fetchLatestBackendVersion(): Promise<string | null> {
 	const result: CommandResult = await runCommand(getNpmCommand(), ["view", BACKEND_PACKAGE_NAME, "version"], { timeoutMs: 20000 });
 	if (result.exitCode !== 0) {
 		return null;
@@ -313,7 +318,7 @@ export async function getRunningBackend(): Promise<BackendPidFile | null> {
 }
 
 async function requireLatestBackendVersion(): Promise<string> {
-	const latest: string | null = await getLatestBackendVersion();
+	const latest: string | null = await getLatestBackendVersion({ forceRefresh: true });
 	if (latest === null) {
 		throw new ManagerError({
 			code: "network_error",
