@@ -1,6 +1,6 @@
-import type { AiChatParams, ChatMessage, ModelProfile } from "../protocol/types.js";
+import type { AiChatParams, ChatMessage, ModelProfile, ProviderId } from "../protocol/types.js";
 import type { DeepSeekAgentContinuation } from "../providers/deepseek-agent.js";
-import type { DeepSeekChatOptions } from "../providers/deepseek-client.js";
+import type { ProviderChatOptions } from "../providers/deepseek-client.js";
 import type { SessionMetadata } from "../session/session-store.js";
 import { ApprovalGateway } from "../tools/approval-gateway.js";
 import type { SkillId } from "../skills/registry.js";
@@ -25,7 +25,7 @@ export type ThinkingEventBuffer = {
 
 export type PendingAiContinuation = {
 	params: AiChatParams;
-	options: DeepSeekChatOptions;
+	options: ProviderChatOptions;
 	continuation: DeepSeekAgentContinuation;
 	allowedToolNames?: readonly string[] | undefined;
 	userMessage: string;
@@ -37,9 +37,10 @@ export type PendingAiContinuation = {
 };
 
 export type ClientSession = {
-	deepseekApiKey?: string | undefined;
-	deepseekModel?: string | undefined;
-	deepseekBaseUrl?: string | undefined;
+	activeProvider: ProviderId;
+	providerApiKey?: string | undefined;
+	providerModel?: string | undefined;
+	providerBaseUrl?: string | undefined;
 	godotExecutablePath?: string | undefined;
 	godotProjectPath?: string | undefined;
 	messages: ChatMessage[];
@@ -64,6 +65,7 @@ export type ClientSession = {
 
 export function createClientSession(defaultWorkspace: WorkspaceConfig | undefined): ClientSession {
 	return {
+		activeProvider: "deepseek",
 		messages: [],
 		modelProfile: getDefaultModelProfile(),
 		approvalGateway: new ApprovalGateway(),

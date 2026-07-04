@@ -52,6 +52,7 @@ function createPendingContinuation(): PendingAiContinuation {
 			}
 		},
 		options: {
+			provider: "deepseek",
 			apiKey: "secret-api-key",
 			model: "deepseek-v4-flash",
 			baseUrl: "https://api.deepseek.com"
@@ -116,5 +117,6 @@ test("approval persistence folds pending, interrupted, and executed states", ():
 	assert.ok(requestedData.continuation !== undefined);
 	const runtimeContinuation = createRuntimePendingContinuation(requestedData.continuation, "new-api-key");
 	assert.equal(runtimeContinuation.options.apiKey, "new-api-key");
+	assert.equal(runtimeContinuation.options.provider, "deepseek");
 	assert.equal(runtimeContinuation.options.model, "deepseek-v4-flash");
 });

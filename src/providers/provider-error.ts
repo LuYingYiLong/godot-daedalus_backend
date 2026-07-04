@@ -15,7 +15,7 @@ function getErrorStatus(error: unknown): number | undefined {
 	return typeof status === "number" ? status : undefined;
 }
 
-export function getProviderErrorMessage(error: unknown, fallback: string = "DeepSeek API call failed"): string {
+export function getProviderErrorMessage(error: unknown, fallback: string = "Provider API call failed"): string {
 	if (error instanceof Error && error.message.length > 0) {
 		return error.message;
 	}
@@ -53,7 +53,7 @@ export function createProviderStatusEvent(error: unknown): Record<string, string
 		return {
 			status: "error",
 			title: "模型额度不足",
-			details: "DeepSeek 返回额度或余额不足，当前回复已停止。请检查账户余额、套餐额度或切换可用的 API Key 后重试。",
+			details: "模型供应商返回额度或余额不足，当前回复已停止。请检查账户余额、套餐额度或切换可用的 API Key 后重试。",
 			actionLabel: "Open settings",
 			actionId: "provider-settings",
 			code: info.code

@@ -6,22 +6,31 @@ import type {
 	ChatCompletionCreateParamsStreaming,
 	ChatCompletionMessageParam
 } from "openai/resources/chat/completions";
-import type { AiChatParams, ChatMessage } from "../protocol/types.js";
+import type { AiChatParams, ChatMessage, ProviderId } from "../protocol/types.js";
+import { getProviderDefaultBaseUrl, getProviderDefaultModel } from "./provider-registry.js";
 
-const DEFAULT_BASE_URL = "https://api.deepseek.com";
-const DEFAULT_MODEL = "deepseek-v4-flash";
-
-export type DeepSeekChatOptions = {
+export type ProviderChatOptions = {
+	provider: ProviderId;
 	apiKey: string;
 	baseUrl?: string | undefined;
 	model?: string | undefined;
 };
 
-export function createDeepSeekClient(options: DeepSeekChatOptions): OpenAI {
+export type DeepSeekChatOptions = ProviderChatOptions;
+
+export function createProviderClient(options: ProviderChatOptions): OpenAI {
 	return new OpenAI({
-		baseURL: options.baseUrl ?? process.env.DEEPSEEK_BASE_URL ?? DEFAULT_BASE_URL,
+		baseURL: options.baseUrl ?? getProviderDefaultBaseUrl(options.provider),
 		apiKey: options.apiKey
 	});
+}
+
+export function createDeepSeekClient(options: DeepSeekChatOptions): OpenAI {
+	return createProviderClient(options);
+}
+
+export function resolveChatModel(options: ProviderChatOptions): string {
+	return options.model ?? getProviderDefaultModel(options.provider);
 }
 
 export function createMessages(params: AiChatParams, history: ChatMessage[], systemPrompt: string): ChatCompletionMessageParam[] {
@@ -41,9 +50,17 @@ export function createMessages(params: AiChatParams, history: ChatMessage[], sys
 	];
 }
 
-export function applyChatOptions(requestBody: ChatCompletionCreateParamsBase, params: AiChatParams): void {
+function normalizeTemperature(options: ProviderChatOptions, temperature: number): number {
+	if (options.provider === "moonshot") {
+		return 1;
+	}
+
+	return temperature;
+}
+
+export function applyChatOptions(requestBody: ChatCompletionCreateParamsBase, params: AiChatParams, options: ProviderChatOptions): void {
 	if (params.options?.temperature !== undefined) {
-		requestBody.temperature = params.options.temperature;
+		requestBody.temperature = normalizeTemperature(options, params.options.temperature);
 	}
 
 	if (params.options?.topP !== undefined) {
@@ -63,20 +80,20 @@ export function applyChatOptions(requestBody: ChatCompletionCreateParamsBase, pa
 	}
 }
 
-export async function chatWithDeepSeek(
+export async function chatWithProvider(
 	params: AiChatParams,
-	options: DeepSeekChatOptions,
+	options: ProviderChatOptions,
 	history: ChatMessage[],
 	systemPrompt: string,
 	abortSignal?: AbortSignal | undefined
 ): Promise<string> {
-	const client: OpenAI = createDeepSeekClient(options);
+	const client: OpenAI = createProviderClient(options);
 	const requestBody: ChatCompletionCreateParamsNonStreaming = {
-		model: options.model ?? process.env.DEEPSEEK_MODEL ?? DEFAULT_MODEL,
+		model: resolveChatModel(options),
 		messages: createMessages(params, history, systemPrompt)
 	};
 
-	applyChatOptions(requestBody, params);
+	applyChatOptions(requestBody, params, options);
 
 	const completion = await client.chat.completions.create(requestBody, { signal: abortSignal });
 
@@ -88,21 +105,31 @@ export async function chatWithDeepSeek(
 	return text;
 }
 
-export async function* streamChatWithDeepSeek(
+export async function chatWithDeepSeek(
 	params: AiChatParams,
 	options: DeepSeekChatOptions,
 	history: ChatMessage[],
 	systemPrompt: string,
 	abortSignal?: AbortSignal | undefined
+): Promise<string> {
+	return chatWithProvider(params, options, history, systemPrompt, abortSignal);
+}
+
+export async function* streamChatWithProvider(
+	params: AiChatParams,
+	options: ProviderChatOptions,
+	history: ChatMessage[],
+	systemPrompt: string,
+	abortSignal?: AbortSignal | undefined
 ): AsyncGenerator<string> {
-	const client: OpenAI = createDeepSeekClient(options);
+	const client: OpenAI = createProviderClient(options);
 	const requestBody: ChatCompletionCreateParamsStreaming = {
-		model: options.model ?? process.env.DEEPSEEK_MODEL ?? DEFAULT_MODEL,
+		model: resolveChatModel(options),
 		messages: createMessages(params, history, systemPrompt),
 		stream: true
 	};
 
-	applyChatOptions(requestBody, params);
+	applyChatOptions(requestBody, params, options);
 
 	const stream = await client.chat.completions.create(requestBody, { signal: abortSignal });
 	for await (const chunk of stream) {
@@ -111,4 +138,14 @@ export async function* streamChatWithDeepSeek(
 			yield delta;
 		}
 	}
+}
+
+export async function* streamChatWithDeepSeek(
+	params: AiChatParams,
+	options: DeepSeekChatOptions,
+	history: ChatMessage[],
+	systemPrompt: string,
+	abortSignal?: AbortSignal | undefined
+): AsyncGenerator<string> {
+	yield* streamChatWithProvider(params, options, history, systemPrompt, abortSignal);
 }

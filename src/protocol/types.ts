@@ -11,6 +11,8 @@ export type PromptId = z.infer<typeof promptIdSchema>;
 
 export type SkillId = z.infer<typeof skillIdSchema>;
 
+export type ProviderId = "deepseek" | "moonshot";
+
 export type ChatMessage = {
 	role: "system" | "user" | "assistant";
 	content: string;
@@ -89,7 +91,7 @@ export type ServerEvent = {
 };
 
 export type ModelProfile = {
-	provider: "deepseek";
+	provider: ProviderId;
 	model: string;
 	contextWindowTokens: number;
 	maxOutputTokens: number;

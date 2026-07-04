@@ -1,7 +1,7 @@
 import WebSocket, { WebSocketServer } from "ws";
 import { composeSystemPrompt, listPromptTemplates } from "../prompts/registry.js";
 import { clientRequestSchema } from "../protocol/schema.js";
-import type { AdditionalContextItem, AiChatParams, ChatMessage, ClientRequest, ModelProfile, ServerEvent } from "../protocol/types.js";
+import type { AdditionalContextItem, AiChatParams, ChatMessage, ClientRequest, ModelProfile, ProviderId, ServerEvent } from "../protocol/types.js";
 import {
 	continueDeepSeekAgent,
 	continueDeepSeekAgentStreaming,
@@ -12,7 +12,7 @@ import {
 } from "../providers/deepseek-agent.js";
 import type { OnToolEvent, ToolEvent } from "../tools/tool-dispatcher.js";
 import { parseToolResultSummary } from "../tools/tool-result-parser.js";
-import { chatWithDeepSeek, createDeepSeekClient, type DeepSeekChatOptions } from "../providers/deepseek-client.js";
+import { chatWithDeepSeek, createDeepSeekClient, resolveChatModel, type ProviderChatOptions } from "../providers/deepseek-client.js";
 import { McpHost } from "../mcp/mcp-host.js";
 import type { CustomMcpServerRuntimeStatus } from "../mcp/mcp-host.js";
 import {
@@ -60,6 +60,9 @@ import {
 	saveProviderConfig,
 	type ProviderConfigWithSecret
 } from "../providers/provider-config-store.js";
+import { listProviderModels } from "../providers/provider-models.js";
+import { estimateProviderTextTokens } from "../providers/provider-token-estimator.js";
+import { getProviderDefaultBaseUrl, getProviderDefaultModel, getProviderDisplayName } from "../providers/provider-registry.js";
 import { classifyProviderError, createProviderStatusEvent } from "../providers/provider-error.js";
 import { generateSessionTitle, shouldApplyGeneratedSessionTitle } from "./session-title.js";
 import { createSingleAnswerPlan, planWorkflow, READ_TOOLS, VERIFY_TOOLS, WRITE_TOOLS } from "../workflow/planner.js";
@@ -356,6 +359,20 @@ async function estimateMessagesTokens(messages: ChatMessage[]): Promise<number> 
 	return total;
 }
 
+async function estimateTextTokensForProvider(options: ProviderChatOptions, text: string, abortSignal?: AbortSignal | undefined): Promise<number> {
+	try {
+		const providerEstimate: number | null = await estimateProviderTextTokens(options, text, abortSignal);
+		if (providerEstimate !== null) {
+			return providerEstimate;
+		}
+	} catch (error: unknown) {
+		const message: string = error instanceof Error ? error.message : String(error);
+		console.warn(`[token-counter] ${getProviderDisplayName(options.provider)} token estimate failed, using local counter: ${message}`);
+	}
+
+	return estimateTextTokens(text);
+}
+
 async function selectHistoryWithinBudget(messages: ChatMessage[], budgetTokens: number): Promise<ChatMessage[]> {
 	const tc: TokenCounter = await getTokenCounter();
 	return selectMessagesWithinBudget(messages, budgetTokens, tc);
@@ -363,15 +380,17 @@ async function selectHistoryWithinBudget(messages: ChatMessage[], budgetTokens: 
 
 async function computeHistoryBudget(
 	profile: ModelProfile,
+	options: ProviderChatOptions,
 	params: AiChatParams,
 	systemPrompt: string,
-	mcpContext: string
+	mcpContext: string,
+	abortSignal?: AbortSignal | undefined
 ): Promise<number> {
 	const tc: TokenCounter = await getTokenCounter();
 	const outputReserveTokens: number = params.options?.maxTokens ?? profile.defaultOutputReserveTokens;
-	const systemPromptTokens: number = await tc.countText(systemPrompt);
-	const mcpContextTokens: number = await tc.countText(mcpContext);
-	const currentMessageTokens: number = await tc.countText(params.message);
+	const systemPromptTokens: number = await estimateTextTokensForProvider(options, systemPrompt, abortSignal);
+	const mcpContextTokens: number = await estimateTextTokensForProvider(options, mcpContext, abortSignal);
+	const currentMessageTokens: number = await estimateTextTokensForProvider(options, params.message, abortSignal);
 
 	return computeInputBudget({
 		profile,
@@ -573,13 +592,13 @@ async function waitForFullSessionLoad(session: ClientSession): Promise<void> {
 	}
 }
 
-function createDeepSeekChatOptions(session: ClientSession, apiKey: string): DeepSeekChatOptions {
-	const options: DeepSeekChatOptions = { apiKey };
-	if (session.deepseekModel !== undefined) {
-		options.model = session.deepseekModel;
+function createProviderChatOptions(session: ClientSession, apiKey: string): ProviderChatOptions {
+	const options: ProviderChatOptions = { provider: session.activeProvider, apiKey };
+	if (session.providerModel !== undefined) {
+		options.model = session.providerModel;
 	}
-	if (session.deepseekBaseUrl !== undefined) {
-		options.baseUrl = session.deepseekBaseUrl;
+	if (session.providerBaseUrl !== undefined) {
+		options.baseUrl = session.providerBaseUrl;
 	}
 
 	return options;
@@ -967,7 +986,7 @@ function createNextStepHintPrompt(trigger: string, anchorRequestId: string | und
 
 async function createNextStepHints(
 	session: ClientSession,
-	options: DeepSeekChatOptions,
+	options: ProviderChatOptions,
 	maxHints: number,
 	trigger: string,
 	anchorRequestId: string | undefined,
@@ -1227,7 +1246,7 @@ function maybeScheduleSessionTitleGeneration(
 	requestId: string,
 	session: ClientSession,
 	params: AiChatParams,
-	options: DeepSeekChatOptions,
+	options: ProviderChatOptions,
 	wasFirstTurn: boolean
 ): void {
 	const sessionId: string | undefined = session.sessionId;
@@ -1449,7 +1468,7 @@ function createWorkflowWriteGuardRetryMessage(phaseMessage: string): string {
 
 function createPendingAiContinuation(
 	params: AiChatParams,
-	options: DeepSeekChatOptions,
+	options: ProviderChatOptions,
 	continuation: DeepSeekAgentContinuation,
 	allowedToolNames: readonly string[] | undefined,
 	userMessage: string,
@@ -1851,7 +1870,7 @@ function sendWorkflowTodoSnapshot(
 async function runWorkflowPhase(
 	socket: WebSocket,
 	params: AiChatParams,
-	options: DeepSeekChatOptions,
+	options: ProviderChatOptions,
 	history: ChatMessage[],
 	fullSystemPrompt: string,
 	phase: WorkflowPhase,
@@ -1890,7 +1909,7 @@ async function createWorkflowPhasePrompt(
 	requestId: string,
 	guidePromptSection: string = ""
 ): Promise<string> {
-	const systemPrompt: string = await composeSystemPrompt(phase.promptId ?? params.promptId, params.systemPrompt);
+	const systemPrompt: string = await composeSystemPrompt(phase.promptId ?? params.promptId, params.systemPrompt, createProviderRuntimeContext(session));
 	const skillPrompt: string = await composeSkillPrompt(phase.skillId);
 	const mcpSystemContext: string = await createMcpSystemContext(mcpHost, session);
 	const additionalContextSection: string = createAdditionalContextPromptSection(params.additionalContext);
@@ -1918,7 +1937,7 @@ async function createWorkflowPhasePrompt(
 
 function createWorkflowPendingContinuation(
 	phaseParams: AiChatParams,
-	options: DeepSeekChatOptions,
+	options: ProviderChatOptions,
 	agentResult: Extract<DeepSeekAgentResult, { status: "approval_required" }>,
 	phase: WorkflowPhase,
 	workflowState: WorkflowRunState,
@@ -1944,7 +1963,7 @@ async function continueWorkflowExecution(
 	requestId: string,
 	session: ClientSession,
 	mcpHost: McpHost,
-	options: DeepSeekChatOptions,
+	options: ProviderChatOptions,
 	workflowState: WorkflowRunState,
 	userCreatedAt: string,
 	initialAgentResult?: DeepSeekAgentResult | undefined,
@@ -2345,7 +2364,7 @@ async function startWorkflowExecution(
 	requestId: string,
 	session: ClientSession,
 	mcpHost: McpHost,
-	options: DeepSeekChatOptions,
+	options: ProviderChatOptions,
 	plan: WorkflowPlan,
 	originalParams: AiChatParams,
 	history: ChatMessage[],
@@ -2400,21 +2419,20 @@ async function startWorkflowExecution(
 }
 
 function applyProviderConfigToSession(session: ClientSession, config: ProviderConfigWithSecret): void {
+	session.activeProvider = config.provider;
 	if (config.apiKey !== undefined) {
-		session.deepseekApiKey = config.apiKey;
+		session.providerApiKey = config.apiKey;
 	}
 
-	session.deepseekModel = config.model;
-	session.deepseekBaseUrl = config.baseUrl;
+	session.providerModel = config.model;
+	session.providerBaseUrl = config.baseUrl;
 
-	if (config.model !== undefined) {
-		session.modelProfile = resolveModelProfile(config.model);
-	}
+	session.modelProfile = resolveModelProfile(config.provider, config.model ?? getProviderDefaultModel(config.provider));
 }
 
 async function ensureProviderConfigured(session: ClientSession): Promise<string | undefined> {
-	if (session.deepseekApiKey !== undefined) {
-		return session.deepseekApiKey;
+	if (session.providerApiKey !== undefined) {
+		return session.providerApiKey;
 	}
 
 	const config: ProviderConfigWithSecret | null = await loadProviderConfigWithSecret();
@@ -2423,7 +2441,7 @@ async function ensureProviderConfigured(session: ClientSession): Promise<string 
 	}
 
 	applyProviderConfigToSession(session, config);
-	return session.deepseekApiKey;
+	return session.providerApiKey;
 }
 
 function canCallMcpToolDirectly(toolName: string): boolean {
@@ -2493,8 +2511,10 @@ function refreshCustomMcpServersAndNotify(socket: WebSocket, mcpHost: McpHost): 
 
 function createSessionInfoResult(session: ClientSession, mcpHost: McpHost, historyTokensStored: number | null = null): Record<string, unknown> {
 	return {
-		providerConfigured: session.deepseekApiKey !== undefined,
-		model: session.deepseekModel ?? session.modelProfile.model,
+		provider: session.activeProvider,
+		providerDisplayName: getProviderDisplayName(session.activeProvider),
+		providerConfigured: session.providerApiKey !== undefined,
+		model: session.providerModel ?? session.modelProfile.model,
 		historyMessagesStored: session.messages.length,
 		historyTokensStored,
 		summaryActive: session.summaryMessage !== undefined,
@@ -2521,6 +2541,17 @@ function createSessionInfoResult(session: ClientSession, mcpHost: McpHost, histo
 		} : null,
 		activeSkillId: session.activeSkillId ?? null
 	};
+}
+
+function createProviderRuntimeContext(session: ClientSession): string {
+	const providerName: string = getProviderDisplayName(session.activeProvider);
+	const modelName: string = session.providerModel ?? session.modelProfile.model ?? getProviderDefaultModel(session.activeProvider);
+	return [
+		`当前后端实际模型供应商：${providerName}（provider id: ${session.activeProvider}）。`,
+		`当前后端实际模型 ID：${modelName}。`,
+		"如果用户询问“你是什么模型”“来自哪个供应商”“当前用的模型/供应商是什么”，必须优先基于以上运行时事实回答。",
+		"回答时可以说明你在产品角色上是 Godot Daedalus 的 Godot 开发助手，但不要用产品角色替代实际模型和供应商信息。"
+	].join("\n");
 }
 
 function createSafeMarkdownFence(content: string, language: string = "text"): string {
@@ -2694,25 +2725,11 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 			break;
 
 		case "provider.configure":
-			session.deepseekApiKey = request.params.apiKey;
-			session.deepseekModel = request.params.model;
-			session.deepseekBaseUrl = request.params.baseUrl;
-			if (request.params.model !== undefined) {
-				try {
-					session.modelProfile = resolveModelProfile(request.params.model);
-				} catch (error: unknown) {
-					sendJson(socket, {
-						type: "response",
-						id: request.id,
-						ok: false,
-						error: {
-							code: "invalid_model",
-							message: error instanceof Error ? error.message : "Unknown model"
-						}
-					});
-					break;
-				}
-			}
+			session.activeProvider = request.params.provider;
+			session.providerApiKey = request.params.apiKey;
+			session.providerModel = request.params.model;
+			session.providerBaseUrl = request.params.baseUrl;
+			session.modelProfile = resolveModelProfile(request.params.provider, request.params.model ?? getProviderDefaultModel(request.params.provider));
 
 			sendJson(socket, {
 				type: "response",
@@ -2721,7 +2738,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 				result: {
 					provider: request.params.provider,
 					configured: true,
-					model: session.deepseekModel ?? session.modelProfile.model,
+					model: session.providerModel ?? session.modelProfile.model,
 					modelProfile: session.modelProfile
 				}
 			});
@@ -2754,23 +2771,6 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 			break;
 
 		case "provider.config.set":
-			if (request.params.model !== undefined) {
-				try {
-					resolveModelProfile(request.params.model);
-				} catch (error: unknown) {
-					sendJson(socket, {
-						type: "response",
-						id: request.id,
-						ok: false,
-						error: {
-							code: "invalid_model",
-							message: error instanceof Error ? error.message : "Unknown model"
-						}
-					});
-					break;
-				}
-			}
-
 			try {
 				await saveProviderConfig(request.params);
 				const config: ProviderConfigWithSecret | null = await loadProviderConfigWithSecret();
@@ -2799,16 +2799,22 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 
 		case "provider.config.clear":
 			try {
-				session.deepseekApiKey = undefined;
-				session.deepseekModel = undefined;
-				session.deepseekBaseUrl = undefined;
-				session.modelProfile = getDefaultModelProfile();
+				const providerToClear: ProviderId | undefined = request.params?.provider;
+				const clearedActiveProvider: boolean = providerToClear === undefined || providerToClear === session.activeProvider;
+				const status = await clearProviderConfig(providerToClear);
+				if (clearedActiveProvider) {
+					session.activeProvider = status.activeProvider;
+					session.providerApiKey = undefined;
+					session.providerModel = undefined;
+					session.providerBaseUrl = undefined;
+					session.modelProfile = getDefaultModelProfile(status.activeProvider);
+				}
 
 				sendJson(socket, {
 					type: "response",
 					id: request.id,
 					ok: true,
-					result: await clearProviderConfig()
+					result: status
 				});
 			} catch (error: unknown) {
 				sendJson(socket, {
@@ -2822,6 +2828,42 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 				});
 			}
 			break;
+
+		case "provider.models.list": {
+			const provider: ProviderId = request.params?.provider ?? session.activeProvider;
+			try {
+				const config: ProviderConfigWithSecret | null = await loadProviderConfigWithSecret(provider);
+				const apiKey: string | undefined = provider === session.activeProvider
+					? session.providerApiKey ?? config?.apiKey
+					: config?.apiKey;
+				const baseUrl: string | undefined = provider === session.activeProvider
+					? session.providerBaseUrl ?? config?.baseUrl
+					: config?.baseUrl;
+				const result = await listProviderModels(
+					provider,
+					apiKey,
+					baseUrl,
+					request.params?.refresh === true
+				);
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: true,
+					result
+				});
+			} catch (error: unknown) {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: {
+						code: "provider_models_error",
+						message: error instanceof Error ? error.message : "Failed to list provider models"
+					}
+				});
+			}
+			break;
+		}
 
 		case "ai.cancel": {
 			const controller: AbortController | undefined = session.activeAbortControllers.get(request.params.requestId);
@@ -2866,7 +2908,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 					ok: false,
 					error: {
 						code: "provider_not_configured",
-						message: "DeepSeek API key is not configured. Save it with provider.config.set first."
+						message: `${getProviderDisplayName(session.activeProvider)} API key is not configured. Save it with provider.config.set first.`
 					}
 				});
 				break;
@@ -2877,14 +2919,15 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 
 			try {
 				const turnStartedAt: string = new Date().toISOString();
-				const options: DeepSeekChatOptions = createDeepSeekChatOptions(session, apiKey);
+				const options: ProviderChatOptions = createProviderChatOptions(session, apiKey);
 				const activeSkillId: SkillId | undefined = params.skillId ?? session.activeSkillId;
 				const activeSkill = activeSkillId !== undefined ? getSkill(activeSkillId) : undefined;
 				const allowedToolNames: readonly string[] | undefined = resolveAllowedToolsForChatParams(params, activeSkill?.allowedTools);
 				const promptId = params.promptId ?? (activeSkillId !== undefined ? getSkill(activeSkillId).defaultPromptId : undefined);
 				const systemPrompt: string = await composeSystemPrompt(
 					promptId,
-					params.systemPrompt
+					params.systemPrompt,
+					createProviderRuntimeContext(session)
 				);
 				const skillPrompt: string = await composeSkillPrompt(activeSkillId);
 				const mcpSystemContext: string = await createMcpSystemContext(mcpHost, session);
@@ -2918,9 +2961,11 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 				maybeScheduleSessionTitleGeneration(socket, request.id, session, params, options, session.messages.length === 0);
 				const historyBudgetTokens: number = await computeHistoryBudget(
 					session.modelProfile,
+					options,
 					params,
 					systemPrompt,
-					skillPrompt + mcpSystemContext + additionalContextSection + guidePromptSection
+					skillPrompt + mcpSystemContext + additionalContextSection + guidePromptSection,
+					abortController.signal
 				);
 				const history: ChatMessage[] = await selectHistoryForModel(session, historyBudgetTokens);
 				let workflowPlan: WorkflowPlan | null = null;
@@ -3036,7 +3081,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 					ok: false,
 					error: {
 						code: "provider_not_configured",
-						message: "DeepSeek API key is not configured. Save it with provider.config.set first."
+						message: `${getProviderDisplayName(session.activeProvider)} API key is not configured. Save it with provider.config.set first.`
 					}
 				});
 				break;
@@ -3047,7 +3092,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 			try {
 				const hints: NextStepHint[] = await createNextStepHints(
 					session,
-					createDeepSeekChatOptions(session, apiKey),
+					createProviderChatOptions(session, apiKey),
 					request.params?.maxHints ?? DEFAULT_NEXT_STEP_HINT_COUNT,
 					request.params?.trigger ?? "done",
 					request.params?.anchorRequestId,
@@ -3463,7 +3508,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 					type: "response",
 					id: request.id,
 					ok: false,
-					error: { code: "no_api_key", message: "DeepSeek API key not configured" }
+					error: { code: "no_api_key", message: `${getProviderDisplayName(session.activeProvider)} API key not configured` }
 				});
 				break;
 			}
@@ -3487,10 +3532,11 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 					.map((m) => `${m.role}: ${m.content.slice(0, 300)}`)
 					.join("\n");
 
-				const client = createDeepSeekClient(createDeepSeekChatOptions(session, apiKey));
+				const client = createDeepSeekClient(createProviderChatOptions(session, apiKey));
+				const compressorOptions: ProviderChatOptions = createProviderChatOptions(session, apiKey);
 				const compressorPrompt: string = await loadSessionCompressorPrompt();
 				const completion = await client.chat.completions.create({
-					model: session.deepseekModel ?? "deepseek-v4-flash",
+					model: resolveChatModel(compressorOptions),
 					messages: [
 						{
 							role: "system",
@@ -4267,7 +4313,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 				const pendingState: PendingApprovalState | undefined = findPendingApprovalState(hydrated.states, request.params.approvalId);
 				const pendingContinuation: PendingAiContinuation | undefined = await restorePendingContinuationForApproval(session, pendingState, apiKey);
 				if (pendingState?.continuation !== undefined && pendingContinuation === undefined) {
-					const message: string = "当前没有可用的 DeepSeek API key，无法恢复审批后的 LLM continuation。请先配置 provider 后重试。";
+					const message: string = `当前没有可用的 ${getProviderDisplayName(session.activeProvider)} API key，无法恢复审批后的 LLM continuation。请先配置 provider 后重试。`;
 					if (session.sessionId !== undefined) {
 						await appendApprovalEvent(session.sessionId, pending.approvalId, pendingState.requestId, "failed", { message });
 					}

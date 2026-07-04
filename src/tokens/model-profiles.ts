@@ -1,38 +1,70 @@
-import type { ModelProfile } from "../protocol/types.js";
+import type { ModelProfile, ProviderId } from "../protocol/types.js";
+import { getProviderDefaultModel, getProviderFallbackModels, type ProviderModelInfo } from "../providers/provider-registry.js";
 
-export const DEEPSEEK_V4_FLASH: ModelProfile = {
-	provider: "deepseek",
-	model: "deepseek-v4-flash",
-	contextWindowTokens: 1_000_000,
-	maxOutputTokens: 384_000,
-	defaultOutputReserveTokens: 16_000,
-	safetyMarginTokens: 8_000,
-};
+const DEFAULT_OUTPUT_RESERVE_TOKENS: number = 16_000;
+const DEFAULT_SAFETY_MARGIN_TOKENS: number = 8_000;
 
-export const DEEPSEEK_V4_PRO: ModelProfile = {
-	provider: "deepseek",
-	model: "deepseek-v4-pro",
-	contextWindowTokens: 1_000_000,
-	maxOutputTokens: 384_000,
-	defaultOutputReserveTokens: 32_000,
-	safetyMarginTokens: 12_000,
-};
-
-const MODEL_REGISTRY: Record<string, ModelProfile> = {
-	"deepseek-v4-flash": DEEPSEEK_V4_FLASH,
-	"deepseek-v4-pro": DEEPSEEK_V4_PRO,
-};
-
-export function resolveModelProfile(modelName: string): ModelProfile {
-	const profile: ModelProfile | undefined = MODEL_REGISTRY[modelName];
-
-	if (!profile) {
-		throw new Error(`Unknown model: ${modelName}`);
-	}
-
-	return profile;
+function createProfile(
+	provider: ProviderId,
+	model: string,
+	contextWindowTokens: number,
+	maxOutputTokens: number
+): ModelProfile {
+	return {
+		provider,
+		model,
+		contextWindowTokens,
+		maxOutputTokens,
+		defaultOutputReserveTokens: Math.min(DEFAULT_OUTPUT_RESERVE_TOKENS, Math.max(1_024, Math.floor(maxOutputTokens / 2))),
+		safetyMarginTokens: Math.min(DEFAULT_SAFETY_MARGIN_TOKENS, Math.max(1_024, Math.floor(contextWindowTokens * 0.02)))
+	};
 }
 
-export function getDefaultModelProfile(): ModelProfile {
-	return DEEPSEEK_V4_FLASH;
+function profileFromModelInfo(model: ProviderModelInfo): ModelProfile {
+	return createProfile(model.provider, model.id, model.contextWindowTokens, model.maxOutputTokens);
+}
+
+function inferMoonshotContext(modelName: string): number {
+	const lowerName: string = modelName.toLowerCase();
+	if (lowerName.includes("8k")) {
+		return 8_192;
+	}
+	if (lowerName.includes("32k")) {
+		return 32_768;
+	}
+	if (lowerName.includes("128k")) {
+		return 131_072;
+	}
+	return 256_000;
+}
+
+function inferProfile(provider: ProviderId, modelName: string): ModelProfile {
+	if (provider === "deepseek") {
+		return createProfile(provider, modelName, 1_000_000, 384_000);
+	}
+
+	const contextWindowTokens: number = inferMoonshotContext(modelName);
+	const maxOutputTokens: number = contextWindowTokens <= 8_192 ? 4_096 : Math.min(32_000, Math.floor(contextWindowTokens / 4));
+	return createProfile(provider, modelName, contextWindowTokens, maxOutputTokens);
+}
+
+export function resolveModelProfile(provider: ProviderId, modelName: string, contextWindowTokens?: number | undefined): ModelProfile {
+	if (contextWindowTokens !== undefined && Number.isFinite(contextWindowTokens) && contextWindowTokens > 0) {
+		const maxOutputTokens: number = provider === "deepseek"
+			? 384_000
+			: Math.min(32_000, Math.max(4_096, Math.floor(contextWindowTokens / 4)));
+		return createProfile(provider, modelName, Math.floor(contextWindowTokens), maxOutputTokens);
+	}
+
+	const fallback: ProviderModelInfo | undefined = getProviderFallbackModels(provider)
+		.find((model: ProviderModelInfo): boolean => model.id === modelName);
+	if (fallback !== undefined) {
+		return profileFromModelInfo(fallback);
+	}
+
+	return inferProfile(provider, modelName);
+}
+
+export function getDefaultModelProfile(provider: ProviderId = "deepseek"): ModelProfile {
+	return resolveModelProfile(provider, getProviderDefaultModel(provider));
 }

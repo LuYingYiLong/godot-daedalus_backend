@@ -14,6 +14,7 @@ import {
 	createDeepSeekClient,
 	createMessages,
 	applyChatOptions,
+	resolveChatModel,
 	type DeepSeekChatOptions
 } from "../providers/deepseek-client.js";
 import type { McpHost } from "../mcp/mcp-host.js";
@@ -23,8 +24,6 @@ import { ApprovalGateway } from "../tools/approval-gateway.js";
 import { containsDsmlToolCalls } from "./deepseek-dsml-tools.js";
 import { containsLooseToolCalls, isKnownLooseToolTagName, isPotentialLooseToolTagName, normalizeKnownToolName } from "./deepseek-loose-tools.js";
 
-const DEFAULT_BASE_URL = "https://api.deepseek.com";
-const DEFAULT_MODEL = "deepseek-v4-flash";
 const FINALIZE_AFTER_TOOL_LIMIT_PROMPT: string =
 	"工具调用阶段已经达到后端限制。请停止请求更多工具，基于目前已经获得的工具结果直接回答用户。"
 	+ "如果信息不完整，请明确说明哪些部分是根据已有信息总结的，哪些部分还需要进一步检查。";
@@ -432,13 +431,13 @@ async function readStreamingAssistantMessage(
 	abortSignal?: AbortSignal | undefined
 ): Promise<StreamedAssistantMessage> {
 	const requestBody: ChatCompletionCreateParamsStreaming = {
-		model: options.model ?? process.env.DEEPSEEK_MODEL ?? DEFAULT_MODEL,
+		model: resolveChatModel(options),
 		messages,
 		tools,
 		stream: true
 	};
 
-	applyChatOptions(requestBody, params);
+	applyChatOptions(requestBody, params, options);
 
 	const stream = await client.chat.completions.create(requestBody, { signal: abortSignal });
 	const toolCallAccumulators: Map<number, ToolCallAccumulator> = new Map();
@@ -530,11 +529,11 @@ async function createFinalAnswer(
 		}
 	];
 	const requestBody: ChatCompletionCreateParamsNonStreaming = {
-		model: options.model ?? process.env.DEEPSEEK_MODEL ?? DEFAULT_MODEL,
+		model: resolveChatModel(options),
 		messages: finalMessages
 	};
 
-	applyChatOptions(requestBody, params);
+	applyChatOptions(requestBody, params, options);
 
 	const completion = await client.chat.completions.create(requestBody, { signal: abortSignal });
 	const text: string | null | undefined = completion.choices[0]?.message.content;
@@ -597,12 +596,12 @@ async function runAgentLoop(
 			suppressedStreamToolSyntax = streamedMessage.suppressedToolSyntax;
 		} else {
 			const requestBody: ChatCompletionCreateParamsNonStreaming = {
-				model: options.model ?? process.env.DEEPSEEK_MODEL ?? DEFAULT_MODEL,
+				model: resolveChatModel(options),
 				messages,
 				tools
 			};
 
-			applyChatOptions(requestBody, params);
+			applyChatOptions(requestBody, params, options);
 
 			const completion = await client.chat.completions.create(requestBody, { signal: abortSignal });
 			const choice = completion.choices[0];

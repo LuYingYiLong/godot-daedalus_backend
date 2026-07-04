@@ -84,11 +84,16 @@ export async function loadPromptTemplate(promptId: PromptId): Promise<string> {
 
 export async function composeSystemPrompt(
 	promptId: PromptId | undefined,
-	extraSystemPrompt: string | undefined
+	extraSystemPrompt: string | undefined,
+	runtimeContext: string = ""
 ): Promise<string> {
 	const templateContent: string = await loadPromptTemplate(promptId ?? DEFAULT_PROMPT_ID);
 	const trimmedExtraPrompt: string = extraSystemPrompt?.trim() ?? "";
-	const prioritizedTemplateContent: string = `${templateContent}\n\n## 工具调用沟通约定\n\n${TOOL_CALL_COMMUNICATION_NOTICE}\n\n## 指令优先级\n\n${INSTRUCTION_PRIORITY_NOTICE}`;
+	const trimmedRuntimeContext: string = runtimeContext.trim();
+	const runtimeContextSection: string = trimmedRuntimeContext.length > 0
+		? `\n\n## Runtime 当前模型上下文\n\n${trimmedRuntimeContext}`
+		: "";
+	const prioritizedTemplateContent: string = `${templateContent}${runtimeContextSection}\n\n## 工具调用沟通约定\n\n${TOOL_CALL_COMMUNICATION_NOTICE}\n\n## 指令优先级\n\n${INSTRUCTION_PRIORITY_NOTICE}`;
 
 	if (trimmedExtraPrompt.length === 0) {
 		return prioritizedTemplateContent;

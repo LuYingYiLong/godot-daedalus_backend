@@ -1,19 +1,20 @@
-import type { AiChatParams } from "../protocol/types.js";
+import type { AiChatParams, ProviderId } from "../protocol/types.js";
 import type { DeepSeekAgentContinuation } from "../providers/deepseek-agent.js";
-import type { DeepSeekChatOptions } from "../providers/deepseek-client.js";
+import type { ProviderChatOptions } from "../providers/deepseek-client.js";
 import type { PendingAiContinuation } from "../server/client-session.js";
 import type { PendingApproval } from "../tools/approval-gateway.js";
 import type { WorkflowRunState } from "../workflow/types.js";
 import type { StoredApprovalEvent } from "./session-store.js";
 
-export type PersistedDeepSeekChatOptions = {
+export type PersistedProviderChatOptions = {
+	provider?: ProviderId | undefined;
 	model?: string | undefined;
 	baseUrl?: string | undefined;
 };
 
 export type PersistedPendingAiContinuation = {
 	params: AiChatParams;
-	options: PersistedDeepSeekChatOptions;
+	options: PersistedProviderChatOptions;
 	continuation: DeepSeekAgentContinuation;
 	allowedToolNames?: readonly string[] | undefined;
 	userMessage: string;
@@ -68,7 +69,7 @@ export function createRuntimePendingContinuation(
 	persisted: PersistedPendingAiContinuation,
 	apiKey: string
 ): PendingAiContinuation {
-	const options: DeepSeekChatOptions = { apiKey };
+	const options: ProviderChatOptions = { provider: persisted.options.provider ?? "deepseek", apiKey };
 	if (persisted.options.model !== undefined) {
 		options.model = persisted.options.model;
 	}
@@ -188,7 +189,9 @@ export function serializePendingApprovalState(state: PendingApprovalState): Reco
 }
 
 function createPersistedPendingContinuation(continuation: PendingAiContinuation): PersistedPendingAiContinuation {
-	const options: PersistedDeepSeekChatOptions = {};
+	const options: PersistedProviderChatOptions = {
+		provider: continuation.options.provider
+	};
 	if (continuation.options.model !== undefined) {
 		options.model = continuation.options.model;
 	}

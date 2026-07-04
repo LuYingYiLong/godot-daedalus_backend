@@ -15,6 +15,8 @@ export const skillIdSchema = z.enum([
 	"backend.helper"
 ]);
 
+export const providerIdSchema = z.enum(["deepseek", "moonshot"]);
+
 export const additionalContextItemSchema = z.object({
 	id: z.string().min(1).max(160),
 	kind: z.enum(["editor_selection", "scene", "node", "file", "folder", "script", "script_selection", "filesystem_selection"]),
@@ -96,7 +98,7 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		id: z.string(),
 		method: z.literal("provider.configure"),
 		params: z.object({
-			provider: z.literal("deepseek"),
+			provider: providerIdSchema,
 			apiKey: z.string().min(1),
 			model: z.string().min(1).optional(),
 			baseUrl: z.string().min(1).optional(),
@@ -113,17 +115,29 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		id: z.string(),
 		method: z.literal("provider.config.set"),
 		params: z.object({
-			provider: z.literal("deepseek"),
+			provider: providerIdSchema,
 			apiKey: z.string().optional(),
 			model: z.string().min(1).optional(),
 			baseUrl: z.string().min(1).optional(),
+			activate: z.boolean().optional(),
 		}),
 	}),
 	z.object({
 		type: z.literal("request"),
 		id: z.string(),
 		method: z.literal("provider.config.clear"),
-		params: z.object({}).optional(),
+		params: z.object({
+			provider: providerIdSchema.optional(),
+		}).optional(),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("provider.models.list"),
+		params: z.object({
+			provider: providerIdSchema.optional(),
+			refresh: z.boolean().optional(),
+		}).optional(),
 	}),
 	z.object({
 		type: z.literal("request"),

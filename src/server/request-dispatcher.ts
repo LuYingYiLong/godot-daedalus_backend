@@ -18,6 +18,7 @@ export const REQUEST_HANDLER_METHODS: readonly ClientRequest["method"][] = [
 	"provider.config.get",
 	"provider.config.set",
 	"provider.config.clear",
+	"provider.models.list",
 	"ai.chat",
 	"ai.next_step_hints",
 	"ai.cancel",
