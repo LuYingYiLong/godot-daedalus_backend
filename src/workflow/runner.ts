@@ -10,7 +10,11 @@ import type {
 
 const MAX_PHASE_OUTPUT_CHARS: number = 5000;
 
-export function createWorkflowTodoSnapshot(plan: WorkflowPlan): WorkflowTodoSnapshot {
+export function createWorkflowTodoSnapshot(
+	plan: WorkflowPlan,
+	phaseOutcomes: WorkflowPhaseOutput[] = [],
+	activePhaseRunId?: string | undefined
+): WorkflowTodoSnapshot {
 	return {
 		workflowId: plan.id,
 		title: plan.title,
@@ -21,7 +25,11 @@ export function createWorkflowTodoSnapshot(plan: WorkflowPlan): WorkflowTodoSnap
 			title: phase.title,
 			status: getPhaseStatus(plan, phase.id)
 		})),
-		todos: plan.todos.map((todo: WorkflowTodoItem) => ({ ...todo }))
+		todos: plan.todos.map((todo: WorkflowTodoItem) => ({ ...todo })),
+		phaseOutcomes: phaseOutcomes.map((output: WorkflowPhaseOutput): WorkflowPhaseOutput => ({ ...output })),
+		activePhaseRunId,
+		repairRound: Math.max(0, ...plan.phases.map((phase: WorkflowPhase): number => phase.repairRound ?? 0)),
+		blockedReason: findLastBlockedReason(phaseOutcomes)
 	};
 }
 
@@ -63,6 +71,9 @@ export function createPhaseMessage(
 		"## 当前阶段指令",
 		phase.instruction,
 		"",
+		"## 当前阶段验收标准",
+		formatAcceptanceCriteria(phase.acceptanceCriteria),
+		"",
 		"## 上一阶段结果",
 		previousResults,
 		"",
@@ -91,6 +102,7 @@ export function createPhasePrompt(phase: WorkflowPhase, skillPrompt: string, mcp
 		"## 工作流阶段约束",
 		`- 当前阶段：${phase.title}（${phase.id}）`,
 		`- 阶段目标：${phase.instruction}`,
+		`- 验收标准：${formatAcceptanceCriteria(phase.acceptanceCriteria)}`,
 		"- 只完成当前阶段，不要提前总结整个任务。",
 		"- 如果需要写入或执行审批工具，按现有审批流程暂停。",
 		...toolGroupRules,
@@ -100,6 +112,14 @@ export function createPhasePrompt(phase: WorkflowPhase, skillPrompt: string, mcp
 		skillPrompt,
 		mcpSystemContext
 	].filter((part: string): boolean => part.length > 0).join("\n\n");
+}
+
+function formatAcceptanceCriteria(criteria: string[] | undefined): string {
+	if (criteria === undefined || criteria.length === 0) {
+		return "（未指定，按阶段目标和工具事实判定）";
+	}
+
+	return criteria.map((item: string): string => `- ${item}`).join("\n");
 }
 
 function createPhaseToolGroupRules(phase: WorkflowPhase): string[] {
@@ -113,33 +133,72 @@ function createPhaseToolGroupRules(phase: WorkflowPhase): string[] {
 
 	if (phase.toolGroup === "verify") {
 		return [
-			"- 当前是验证阶段：优先实际调用诊断或验证工具，不要只描述验证计划。"
+			"- 当前是验证阶段：优先实际调用诊断或验证工具，不要只描述验证计划。",
+			"- 如果验证失败或发现需要修改的问题，不要声称阶段完成；用 `VERIFY_REQUIRES_FIX:` 开头说明失败点和需要修复的内容。",
+			"- 当前阶段没有写入职责；不要说“接下来我会修改”后直接结束。需要修改时明确交给后续修复阶段。"
 		];
 	}
 
 	return [];
 }
 
-export function appendPhaseOutput(outputs: WorkflowPhaseOutput[], phase: WorkflowPhase, text: string): WorkflowPhaseOutput[] {
-	const clippedText: string = text.length > MAX_PHASE_OUTPUT_CHARS
+export function appendPhaseOutput(outputs: WorkflowPhaseOutput[], phase: WorkflowPhase, output: WorkflowPhaseOutput | string): WorkflowPhaseOutput[] {
+	const normalizedOutput: WorkflowPhaseOutput = typeof output === "string"
+		? createLegacyCompletedPhaseOutput(phase, output)
+		: output;
+	const text: string | undefined = normalizedOutput.text;
+	const clippedText: string | undefined = text !== undefined && text.length > MAX_PHASE_OUTPUT_CHARS
 		? `${text.slice(0, MAX_PHASE_OUTPUT_CHARS)}\n\n[阶段输出已截断，原始长度 ${text.length} 字符]`
 		: text;
 
 	return [
 		...outputs,
 		{
-			phaseId: phase.id,
-			title: phase.title,
+			...normalizedOutput,
 			text: clippedText
 		}
 	];
 }
 
 function formatPhaseOutput(output: WorkflowPhaseOutput): string {
-	return [
+	const parts: string[] = [
 		`### ${output.title}`,
-		output.text
-	].join("\n");
+		`status: ${output.status}`,
+		output.summary
+	];
+	if (output.failedChecks.length > 0) {
+		parts.push("failedChecks:");
+		parts.push(...output.failedChecks.map((check): string => `- ${check.message}`));
+	}
+	if (output.requiredFixes.length > 0) {
+		parts.push("requiredFixes:");
+		parts.push(...output.requiredFixes.map((fix: string): string => `- ${fix}`));
+	}
+	if (output.text !== undefined && output.text.trim().length > 0) {
+		parts.push("rawText:");
+		parts.push(output.text);
+	}
+	return parts.join("\n");
+}
+
+function createLegacyCompletedPhaseOutput(phase: WorkflowPhase, text: string): WorkflowPhaseOutput {
+	const clippedText: string = text.length > MAX_PHASE_OUTPUT_CHARS
+		? `${text.slice(0, MAX_PHASE_OUTPUT_CHARS)}\n\n[阶段输出已截断，原始长度 ${text.length} 字符]`
+		: text;
+	return {
+		phaseId: phase.id,
+		phaseRunId: `legacy-${phase.id}`,
+		title: phase.title,
+		status: "completed",
+		summary: clippedText,
+		evidence: [],
+		failedChecks: [],
+		requiredFixes: [],
+		modifiedArtifacts: [],
+		verifiedArtifacts: [],
+		toolObservations: [],
+		text: clippedText
+	};
 }
 
 function getPhaseStatus(plan: WorkflowPlan, phaseId: string): WorkflowTodoStatus {
@@ -158,4 +217,15 @@ function getPhaseStatus(plan: WorkflowPlan, phaseId: string): WorkflowTodoStatus
 	}
 
 	return "pending";
+}
+
+function findLastBlockedReason(phaseOutcomes: WorkflowPhaseOutput[]): string | undefined {
+	for (let index: number = phaseOutcomes.length - 1; index >= 0; index -= 1) {
+		const output: WorkflowPhaseOutput | undefined = phaseOutcomes[index];
+		if (output?.status === "blocked") {
+			return output.blockedReason ?? output.summary;
+		}
+	}
+
+	return undefined;
 }

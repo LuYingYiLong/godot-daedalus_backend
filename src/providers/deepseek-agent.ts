@@ -197,6 +197,17 @@ function createToolCallPreludeDelta(
 	return "";
 }
 
+function emitModelToolCallPrelude(
+	contentText: string | null,
+	emittedContentText: string,
+	onEvent?: OnToolEvent
+): void {
+	const preludeDelta: string = createToolCallPreludeDelta(contentText, emittedContentText);
+	if (preludeDelta.length > 0) {
+		onEvent?.({ type: "ai.delta", text: preludeDelta });
+	}
+}
+
 function escapeRegExp(text: string): string {
 	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -748,12 +759,7 @@ async function runAgentLoop(
 			return { status: "completed", text: finalText };
 		}
 
-		if (streamAssistant) {
-			const preludeDelta: string = createToolCallPreludeDelta(contentText, emittedContentText);
-			if (preludeDelta.length > 0) {
-				onEvent?.({ type: "ai.delta", text: preludeDelta });
-			}
-		}
+		emitModelToolCallPrelude(contentText, streamAssistant ? emittedContentText : "", onEvent);
 
 		const assistantMessage: ChatCompletionMessageParam = createAssistantToolMessage(contentText, toolCalls, reasoningContent);
 

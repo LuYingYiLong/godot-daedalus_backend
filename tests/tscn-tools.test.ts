@@ -8,6 +8,7 @@ import {
 	findNodeInTscn,
 	generateSceneTscn,
 	parseTscn,
+	validateSceneScriptReferences,
 	validateTscnContent
 } from "../src/mcp/tscn-tools.js";
 
@@ -67,4 +68,64 @@ test("scene patch applies ordered operations", (): void => {
 	assert.equal(result.applied.length, 2);
 	assert.notEqual(findNodeInTscn(data, "StartButton"), null);
 	assert.equal(data.connections.length, 1);
+});
+
+test("scene script reference validation catches unique node, path, and signal method issues", (): void => {
+	const scene: string = [
+		"[gd_scene format=3]",
+		"",
+		"[node name=\"Main\" type=\"Control\"]",
+		"",
+		"[node name=\"TitleLabel\" type=\"Label\" parent=\".\"]",
+		"",
+		"[node name=\"StartButton\" type=\"Button\" parent=\".\"]",
+		"",
+		"[connection signal=\"pressed\" from=\"StartButton\" to=\".\" method=\"_on_start_button_pressed\"]",
+		""
+	].join("\n");
+	const result = validateSceneScriptReferences(scene, {
+		".": [
+			"extends Control",
+			"",
+			"func _ready() -> void:",
+			"\t%TitleLabel.text = \"Guess\"",
+			"\t$MissingLabel.text = \"Missing\""
+		].join("\n")
+	});
+
+	assert.equal(result.ok, false);
+	assert.deepEqual(result.missingUniqueNames, [".: %TitleLabel"]);
+	assert.deepEqual(result.missingNodePaths, [".: $MissingLabel"]);
+	assert.deepEqual(result.missingSignalMethods, ["._on_start_button_pressed"]);
+});
+
+test("scene script reference validation accepts unique names, paths, and signal methods", (): void => {
+	const scene: string = [
+		"[gd_scene format=3]",
+		"",
+		"[node name=\"Main\" type=\"Control\"]",
+		"",
+		"[node name=\"TitleLabel\" type=\"Label\" parent=\".\"]",
+		"unique_name_in_owner = true",
+		"",
+		"[node name=\"StartButton\" type=\"Button\" parent=\".\"]",
+		"",
+		"[connection signal=\"pressed\" from=\"StartButton\" to=\".\" method=\"_on_start_button_pressed\"]",
+		""
+	].join("\n");
+	const result = validateSceneScriptReferences(scene, {
+		".": [
+			"extends Control",
+			"",
+			"func _ready() -> void:",
+			"\t%TitleLabel.text = \"Guess\"",
+			"\t$StartButton.text = \"Start\"",
+			"",
+			"func _on_start_button_pressed() -> void:",
+			"\tpass"
+		].join("\n")
+	});
+
+	assert.equal(result.ok, true);
+	assert.deepEqual(result.errors, []);
 });

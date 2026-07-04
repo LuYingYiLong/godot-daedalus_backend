@@ -4,6 +4,7 @@ import type { Dirent } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { z } from "zod";
+import { validateSceneScriptReferences } from "./tscn-tools.js";
 
 const MAX_TEXT_FILE_BYTES: number = 512 * 1024;
 const MAX_NEW_FILE_BYTES: number = 64 * 1024;
@@ -180,6 +181,15 @@ async function resolveProjectPath(relativePath: string): Promise<string> {
 	}
 
 	return resolvedPath;
+}
+
+async function resolveGodotResourceProjectPath(resourcePath: string): Promise<string> {
+	const cleanedPath: string = resourcePath.trim();
+	if (cleanedPath.startsWith("res://")) {
+		return resolveProjectPath(cleanedPath.slice("res://".length));
+	}
+
+	return resolveProjectPath(cleanedPath);
 }
 
 function shouldSkipDirectory(name: string): boolean {
@@ -2015,6 +2025,45 @@ function createNodePathMap(nodes: TscnNode[]): Map<string, TscnNode> {
 	return pathMap;
 }
 
+function getSceneRelativeNodePath(node: TscnNode): string {
+	if (node.parent === null) {
+		return ".";
+	}
+	if (node.parent === ".") {
+		return node.name;
+	}
+	return `${node.parent}/${node.name}`;
+}
+
+function getExtResourceIdFromScriptValue(scriptValue: string | null): string | null {
+	if (scriptValue === null) {
+		return null;
+	}
+
+	const match: RegExpMatchArray | null = scriptValue.match(/^ExtResource\("([^"]+)"\)$/);
+	return match === null ? null : match[1] ?? null;
+}
+
+async function collectSceneScriptContents(data: TscnData): Promise<Record<string, string>> {
+	const scriptContents: Record<string, string> = {};
+	for (const node of data.nodes) {
+		const extResourceId: string | null = getExtResourceIdFromScriptValue(node.script);
+		if (extResourceId === null) {
+			continue;
+		}
+
+		const resource: TscnExtResource | undefined = data.extResources.find((item: TscnExtResource): boolean => item.id === extResourceId);
+		if (resource?.path === undefined || !resource.path.endsWith(".gd")) {
+			continue;
+		}
+
+		const scriptPath: string = await resolveGodotResourceProjectPath(resource.path);
+		scriptContents[getSceneRelativeNodePath(node)] = await fs.readFile(scriptPath, "utf8");
+	}
+
+	return scriptContents;
+}
+
 function toSceneRelativeNodePath(data: TscnData, nodePath: string): string {
 	const normalizedPath: string = nodePath.trim().replace(/^\//, "");
 	const rootNode: TscnNode | undefined = data.nodes.find((node: TscnNode): boolean => node.parent === null);
@@ -3154,6 +3203,49 @@ async function main(): Promise<void> {
 				return asJsonTextResult({ valid: true, path: relativePath, data });
 			} catch (error: unknown) {
 				return asJsonTextResult({ valid: false, path: relativePath, errors: [error instanceof Error ? error.message : "Failed to inspect scene"] });
+			}
+		}
+	);
+
+	server.registerTool(
+		"validate_scene_script_references",
+		{
+			title: "Validate Scene Script References",
+			description: "检查 .tscn 场景附加脚本中的 %UniqueName、$NodePath 和信号连接目标方法是否能被当前场景结构满足。只读验证工具。",
+			inputSchema: z.object({
+				relativePath: z.string().min(1).describe("场景文件的相对路径，例如 'scenes/main.tscn'")
+			})
+		},
+		async ({ relativePath }) => {
+			try {
+				const fullPath = await resolveProjectPath(relativePath);
+				const ext = path.extname(fullPath);
+				if (ext !== ".tscn") {
+					return asJsonTextResult({ valid: false, path: relativePath, errors: ["File is not a .tscn scene file"] });
+				}
+
+				const content = await fs.readFile(fullPath, "utf8");
+				const data = parseTscn(content);
+				const scriptContents = await collectSceneScriptContents(data);
+				const validation = validateSceneScriptReferences(content, scriptContents);
+				return asJsonTextResult({
+					valid: validation.ok,
+					ok: validation.ok,
+					path: relativePath,
+					scriptNodeCount: Object.keys(scriptContents).length,
+					errors: validation.errors,
+					missingUniqueNames: validation.missingUniqueNames,
+					missingNodePaths: validation.missingNodePaths,
+					missingSignalTargets: validation.missingSignalTargets,
+					missingSignalMethods: validation.missingSignalMethods
+				});
+			} catch (error: unknown) {
+				return asJsonTextResult({
+					valid: false,
+					ok: false,
+					path: relativePath,
+					errors: [error instanceof Error ? error.message : "Failed to validate scene script references"]
+				});
 			}
 		}
 	);

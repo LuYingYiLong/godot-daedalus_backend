@@ -297,6 +297,15 @@ export function describeToolEvent(toolName: string, args: Record<string, unknown
 			});
 		}
 
+		if (toolName.includes("validate_scene_script_references")) {
+			const scenePath: string = relativePath ?? "unknown scene";
+			return createDisplay("godot", "Godot", "scene", "验证场景引用", `验证 ${scenePath} 的脚本节点引用`, {
+				kind: "scene",
+				path: scenePath,
+				label: scenePath
+			});
+		}
+
 		if (toolName.includes("search_text")) {
 			const query: string = getStringArg(args, "query") ?? "";
 			return createDisplay("godot", "Godot", "search", "搜索文本", `搜索 ${query}`, {

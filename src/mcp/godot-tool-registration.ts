@@ -27,6 +27,7 @@ export const GODOT_MCP_TOOL_NAMES: readonly string[] = [
 	"replace_text_in_file",
 	"delete_file",
 	"inspect_scene_tree",
+	"validate_scene_script_references",
 	"propose_create_scene",
 	"create_scene",
 	"propose_add_node_to_scene",

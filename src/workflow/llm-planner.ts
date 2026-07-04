@@ -25,6 +25,7 @@ const llmPlanStepSchema = z.object({
 	title: z.string().min(1).max(80),
 	instruction: z.string().min(1).max(2000),
 	toolGroup: toolGroupSchema,
+	acceptanceCriteria: z.array(z.string().min(1).max(240)).max(8).optional(),
 	skillId: z.string().nullable().optional(),
 	promptId: promptIdSchema.nullable().optional()
 }).strict();
@@ -102,7 +103,7 @@ function createPlannerSystemPrompt(): string {
 	return [
 		"你是 Godot Daedalus 的任务调度器，只负责输出 JSON 计划，不调用工具，不写解释文本。",
 		"输出必须是一个 JSON object，格式为：",
-		"{\"title\":\"简短任务标题\",\"steps\":[{\"id\":\"stable-id\",\"title\":\"简短 Todo 标题\",\"instruction\":\"给执行模型的具体指令\",\"toolGroup\":\"read|write|verify|summarize\",\"skillId\":null,\"promptId\":\"godot.assistant\"}]}",
+		"{\"title\":\"简短任务标题\",\"steps\":[{\"id\":\"stable-id\",\"title\":\"简短 Todo 标题\",\"instruction\":\"给执行模型的具体指令\",\"toolGroup\":\"read|write|verify|summarize\",\"acceptanceCriteria\":[\"可判定验收标准\"],\"skillId\":null,\"promptId\":\"godot.assistant\"}]}",
 		"toolGroup 只能选择：",
 		"- read：只读项目上下文。",
 		"- write：允许读取和实际写入，写入仍会走后端审批。",
@@ -111,12 +112,14 @@ function createPlannerSystemPrompt(): string {
 		"规则：",
 		`- steps 数量 1-${MAX_LLM_WORKFLOW_STEPS}。`,
 		"- 每个 title 必须是前端 Todo 可显示的短标题，不要写长描述。",
+		"- 每个 step 必须给出 acceptanceCriteria，标准要能由工具事实或后端验证判定，不要写“模型认为完成”。",
 		"- 复杂修改通常包含 read/write/verify/summarize；简单问答可以只有 summarize。",
 		"- 最后一步必须能给用户最终交付总结，优先使用 toolGroup=summarize。",
 		"- 如果上下文显示 Godot 编辑器在线，且用户目标指向当前打开场景、选中节点、当前脚本/这几行或 FileSystem Dock 选中项，read/write 步骤应让执行模型优先使用 godot_editor 工具；若编辑器离线、stale 或不匹配，则回退到离线 .tscn/text/headless 工具。",
 		"- 如果用户询问运行报错、日志、user://logs/godot.log 或项目设置，read 步骤应收集日志配置/日志内容/当前项目设置；修改项目设置时使用 write 步骤，并要求执行模型先预览再实际写入。",
 		"- 如果用户询问 Godot 编辑器设置、主题、字体、最近项目、当前打开场景/脚本或 .godot/editor 状态，read 步骤应收集编辑器配置摘要；除非用户明确要求原始路径/原文，否则保持脱敏读取。",
 		"- 修改 GDScript 的任务应包含 verify 步骤，让执行模型优先读取 LSP diagnostics，再运行 Godot check-only；运行时报错排查应优先尝试 DAP last error / stack trace，失败后再回退项目日志。",
+		"- 修订计划时不能删除未解决 failedChecks，除非后续 verify/reverify 已证明修复完成。",
 		"- 不要输出 tool 名称，后端会根据 toolGroup 决定安全工具集合。"
 	].join("\n");
 }
@@ -144,6 +147,7 @@ function createRevisionMessage(
 	const pendingPhases: WorkflowPhase[] = plan.phases.slice(completedPhaseIndex + 1);
 	return [
 		"请根据已完成步骤结果，修订后续 pending Todo。只能替换未执行步骤，不能改已完成步骤。",
+		"如果已完成步骤输出包含 failedChecks 或 requiredFixes，pending steps 必须覆盖这些问题，不能直接删除或跳过。",
 		"",
 		"## 用户原始需求",
 		userMessage,
@@ -216,6 +220,7 @@ function ensureSummaryStep(steps: LlmPlanStep[]): LlmPlanStep[] {
 			title: "总结交付",
 			instruction: "直接回答用户需求，说明结论和必要的后续建议。",
 			toolGroup: "summarize",
+			acceptanceCriteria: ["用户需求已经被直接回答，且没有未解决的验证失败或审批。"],
 			promptId: "godot.assistant"
 		}];
 	}
@@ -236,6 +241,7 @@ function ensureSummaryStep(steps: LlmPlanStep[]): LlmPlanStep[] {
 			title: "总结交付",
 			instruction: "基于前面步骤结果给用户最终总结，说明完成内容、验证状态和剩余风险。",
 			toolGroup: "summarize",
+			acceptanceCriteria: ["所有前置步骤已完成，验证失败、审批和阻塞状态已被如实说明。"],
 			promptId: "godot.assistant"
 		}
 	];
@@ -253,7 +259,8 @@ function createPhaseFromStep(step: LlmPlanStep, index: number, usedIds: Set<stri
 		promptId,
 		toolBudget: getToolBudgetForToolGroup(toolGroup),
 		allowedTools: getAllowedToolsForToolGroup(toolGroup),
-		instruction: clipText(step.instruction, MAX_PHASE_INSTRUCTION_CHARS)
+		instruction: clipText(step.instruction, MAX_PHASE_INSTRUCTION_CHARS),
+		acceptanceCriteria: normalizeAcceptanceCriteria(step.acceptanceCriteria, toolGroup)
 	};
 }
 
@@ -383,6 +390,26 @@ function getAllowedToolsForToolGroup(toolGroup: WorkflowToolGroup): string[] {
 	return [...READ_TOOLS];
 }
 
+function normalizeAcceptanceCriteria(criteria: string[] | undefined, toolGroup: WorkflowToolGroup): string[] {
+	const normalized: string[] = (criteria ?? [])
+		.map((item: string): string => item.trim())
+		.filter((item: string): boolean => item.length > 0)
+		.slice(0, 8);
+	if (normalized.length > 0) {
+		return normalized;
+	}
+	if (toolGroup === "verify") {
+		return ["已实际运行可判定的诊断或验证工具，且没有未解决失败。"];
+	}
+	if (toolGroup === "write") {
+		return ["必要修改已通过实际写入工具完成，审批状态已处理。"];
+	}
+	if (toolGroup === "summarize") {
+		return ["所有前置步骤完成后再总结，不覆盖未解决失败。"];
+	}
+	return ["已收集完成当前步骤所需事实。"];
+}
+
 function limitPlanningHistory(history: ChatMessage[]): ChatMessage[] {
 	return history.slice(-6);
 }
@@ -400,8 +427,22 @@ function clipText(text: string, maxChars: number): string {
 }
 
 function formatPhaseOutputForPlanner(output: WorkflowPhaseOutput): string {
-	return [
+	const lines: string[] = [
 		`### ${output.title}（${output.phaseId}）`,
-		clipText(output.text, 2000)
-	].join("\n");
+		`status: ${output.status}`,
+		clipText(output.summary, 1200)
+	];
+	if (output.failedChecks.length > 0) {
+		lines.push("failedChecks:");
+		lines.push(...output.failedChecks.map((check): string => `- ${check.message}`));
+	}
+	if (output.requiredFixes.length > 0) {
+		lines.push("requiredFixes:");
+		lines.push(...output.requiredFixes.map((fix: string): string => `- ${fix}`));
+	}
+	if (output.text !== undefined && output.text.trim().length > 0) {
+		lines.push("rawText:");
+		lines.push(clipText(output.text, 2000));
+	}
+	return lines.join("\n");
 }

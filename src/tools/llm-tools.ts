@@ -295,6 +295,10 @@ const TOOL_MAP: Record<string, ToolMapping> = {
 		serverId: "godot",
 		toolName: "inspect_scene_tree"
 	},
+	"mcp_godot_validate_scene_script_references": {
+		serverId: "godot",
+		toolName: "validate_scene_script_references"
+	},
 	"mcp_godot_propose_create_scene": {
 		serverId: "godot",
 		toolName: "propose_create_scene"
@@ -776,6 +780,23 @@ const TOOL_DEFINITIONS: ChatCompletionTool[] = [
 		function: {
 			name: "mcp_godot_inspect_scene_tree",
 			description: "解析并检查 Godot .tscn 场景树，返回节点、脚本和连接等结构信息",
+			parameters: {
+				type: "object",
+				properties: {
+					relativePath: {
+						type: "string",
+						description: "场景文件的相对路径，例如 'scenes/main.tscn'"
+					}
+				},
+				required: ["relativePath"]
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_godot_validate_scene_script_references",
+			description: "只读验证 Godot .tscn 场景附加脚本中的 %UniqueName、$NodePath 和信号连接目标方法是否能被当前场景结构满足。修改场景或脚本后建议与 godot.validate_scene 搭配使用。",
 			parameters: {
 				type: "object",
 				properties: {

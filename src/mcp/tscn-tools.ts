@@ -31,6 +31,15 @@ export type TscnData = {
 	connections: TscnConnection[];
 };
 
+export type SceneScriptReferenceValidationResult = {
+	ok: boolean;
+	errors: string[];
+	missingUniqueNames: string[];
+	missingNodePaths: string[];
+	missingSignalTargets: string[];
+	missingSignalMethods: string[];
+};
+
 export type ScenePatchOperation =
 	| { type: "add_node"; parentPath: string; nodeType: string; nodeName: string; properties?: Record<string, string> | undefined }
 	| { type: "attach_script"; nodePath: string; scriptPath: string }
@@ -273,6 +282,92 @@ export function connectSignalInSceneTscn(content: string, signal: string, fromNo
 	}
 	lines.push(`[connection ${attrs.join(" ")}]`);
 	return lines.join("\n");
+}
+
+function collectUniqueNodeNames(data: TscnData): Set<string> {
+	const names: Set<string> = new Set();
+	for (const node of data.nodes) {
+		if (node.properties.unique_name_in_owner === "true") {
+			names.add(node.name);
+		}
+	}
+	return names;
+}
+
+function collectRegexMatches(text: string, pattern: RegExp): string[] {
+	const values: string[] = [];
+	for (const match of text.matchAll(pattern)) {
+		const value: string | undefined = match[1];
+		if (value !== undefined && value.length > 0) {
+			values.push(value);
+		}
+	}
+	return [...new Set(values)];
+}
+
+function hasGdscriptFunction(scriptContent: string, method: string): boolean {
+	const escapedMethod: string = method.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	return new RegExp(`(^|\\n)\\s*func\\s+${escapedMethod}\\s*\\(`).test(scriptContent);
+}
+
+function formatSignalMethodReference(nodePath: string, method: string): string {
+	return nodePath === "." ? `.${method}` : `${nodePath}.${method}`;
+}
+
+export function validateSceneScriptReferences(
+	sceneContent: string,
+	scriptContentByNodePath: Record<string, string> = {}
+): SceneScriptReferenceValidationResult {
+	const data: TscnData = parseTscn(sceneContent);
+	const uniqueNodeNames: Set<string> = collectUniqueNodeNames(data);
+	const missingUniqueNames: string[] = [];
+	const missingNodePaths: string[] = [];
+	const missingSignalTargets: string[] = [];
+	const missingSignalMethods: string[] = [];
+
+	for (const [nodePath, scriptContent] of Object.entries(scriptContentByNodePath)) {
+		for (const nodeName of collectRegexMatches(scriptContent, /%([A-Za-z_][A-Za-z0-9_]*)/g)) {
+			if (!uniqueNodeNames.has(nodeName)) {
+				missingUniqueNames.push(`${nodePath}: %${nodeName}`);
+			}
+		}
+
+		for (const referencedPath of collectRegexMatches(scriptContent, /\$([A-Za-z_][A-Za-z0-9_\/]*)/g)) {
+			if (findNodeInTscn(data, referencedPath) === null) {
+				missingNodePaths.push(`${nodePath}: $${referencedPath}`);
+			}
+		}
+	}
+
+	for (const connection of data.connections) {
+		if (findNodeInTscn(data, connection.from) === null) {
+			missingSignalTargets.push(`${connection.signal}: from ${connection.from}`);
+		}
+		if (findNodeInTscn(data, connection.to) === null) {
+			missingSignalTargets.push(`${connection.signal}: to ${connection.to}`);
+			continue;
+		}
+		const targetScript: string | undefined = scriptContentByNodePath[connection.to];
+		if (targetScript !== undefined && !hasGdscriptFunction(targetScript, connection.method)) {
+			missingSignalMethods.push(formatSignalMethodReference(connection.to, connection.method));
+		}
+	}
+
+	const errors: string[] = [
+		...missingUniqueNames.map((item: string): string => `Missing unique_name_in_owner for script reference ${item}`),
+		...missingNodePaths.map((item: string): string => `Missing node path for script reference ${item}`),
+		...missingSignalTargets.map((item: string): string => `Missing signal connection node ${item}`),
+		...missingSignalMethods.map((item: string): string => `Missing signal target method ${item}`)
+	];
+
+	return {
+		ok: errors.length === 0,
+		errors,
+		missingUniqueNames: [...new Set(missingUniqueNames)],
+		missingNodePaths: [...new Set(missingNodePaths)],
+		missingSignalTargets: [...new Set(missingSignalTargets)],
+		missingSignalMethods: [...new Set(missingSignalMethods)]
+	};
 }
 
 export function applyScenePatchToTscn(content: string, operations: ScenePatchOperation[]): {

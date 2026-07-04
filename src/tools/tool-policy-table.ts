@@ -29,6 +29,7 @@ export const TOOL_POLICIES: Record<string, ToolPolicy> = {
 	"mcp_godot_replace_text_in_file": { risk: "write" },
 	"mcp_godot_delete_file": { risk: "destructive" },
 	"mcp_godot_inspect_scene_tree": { risk: "read" },
+	"mcp_godot_validate_scene_script_references": { risk: "verify" },
 	"mcp_godot_propose_create_scene": { risk: "propose" },
 	"mcp_godot_create_scene": { risk: "write" },
 	"mcp_godot_propose_add_node_to_scene": { risk: "propose" },

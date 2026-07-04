@@ -46,6 +46,16 @@ export type StoredApprovalEvent = {
 	createdAt: string;
 };
 
+export type StoredWorkflowEvent = {
+	id: string;
+	schemaVersion: 1;
+	workflowId: string;
+	requestId: string;
+	event: string;
+	data: unknown;
+	createdAt: string;
+};
+
 export type StoredSession = {
 	metadata: SessionMetadata;
 	messages: StoredMessage[];
@@ -133,6 +143,10 @@ function approvalEventsPath(sessionId: string): string {
 	return join(getSessionDir(sessionId), "approval-events.jsonl");
 }
 
+function workflowEventsPath(sessionId: string): string {
+	return join(getSessionDir(sessionId), "workflow-events.jsonl");
+}
+
 export async function createSession(title: string, workspaceId?: string, skillId?: string): Promise<SessionMetadata> {
 	const timestamp: string = new Date().toISOString();
 	const dateStr: string = timestamp.slice(0, 10).replace(/-/g, "");
@@ -152,6 +166,7 @@ export async function createSession(title: string, workspaceId?: string, skillId
 	await writeFile(join(dir, "messages.jsonl"), "", "utf8");
 	await writeFile(join(dir, "events.jsonl"), "", "utf8");
 	await writeFile(join(dir, "approval-events.jsonl"), "", "utf8");
+	await writeFile(join(dir, "workflow-events.jsonl"), "", "utf8");
 
 	return metadata;
 }
@@ -478,6 +493,18 @@ export async function rewindSessionFromRequest(sessionId: string, requestId: str
 	} catch {
 		// Older sessions may not have approval persistence yet.
 	}
+	try {
+		const rawWorkflowEvents: string = await readFile(workflowEventsPath(sessionId), "utf8");
+		const keptWorkflowEvents: StoredWorkflowEvent[] = parseJsonLines<StoredWorkflowEvent>(rawWorkflowEvents)
+			.filter((event: StoredWorkflowEvent): boolean => !removedRequestIds.has(event.requestId));
+		await writeFile(
+			workflowEventsPath(sessionId),
+			keptWorkflowEvents.map((event: StoredWorkflowEvent): string => JSON.stringify(event) + "\n").join(""),
+			"utf8"
+		);
+	} catch {
+		// Older sessions may not have workflow persistence yet.
+	}
 
 	return keptMessages;
 }
@@ -512,6 +539,23 @@ export async function appendApprovalEvent(sessionId: string, approvalId: string,
 		id: `approval-event-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
 		schemaVersion: 1,
 		approvalId,
+		requestId,
+		event,
+		data,
+		createdAt: timestamp
+	};
+	const line: string = JSON.stringify(record) + "\n";
+	await writeFile(eventFile, line, { encoding: "utf8", flag: "a" });
+}
+
+export async function appendWorkflowEvent(sessionId: string, workflowId: string, requestId: string, event: string, data: unknown): Promise<void> {
+	await ensureSessionsDir();
+	const eventFile: string = workflowEventsPath(sessionId);
+	const timestamp: string = new Date().toISOString();
+	const record: StoredWorkflowEvent = {
+		id: `workflow-event-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+		schemaVersion: 1,
+		workflowId,
 		requestId,
 		event,
 		data,

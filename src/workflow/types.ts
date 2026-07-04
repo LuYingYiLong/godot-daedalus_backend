@@ -10,6 +10,28 @@ export type WorkflowSource = "fixed" | "llm";
 
 export type WorkflowToolGroup = "read" | "write" | "verify" | "summarize";
 
+export type WorkflowPhaseOutcomeStatus = "completed" | "needs_fix" | "blocked" | "approval_required" | "failed";
+
+export type WorkflowFailedCheck = {
+	code: string;
+	message: string;
+	toolCallId?: string | undefined;
+	toolName?: string | undefined;
+	artifact?: string | undefined;
+	severity?: string | undefined;
+};
+
+export type WorkflowToolObservation = {
+	toolCallId: string;
+	toolName: string;
+	risk?: string | undefined;
+	status: "called" | "approval_required" | "succeeded" | "failed";
+	argsSummary?: Record<string, unknown> | undefined;
+	parsedResult?: Record<string, unknown> | undefined;
+	error?: string | undefined;
+	artifactRefs?: string[] | undefined;
+};
+
 export type WorkflowPhase = {
 	id: WorkflowPhaseId;
 	title: string;
@@ -19,6 +41,9 @@ export type WorkflowPhase = {
 	toolBudget: ToolBudgetLevel;
 	allowedTools: string[];
 	instruction: string;
+	acceptanceCriteria?: string[] | undefined;
+	repairOf?: string | undefined;
+	repairRound?: number | undefined;
 };
 
 export type WorkflowTodoItem = {
@@ -40,8 +65,19 @@ export type WorkflowPlan = {
 
 export type WorkflowPhaseOutput = {
 	phaseId: WorkflowPhaseId;
+	phaseRunId: string;
 	title: string;
-	text: string;
+	status: WorkflowPhaseOutcomeStatus;
+	summary: string;
+	evidence: string[];
+	failedChecks: WorkflowFailedCheck[];
+	requiredFixes: string[];
+	modifiedArtifacts: string[];
+	verifiedArtifacts: string[];
+	toolObservations: WorkflowToolObservation[];
+	text?: string | undefined;
+	sourcePhaseId?: WorkflowPhaseId | undefined;
+	blockedReason?: string | undefined;
 };
 
 export type WorkflowRunState = {
@@ -53,6 +89,7 @@ export type WorkflowRunState = {
 	historyBudgetTokens: number;
 	planningContext?: string | undefined;
 	guidePromptSection?: string | undefined;
+	activePhaseRunId?: string | undefined;
 };
 
 export type WorkflowTodoSnapshot = {
@@ -66,4 +103,8 @@ export type WorkflowTodoSnapshot = {
 		status: WorkflowTodoStatus;
 	}>;
 	todos: WorkflowTodoItem[];
+	phaseOutcomes?: WorkflowPhaseOutput[] | undefined;
+	activePhaseRunId?: string | undefined;
+	repairRound?: number | undefined;
+	blockedReason?: string | undefined;
 };

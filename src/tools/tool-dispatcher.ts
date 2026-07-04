@@ -3,13 +3,14 @@ import type { McpHost } from "../mcp/mcp-host.js";
 import { type ApprovalGateway, type PendingApproval } from "./approval-gateway.js";
 import { describeToolEvent, type ToolEventDisplay } from "./tool-event-describer.js";
 import { executeLlmToolWithIdempotency } from "./tool-idempotency.js";
+import { parseToolResultSummary, type ParsedToolResultSummary } from "./tool-result-parser.js";
 
 export type ToolEvent =
 	| { type: "ai.delta"; text: string }
 	| { type: "ai.thinking.delta"; text: string }
 	| { type: "ai.thinking.done" }
 	| ({ type: "tool.call"; step: number; toolCallId: string; toolName: string; args: Record<string, unknown> } & ToolEventDisplay)
-	| { type: "tool.result"; step: number; toolCallId: string; toolName: string; resultChars: number; truncated: boolean; cached?: boolean }
+	| ({ type: "tool.result"; step: number; toolCallId: string; toolName: string; resultChars: number; truncated: boolean; cached?: boolean } & ParsedToolResultSummary)
 	| { type: "tool.error"; step: number; toolCallId: string; toolName: string; message: string }
 	| ({ type: "tool.approval_required"; step: number; toolCallId: string; toolName: string; approvalId: string; reason: string; args: Record<string, unknown> } & ToolEventDisplay);
 
@@ -96,6 +97,7 @@ async function executeSingleToolCall(
 
 	try {
 		const result = await executeLlmToolWithIdempotency(mcpHost, functionName, argsParsed);
+		const parsedSummary: ParsedToolResultSummary = parseToolResultSummary(functionName, argsParsed, result.content);
 
 		if (onEvent) {
 			onEvent({
@@ -105,7 +107,8 @@ async function executeSingleToolCall(
 				toolName: functionName,
 				resultChars: result.rawContentLength,
 				truncated: result.truncated,
-				cached: result.reused
+				cached: result.reused,
+				...parsedSummary
 			});
 		}
 
