@@ -56,6 +56,16 @@ export type StoredWorkflowEvent = {
 	createdAt: string;
 };
 
+export type StoredAgentEvent = {
+	id: string;
+	schemaVersion: 1;
+	runId: string;
+	requestId: string;
+	event: string;
+	data: unknown;
+	createdAt: string;
+};
+
 export type StoredSession = {
 	metadata: SessionMetadata;
 	messages: StoredMessage[];
@@ -71,6 +81,7 @@ export type StoredSessionTimelinePage = {
 	messagesOffset: number;
 	hasMoreBefore: boolean;
 	latestWorkflowSnapshot: unknown | null;
+	latestAgentSnapshot: unknown | null;
 };
 
 export type SessionSummary = {
@@ -147,6 +158,10 @@ function workflowEventsPath(sessionId: string): string {
 	return join(getSessionDir(sessionId), "workflow-events.jsonl");
 }
 
+function agentEventsPath(sessionId: string): string {
+	return join(getSessionDir(sessionId), "agent-events.jsonl");
+}
+
 export async function createSession(title: string, workspaceId?: string, skillId?: string): Promise<SessionMetadata> {
 	const timestamp: string = new Date().toISOString();
 	const dateStr: string = timestamp.slice(0, 10).replace(/-/g, "");
@@ -167,6 +182,7 @@ export async function createSession(title: string, workspaceId?: string, skillId
 	await writeFile(join(dir, "events.jsonl"), "", "utf8");
 	await writeFile(join(dir, "approval-events.jsonl"), "", "utf8");
 	await writeFile(join(dir, "workflow-events.jsonl"), "", "utf8");
+	await writeFile(join(dir, "agent-events.jsonl"), "", "utf8");
 
 	return metadata;
 }
@@ -334,10 +350,12 @@ async function readSessionEventsForRequestIds(sessionId: string, requestIds: Set
 	events: StoredSessionEvent[];
 	eventCount: number;
 	latestWorkflowSnapshot: unknown | null;
+	latestAgentSnapshot: unknown | null;
 }> {
 	const events: StoredSessionEvent[] = [];
 	let eventCount: number = 0;
 	let latestWorkflowSnapshot: unknown | null = null;
+	let latestAgentSnapshot: unknown | null = null;
 
 	try {
 		const rl = createInterface({
@@ -355,16 +373,19 @@ async function readSessionEventsForRequestIds(sessionId: string, requestIds: Set
 			if (event.event === "workflow.todo.updated") {
 				latestWorkflowSnapshot = event.data;
 			}
+			if (event.event === "agent.run.snapshot") {
+				latestAgentSnapshot = event.data;
+			}
 			if (requestIds.has(event.requestId)) {
 				events.push(event);
 			}
 		}
 	} catch {
-		return { events: [], eventCount: 0, latestWorkflowSnapshot: null };
+		return { events: [], eventCount: 0, latestWorkflowSnapshot: null, latestAgentSnapshot: null };
 	}
 
 	events.sort((left: StoredSessionEvent, right: StoredSessionEvent): number => left.createdAt.localeCompare(right.createdAt));
-	return { events, eventCount, latestWorkflowSnapshot };
+	return { events, eventCount, latestWorkflowSnapshot, latestAgentSnapshot };
 }
 
 export async function openSession(sessionId: string): Promise<StoredSession> {
@@ -405,7 +426,8 @@ export async function openSessionRecentTimeline(sessionId: string, limit: number
 		eventCount: eventPage.eventCount,
 		messagesOffset: messagePage.offset,
 		hasMoreBefore: messagePage.offset > 0,
-		latestWorkflowSnapshot: eventPage.latestWorkflowSnapshot
+		latestWorkflowSnapshot: eventPage.latestWorkflowSnapshot,
+		latestAgentSnapshot: eventPage.latestAgentSnapshot
 	};
 }
 
@@ -424,7 +446,8 @@ export async function openSessionTimelinePage(sessionId: string, beforeOffset: n
 		eventCount: eventPage.eventCount,
 		messagesOffset,
 		hasMoreBefore: messagesOffset > 0,
-		latestWorkflowSnapshot: eventPage.latestWorkflowSnapshot
+		latestWorkflowSnapshot: eventPage.latestWorkflowSnapshot,
+		latestAgentSnapshot: eventPage.latestAgentSnapshot
 	};
 }
 
@@ -505,6 +528,18 @@ export async function rewindSessionFromRequest(sessionId: string, requestId: str
 	} catch {
 		// Older sessions may not have workflow persistence yet.
 	}
+	try {
+		const rawAgentEvents: string = await readFile(agentEventsPath(sessionId), "utf8");
+		const keptAgentEvents: StoredAgentEvent[] = parseJsonLines<StoredAgentEvent>(rawAgentEvents)
+			.filter((event: StoredAgentEvent): boolean => !removedRequestIds.has(event.requestId));
+		await writeFile(
+			agentEventsPath(sessionId),
+			keptAgentEvents.map((event: StoredAgentEvent): string => JSON.stringify(event) + "\n").join(""),
+			"utf8"
+		);
+	} catch {
+		// Older sessions may not have agent persistence yet.
+	}
 
 	return keptMessages;
 }
@@ -565,6 +600,23 @@ export async function appendWorkflowEvent(sessionId: string, workflowId: string,
 	await writeFile(eventFile, line, { encoding: "utf8", flag: "a" });
 }
 
+export async function appendAgentEvent(sessionId: string, runId: string, requestId: string, event: string, data: unknown): Promise<void> {
+	await ensureSessionsDir();
+	const eventFile: string = agentEventsPath(sessionId);
+	const timestamp: string = new Date().toISOString();
+	const record: StoredAgentEvent = {
+		id: `agent-event-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+		schemaVersion: 1,
+		runId,
+		requestId,
+		event,
+		data,
+		createdAt: timestamp
+	};
+	const line: string = JSON.stringify(record) + "\n";
+	await writeFile(eventFile, line, { encoding: "utf8", flag: "a" });
+}
+
 export async function readApprovalEvents(sessionId: string): Promise<StoredApprovalEvent[]> {
 	await ensureSessionsDir();
 	try {
@@ -578,6 +630,9 @@ export async function readApprovalEvents(sessionId: string): Promise<StoredAppro
 export async function clearSessionEvents(sessionId: string): Promise<void> {
 	await ensureSessionsDir();
 	await writeFile(eventsPath(sessionId), "", "utf8");
+	await writeFile(agentEventsPath(sessionId), "", "utf8").catch((): void => {});
+	await writeFile(workflowEventsPath(sessionId), "", "utf8").catch((): void => {});
+	await writeFile(approvalEventsPath(sessionId), "", "utf8").catch((): void => {});
 }
 
 export async function listSessions(): Promise<SessionMetadata[]> {

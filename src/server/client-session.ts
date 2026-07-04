@@ -32,6 +32,7 @@ export type PendingAiContinuation = {
 	requestId: string;
 	userCreatedAt: string;
 	stream: boolean;
+	agentRunState?: WorkflowRunState | undefined;
 	workflowState?: WorkflowRunState | undefined;
 };
 
@@ -51,6 +52,7 @@ export type ClientSession = {
 	summaryMessage?: ChatMessage | undefined;
 	summaryCoveredMessageCount?: number | undefined;
 	pendingAiContinuations: Map<string, PendingAiContinuation>;
+	aiDeltaEventBuffers: Map<string, ThinkingEventBuffer>;
 	thinkingEventBuffers: Map<string, ThinkingEventBuffer>;
 	activeAbortControllers: Map<string, AbortController>;
 	inFlightRequestIds: Set<string>;
@@ -67,6 +69,7 @@ export function createClientSession(defaultWorkspace: WorkspaceConfig | undefine
 		approvalGateway: new ApprovalGateway(),
 		activeWorkspace: defaultWorkspace,
 		pendingAiContinuations: new Map(),
+		aiDeltaEventBuffers: new Map(),
 		thinkingEventBuffers: new Map(),
 		activeAbortControllers: new Map(),
 		inFlightRequestIds: new Set(),
@@ -84,6 +87,8 @@ export function clearActiveSession(session: ClientSession): void {
 	session.summaryMessage = undefined;
 	session.summaryCoveredMessageCount = undefined;
 	session.pendingGuides = [];
+	session.aiDeltaEventBuffers.clear();
+	session.thinkingEventBuffers.clear();
 }
 
 export function applySessionMetadata(session: ClientSession, metadata: SessionMetadata): void {

@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-	detectWorkflowVerifyRepairNeed,
-	insertWorkflowAutoRepairPhases
-} from "../src/workflow/repair.js";
+import { insertWorkflowAutoRepairPhases } from "../src/workflow/repair.js";
 import type { WorkflowPhase, WorkflowPlan, WorkflowTodoItem } from "../src/workflow/types.js";
 
 function createPhase(id: string, title: string, toolGroup: WorkflowPhase["toolGroup"]): WorkflowPhase {
@@ -25,27 +22,6 @@ function createTodo(phase: WorkflowPhase, status: WorkflowTodoItem["status"] = "
 		status
 	};
 }
-
-test("workflow verify repair detector catches unresolved validation failures", (): void => {
-	const phase: WorkflowPhase = createPhase("verify", "运行验证", "verify");
-	const reason: string | null = detectWorkflowVerifyRepairNeed(
-		phase,
-		"validate_scene failed. The issue is that `%TitleLabel` is not found. I need to fix the script and use replace_text_in_file."
-	);
-
-	assert.notEqual(reason, null);
-	assert.match(reason ?? "", /validate_scene failed/);
-});
-
-test("workflow verify repair detector ignores clean verification summaries", (): void => {
-	const phase: WorkflowPhase = createPhase("verify", "运行验证", "verify");
-	const reason: string | null = detectWorkflowVerifyRepairNeed(
-		phase,
-		"验证状态：已通过。LSP 零诊断，godot.check_only exit code 0，场景加载无脚本错误。"
-	);
-
-	assert.equal(reason, null);
-});
 
 test("workflow auto repair insertion preserves current todos and adds repair plus reverify", (): void => {
 	const inspect: WorkflowPhase = createPhase("inspect", "理解上下文", "read");
@@ -70,7 +46,7 @@ test("workflow auto repair insertion preserves current todos and adds repair plu
 		plan,
 		3,
 		verify,
-		"VERIFY_REQUIRES_FIX: `%TitleLabel` 未设置 unique name，需要修复脚本或场景。"
+		"`%TitleLabel` 未设置 unique name，需要修复脚本或场景。"
 	);
 
 	assert.deepEqual(

@@ -45,7 +45,7 @@ import {
 	archiveSession, deleteArchivedSession, deleteSession, listArchivedSessions, renameSession, restoreArchivedSession,
 	rewindSessionFromRequest,
 	readSummary, writeSummary,
-	appendSessionEvent, appendApprovalEvent, appendWorkflowEvent, clearSessionEvents, readApprovalEvents,
+	appendSessionEvent, appendApprovalEvent, appendWorkflowEvent, appendAgentEvent, clearSessionEvents, readApprovalEvents,
 	openSessionRecentTimeline, openSessionTimelinePage,
 	type SessionMetadata,
 	type SessionSummary,
@@ -60,7 +60,9 @@ import {
 	saveProviderConfig,
 	type ProviderConfigWithSecret
 } from "../providers/provider-config-store.js";
-import { planWorkflow, READ_TOOLS, VERIFY_TOOLS, WRITE_TOOLS } from "../workflow/planner.js";
+import { classifyProviderError, createProviderStatusEvent } from "../providers/provider-error.js";
+import { generateSessionTitle, shouldApplyGeneratedSessionTitle } from "./session-title.js";
+import { createSingleAnswerPlan, planWorkflow, READ_TOOLS, VERIFY_TOOLS, WRITE_TOOLS } from "../workflow/planner.js";
 import { createLlmWorkflowPlan, reviseLlmWorkflowPlan } from "../workflow/llm-planner.js";
 import {
 	applyDeterministicVerificationGate,
@@ -229,6 +231,14 @@ function isCancellationError(error: unknown, abortSignal?: AbortSignal | undefin
 	return error.name === "AbortError" || error.message.toLowerCase().includes("cancel");
 }
 
+function sendAgentCancelled(socket: WebSocket, requestId: string, session: ClientSession, runId: string = requestId, reason: string = "cancelled"): void {
+	sendSessionEvent(socket, requestId, session, "agent.run.cancelled", {
+		runId,
+		requestId,
+		reason
+	}, requestId);
+}
+
 function sendAiCancelled(socket: WebSocket, requestId: string, reason: string = "cancelled"): void {
 	sendJson(socket, {
 		type: "event",
@@ -310,12 +320,14 @@ function finishRequestExecution(request: ClientRequest, session: ClientSession):
 class WorkflowExecutionError extends Error {
 	readonly plan: WorkflowPlan;
 	readonly originalError: unknown;
+	readonly phaseOutputs: WorkflowPhaseOutput[];
 
-	constructor(message: string, plan: WorkflowPlan, originalError: unknown) {
+	constructor(message: string, plan: WorkflowPlan, originalError: unknown, phaseOutputs: WorkflowPhaseOutput[] = []) {
 		super(message);
 		this.name = "WorkflowExecutionError";
 		this.plan = plan;
 		this.originalError = originalError;
+		this.phaseOutputs = phaseOutputs;
 	}
 }
 
@@ -381,9 +393,9 @@ async function appendChatTurnToSession(
 	userCreatedAt: string = new Date().toISOString(),
 	assistantCreatedAt: string = new Date().toISOString(),
 	additionalContext?: readonly AdditionalContextItem[] | undefined
-): Promise<void> {
+): Promise<boolean> {
 	if (session.messages.some((message: ChatMessage): boolean => message.requestId === requestId)) {
-		return;
+		return false;
 	}
 
 	const userChatMessage: ChatMessage = { role: "user", content: userMessage, requestId, createdAt: userCreatedAt };
@@ -398,6 +410,7 @@ async function appendChatTurnToSession(
 		{ role: "assistant", content: assistantMessage, requestId, createdAt: assistantCreatedAt }
 	];
 	session.messages = nextMessages;
+	return true;
 }
 
 async function selectHistoryForModel(session: ClientSession, budgetTokens: number): Promise<ChatMessage[]> {
@@ -526,7 +539,8 @@ function createTimelinePageResult(page: StoredSessionTimelinePage, limit: number
 		hasMoreBefore: page.hasMoreBefore,
 		messages: page.messages.map(toChatMessage),
 		events: events.map(createSessionEventPreview),
-		latestWorkflowSnapshot: page.latestWorkflowSnapshot === null ? null : createPreviewValue(page.latestWorkflowSnapshot)
+		latestWorkflowSnapshot: page.latestWorkflowSnapshot === null ? null : createPreviewValue(page.latestWorkflowSnapshot),
+		latestAgentSnapshot: page.latestAgentSnapshot === null ? null : createPreviewValue(page.latestAgentSnapshot)
 	};
 }
 
@@ -1000,8 +1014,11 @@ function resolveAllowedToolsForChatParams(params: AiChatParams, activeSkillTools
 }
 
 function shouldPersistSessionEvent(eventName: ServerEvent["event"]): boolean {
-	return eventName.startsWith("tool.")
+	return eventName.startsWith("agent.")
+		|| eventName.startsWith("tool.")
+		|| eventName === "ai.delta"
 		|| eventName.startsWith("ai.thinking.")
+		|| eventName === "ai.status"
 		|| eventName.startsWith("workflow.")
 		|| eventName.startsWith("guide.");
 }
@@ -1025,6 +1042,15 @@ function getWorkflowIdFromEventData(data: unknown): string | null {
 
 	const workflowId: unknown = (data as { workflowId?: unknown }).workflowId;
 	return typeof workflowId === "string" && workflowId.length > 0 ? workflowId : null;
+}
+
+function getAgentRunIdFromEventData(data: unknown): string | null {
+	if (typeof data !== "object" || data === null || !("runId" in data)) {
+		return null;
+	}
+
+	const runId: unknown = (data as { runId?: unknown }).runId;
+	return typeof runId === "string" && runId.length > 0 ? runId : null;
 }
 
 function enqueueSessionEventWrite(session: ClientSession, operation: () => Promise<void>): void {
@@ -1056,7 +1082,30 @@ function flushAllThinkingEventBuffers(session: ClientSession): void {
 	}
 }
 
+function flushAiDeltaEventBuffer(session: ClientSession, key: string): void {
+	const buffer: ThinkingEventBuffer | undefined = session.aiDeltaEventBuffers.get(key);
+	if (buffer === undefined || buffer.text.length === 0) {
+		return;
+	}
+
+	const text: string = buffer.text;
+	buffer.text = "";
+	enqueueSessionEventWrite(session, async (): Promise<void> => {
+		await appendSessionEvent(buffer.sessionId, buffer.requestId, "ai.delta", {
+			type: "ai.delta",
+			text
+		});
+	});
+}
+
+function flushAllAiDeltaEventBuffers(session: ClientSession): void {
+	for (const key of session.aiDeltaEventBuffers.keys()) {
+		flushAiDeltaEventBuffer(session, key);
+	}
+}
+
 async function waitForSessionEventPersistence(session: ClientSession): Promise<void> {
+	flushAllAiDeltaEventBuffers(session);
 	flushAllThinkingEventBuffers(session);
 	await session.eventPersistQueue;
 }
@@ -1070,6 +1119,31 @@ function persistSessionEvent(
 	if (!session.sessionId || !shouldPersistSessionEvent(eventName)) {
 		return;
 	}
+
+	if (eventName === "ai.delta") {
+		const text: string = getThinkingDeltaText(data);
+		if (text.length === 0) {
+			return;
+		}
+
+		const key: string = getThinkingEventBufferKey(session.sessionId, persistRequestId);
+		const existingBuffer: ThinkingEventBuffer | undefined = session.aiDeltaEventBuffers.get(key);
+		const buffer: ThinkingEventBuffer = existingBuffer ?? {
+			sessionId: session.sessionId,
+			requestId: persistRequestId,
+			text: ""
+		};
+		buffer.text += text;
+		session.aiDeltaEventBuffers.set(key, buffer);
+
+		if (buffer.text.length >= THINKING_EVENT_FLUSH_CHARS) {
+			flushAiDeltaEventBuffer(session, key);
+		}
+		return;
+	}
+
+	const aiDeltaKey: string = getThinkingEventBufferKey(session.sessionId, persistRequestId);
+	flushAiDeltaEventBuffer(session, aiDeltaKey);
 
 	if (eventName === "ai.thinking.delta") {
 		const text: string = getThinkingDeltaText(data);
@@ -1108,6 +1182,12 @@ function persistSessionEvent(
 				await appendWorkflowEvent(sessionId, workflowId, persistRequestId, eventName, data);
 			}
 		}
+		if (eventName.startsWith("agent.")) {
+			const runId: string | null = getAgentRunIdFromEventData(data);
+			if (runId !== null) {
+				await appendAgentEvent(sessionId, runId, persistRequestId, eventName, data);
+			}
+		}
 	});
 }
 
@@ -1129,9 +1209,174 @@ function sendSessionEvent(
 	persistSessionEvent(session, eventName, data, persistRequestId);
 }
 
-function createToolEventForwarder(socket: WebSocket, requestId: string, session: ClientSession, persistRequestId: string = requestId): OnToolEvent {
-	return (event): void => {
-		sendSessionEvent(socket, requestId, session, event.type, event, persistRequestId);
+function sendGlobalEvent(socket: WebSocket, requestId: string, eventName: ServerEvent["event"], data: unknown): void {
+	if (socket.readyState !== WebSocket.OPEN) {
+		return;
+	}
+
+	sendJson(socket, {
+		type: "event",
+		id: requestId,
+		event: eventName,
+		data
+	});
+}
+
+function maybeScheduleSessionTitleGeneration(
+	socket: WebSocket,
+	requestId: string,
+	session: ClientSession,
+	params: AiChatParams,
+	options: DeepSeekChatOptions,
+	wasFirstTurn: boolean
+): void {
+	const sessionId: string | undefined = session.sessionId;
+	if (!wasFirstTurn || sessionId === undefined || params.retryFromRequestId !== undefined) {
+		console.log("[session-title] skipped:", {
+			requestId,
+			sessionId: sessionId ?? null,
+			wasFirstTurn,
+			retry: params.retryFromRequestId !== undefined
+		});
+		return;
+	}
+
+	const originalTitle: string | undefined = session.sessionTitle;
+	console.log("[session-title] scheduled:", {
+		requestId,
+		sessionId,
+		originalTitle: originalTitle ?? ""
+	});
+
+	void (async (): Promise<void> => {
+		const storedBefore = await openSession(sessionId);
+		if (!shouldApplyGeneratedSessionTitle(originalTitle, storedBefore.metadata.title)) {
+			console.log("[session-title] skipped because title changed before generation:", {
+				sessionId,
+				originalTitle: originalTitle ?? "",
+				currentTitle: storedBefore.metadata.title
+			});
+			return;
+		}
+
+		const generatedTitle: string = await generateSessionTitle(params.message, options);
+		if (generatedTitle.length === 0) {
+			console.log("[session-title] skipped because generated title is empty:", {
+				sessionId,
+				currentTitle: storedBefore.metadata.title
+			});
+			return;
+		}
+		if (generatedTitle === storedBefore.metadata.title) {
+			sendGlobalEvent(socket, requestId, "session.renamed", {
+				sessionId,
+				title: storedBefore.metadata.title,
+				metadata: storedBefore.metadata
+			});
+			console.log("[session-title] title already current, metadata synchronized:", {
+				sessionId,
+				title: storedBefore.metadata.title
+			});
+			return;
+		}
+
+		const storedAfter = await openSession(sessionId);
+		if (!shouldApplyGeneratedSessionTitle(originalTitle, storedAfter.metadata.title)) {
+			console.log("[session-title] skipped because title changed after generation:", {
+				sessionId,
+				originalTitle: originalTitle ?? "",
+				currentTitle: storedAfter.metadata.title,
+				generatedTitle
+			});
+			return;
+		}
+
+		const metadata: SessionMetadata = await renameSession(sessionId, generatedTitle);
+		if (session.sessionId === sessionId) {
+			session.sessionTitle = metadata.title;
+		}
+		sendGlobalEvent(socket, requestId, "session.renamed", {
+			sessionId,
+			title: metadata.title,
+			metadata
+		});
+		console.log("[session-title] renamed:", {
+			sessionId,
+			from: storedAfter.metadata.title,
+			to: metadata.title
+		});
+	})().catch((error: unknown): void => {
+		console.warn("[session-title] Failed to generate session title:", error);
+	});
+}
+
+function createAgentToolEventForwarder(
+	socket: WebSocket,
+	requestId: string,
+	session: ClientSession,
+	runId: string,
+	stepRunId: string,
+	persistRequestId: string = requestId
+): OnToolEvent {
+	return (event: ToolEvent): void => {
+		if (event.type === "ai.delta") {
+			sendSessionEvent(socket, requestId, session, "agent.message.delta", {
+				runId,
+				stepRunId,
+				text: event.text
+			}, persistRequestId);
+			return;
+		}
+		if (event.type === "ai.thinking.delta") {
+			sendSessionEvent(socket, requestId, session, "agent.thinking.delta", {
+				runId,
+				stepRunId,
+				text: event.text
+			}, persistRequestId);
+			return;
+		}
+		if (event.type === "ai.thinking.done") {
+			sendSessionEvent(socket, requestId, session, "agent.thinking.done", {
+				runId,
+				stepRunId
+			}, persistRequestId);
+			return;
+		}
+		if (event.type === "tool.call") {
+			sendSessionEvent(socket, requestId, session, "agent.tool.call", {
+				...event,
+				type: "agent.tool.call",
+				runId,
+				stepRunId
+			}, persistRequestId);
+			return;
+		}
+		if (event.type === "tool.result") {
+			sendSessionEvent(socket, requestId, session, "agent.tool.result", {
+				...event,
+				type: "agent.tool.result",
+				runId,
+				stepRunId
+			}, persistRequestId);
+			return;
+		}
+		if (event.type === "tool.error") {
+			sendSessionEvent(socket, requestId, session, "agent.tool.error", {
+				...event,
+				type: "agent.tool.error",
+				runId,
+				stepRunId
+			}, persistRequestId);
+			return;
+		}
+		if (event.type === "tool.approval_required") {
+			sendSessionEvent(socket, requestId, session, "agent.tool.approval_required", {
+				...event,
+				type: "agent.tool.approval_required",
+				runId,
+				stepRunId
+			}, persistRequestId);
+		}
 	};
 }
 
@@ -1228,6 +1473,7 @@ function createPendingAiContinuation(
 	}
 
 	if (workflowState !== undefined) {
+		pendingContinuation.agentRunState = workflowState;
 		pendingContinuation.workflowState = workflowState;
 	}
 
@@ -1399,18 +1645,14 @@ function createApprovedWorkflowToolObservation(pendingApproval: PendingApproval,
 	};
 }
 
-function sendAiPaused(socket: WebSocket, requestId: string, agentResult: Extract<DeepSeekAgentResult, { status: "approval_required" }>): void {
-	sendJson(socket, {
-		type: "event",
-		id: requestId,
-		event: "ai.paused",
-		data: {
-			reason: "approval_required",
-			approvalId: agentResult.approvalId,
-			toolName: agentResult.toolName,
-			message: `工具 ${agentResult.toolName} 需要审批：${agentResult.approvalId}`
-		}
-	});
+function sendAgentPaused(socket: WebSocket, requestId: string, session: ClientSession, runId: string, agentResult: Extract<DeepSeekAgentResult, { status: "approval_required" }>, persistRequestId: string = requestId): void {
+	sendSessionEvent(socket, requestId, session, "agent.run.paused", {
+		runId,
+		reason: "approval_required",
+		approvalId: agentResult.approvalId,
+		toolName: agentResult.toolName,
+		message: `工具 ${agentResult.toolName} 需要审批：${agentResult.approvalId}`
+	}, persistRequestId);
 }
 
 async function sendContinuedAgentResult(
@@ -1435,20 +1677,21 @@ async function sendContinuedAgentResult(
 			pendingContinuation.workflowState
 		);
 		await registerPendingApprovalContinuation(session, mcpHost, agentResult.approvalId, nextPendingContinuation);
-		sendAiPaused(socket, requestId, agentResult);
+		sendAgentPaused(socket, requestId, session, pendingContinuation.workflowState?.plan.id ?? pendingContinuation.requestId, agentResult, pendingContinuation.requestId);
 		return;
 	}
 
 	const text: string = agentResult.text;
+	const runId: string = pendingContinuation.workflowState?.plan.id ?? pendingContinuation.requestId;
+	const stepRunId: string = pendingContinuation.workflowState?.activePhaseRunId ?? pendingContinuation.requestId;
 
 	if (!pendingContinuation.stream) {
 		for (let index: number = 0; index < text.length; index += 1) {
-			sendJson(socket, {
-				type: "event",
-				id: requestId,
-				event: "ai.delta",
-				data: { text: text[index] }
-			});
+			sendSessionEvent(socket, requestId, session, "agent.message.delta", {
+				runId,
+				stepRunId,
+				text: text[index]
+			}, pendingContinuation.requestId);
 		}
 	}
 
@@ -1462,19 +1705,16 @@ async function sendContinuedAgentResult(
 		undefined,
 		pendingContinuation.params.additionalContext
 	);
-	sendJson(socket, {
-		type: "event",
-		id: requestId,
-		event: "ai.done",
-		data: {
-			text,
-			context: {
-				historyMessagesStored: session.messages.length,
-				historyBudgetTokens,
-				mcpServers: mcpHost.getConnectedServerIds()
-			}
+	sendSessionEvent(socket, requestId, session, "agent.message.done", {
+		runId,
+		stepRunId,
+		text,
+		context: {
+			historyMessagesStored: session.messages.length,
+			historyBudgetTokens,
+			mcpServers: mcpHost.getConnectedServerIds()
 		}
-	});
+	}, pendingContinuation.requestId);
 }
 
 function sendWorkflowEvent(
@@ -1485,7 +1725,108 @@ function sendWorkflowEvent(
 	data: unknown,
 	persistRequestId: string = requestId
 ): void {
-	sendSessionEvent(socket, requestId, session, eventName, data, persistRequestId);
+	const agentEvent = mapWorkflowEventToAgentEvent(eventName, data);
+	if (agentEvent === null) {
+		return;
+	}
+	sendSessionEvent(socket, requestId, session, agentEvent.eventName, agentEvent.data, persistRequestId);
+}
+
+function mapWorkflowEventToAgentEvent(eventName: ServerEvent["event"], data: unknown): { eventName: ServerEvent["event"]; data: unknown } | null {
+	if (typeof data !== "object" || data === null || Array.isArray(data)) {
+		return null;
+	}
+
+	const record: Record<string, unknown> = data as Record<string, unknown>;
+	const workflowId: string = String(record.workflowId ?? record.runId ?? "");
+	if (eventName === "workflow.started") {
+		return {
+			eventName: "agent.run.started",
+			data: {
+				runId: workflowId,
+				requestId: record.requestId ?? null,
+				title: record.title,
+				source: record.source,
+				steps: record.phases
+			}
+		};
+	}
+	if (eventName === "workflow.todo.updated") {
+		return {
+			eventName: "agent.run.snapshot",
+			data: convertWorkflowSnapshotToAgentSnapshot(record)
+		};
+	}
+	if (eventName === "workflow.phase.started") {
+		return {
+			eventName: "agent.step.started",
+			data: {
+				runId: workflowId,
+				stepId: record.phaseId,
+				stepRunId: record.phaseRunId,
+				title: record.title,
+				toolGroup: record.toolGroup,
+				acceptanceCriteria: record.acceptanceCriteria,
+				repairOf: record.repairOf,
+				repairRound: record.repairRound
+			}
+		};
+	}
+	if (eventName === "workflow.phase.outcome") {
+		const outcome: unknown = record.outcome;
+		return {
+			eventName: "agent.step.outcome",
+			data: {
+				runId: workflowId,
+				stepId: record.phaseId,
+				stepRunId: record.phaseRunId,
+				outcome
+			}
+		};
+	}
+	if (eventName === "workflow.done") {
+		return {
+			eventName: "agent.run.done",
+			data: {
+				runId: workflowId,
+				title: record.title
+			}
+		};
+	}
+	if (eventName === "workflow.error") {
+		return {
+			eventName: "agent.run.error",
+			data: {
+				runId: workflowId,
+				title: record.title,
+				code: record.code ?? "agent_run_error",
+				message: record.message
+			}
+		};
+	}
+	if (eventName === "workflow.phase.done") {
+		return null;
+	}
+
+	return {
+		eventName,
+		data
+	};
+}
+
+function convertWorkflowSnapshotToAgentSnapshot(record: Record<string, unknown>): Record<string, unknown> {
+	return {
+		runId: record.workflowId ?? record.runId,
+		title: record.title,
+		source: record.source,
+		revision: record.revision,
+		steps: record.phases,
+		todos: record.todos,
+		outcomes: record.phaseOutcomes ?? record.outcomes ?? [],
+		activeStepRunId: record.activePhaseRunId ?? record.activeStepRunId,
+		repairRound: record.repairRound,
+		blockedReason: record.blockedReason
+	};
 }
 
 function sendWorkflowTodoSnapshot(
@@ -1518,12 +1859,14 @@ async function runWorkflowPhase(
 	session: ClientSession,
 	requestId: string,
 	persistRequestId: string,
+	runId: string,
+	stepRunId: string,
 	streamPhase: boolean,
 	abortSignal?: AbortSignal | undefined
 ): Promise<WorkflowPhaseRunResult> {
 	const toolStats: WorkflowPhaseToolStats = createEmptyWorkflowPhaseToolStats();
 	let toolObservations: WorkflowToolObservation[] = [];
-	const forwardToolEvent: OnToolEvent = createToolEventForwarder(socket, requestId, session, persistRequestId);
+	const forwardToolEvent: OnToolEvent = createAgentToolEventForwarder(socket, requestId, session, runId, stepRunId, persistRequestId);
 	const onToolEvent: OnToolEvent = (event: ToolEvent): void => {
 		updateWorkflowPhaseToolStats(toolStats, event);
 		toolObservations = applyToolEventToWorkflowObservations(toolObservations, event);
@@ -1652,7 +1995,7 @@ async function continueWorkflowExecution(
 					outcome: blockedOutcome
 				}, persistRequestId);
 				sendWorkflowTodoSnapshot(socket, requestId, session, plan, persistRequestId, phaseOutputs, phaseRunId);
-				throw new WorkflowExecutionError(guardMessage, plan, new Error(guardMessage));
+				throw new WorkflowExecutionError(guardMessage, plan, new Error(guardMessage), phaseOutputs);
 			}
 		}
 
@@ -1716,6 +2059,8 @@ async function continueWorkflowExecution(
 					session,
 					requestId,
 					persistRequestId,
+					plan.id,
+					phaseRunId,
 					streamPhase,
 					abortSignal
 				);
@@ -1745,6 +2090,8 @@ async function continueWorkflowExecution(
 						session,
 						requestId,
 						persistRequestId,
+						plan.id,
+						phaseRunId,
 						false,
 						abortSignal
 					);
@@ -1781,8 +2128,39 @@ async function continueWorkflowExecution(
 				outcome: approvalOutcome
 			}, persistRequestId);
 			sendWorkflowTodoSnapshot(socket, requestId, session, plan, persistRequestId, phaseOutputs, phaseRunId);
-			sendAiPaused(socket, requestId, agentResult);
+			sendAgentPaused(socket, requestId, session, plan.id, agentResult, persistRequestId);
 			return;
+		}
+
+		if (agentResult.status === "protocol_violation") {
+			const protocolOutcome: WorkflowPhaseOutput = {
+				phaseId: phase.id,
+				phaseRunId,
+				title: phase.title,
+				status: "blocked",
+				summary: agentResult.reason,
+				evidence: [],
+				failedChecks: [{
+					code: "protocol_violation",
+					message: agentResult.reason,
+					severity: "error"
+				}],
+				requiredFixes: ["模型必须通过 API tool_calls 调用工具，不能在文本中输出 XML/DSML/裸工具标签。"],
+				modifiedArtifacts: [],
+				verifiedArtifacts: [],
+				toolObservations: phaseToolObservations,
+				blockedReason: agentResult.reason
+			};
+			phaseOutputs = appendPhaseOutput(phaseOutputs, phase, protocolOutcome);
+			plan = updateWorkflowPhaseStatus(plan, phase.id, "failed");
+			sendWorkflowEvent(socket, requestId, session, "workflow.phase.outcome", {
+				workflowId: plan.id,
+				phaseId: phase.id,
+				phaseRunId,
+				outcome: protocolOutcome
+			}, persistRequestId);
+			sendWorkflowTodoSnapshot(socket, requestId, session, plan, persistRequestId, phaseOutputs, phaseRunId);
+			throw new WorkflowExecutionError(agentResult.reason, plan, new Error(agentResult.reason), phaseOutputs);
 		}
 
 		if (shouldRequireWorkflowWriteTool(phase) && !didWorkflowWritePhaseExecute(phase, phaseToolStats)) {
@@ -1820,7 +2198,8 @@ async function continueWorkflowExecution(
 				throw new WorkflowExecutionError(
 					guardMessage,
 					plan,
-					new Error(`${guardMessage}\n\n${phaseOutcome.requiredFixes.join("\n")}`)
+					new Error(`${guardMessage}\n\n${phaseOutcome.requiredFixes.join("\n")}`),
+					phaseOutputs
 				);
 			}
 
@@ -1848,7 +2227,7 @@ async function continueWorkflowExecution(
 				outcome: phaseOutcome
 			}, persistRequestId);
 			sendWorkflowTodoSnapshot(socket, requestId, session, plan, persistRequestId, phaseOutputs);
-			throw new WorkflowExecutionError(phaseOutcome.summary, plan, new Error(phaseOutcome.summary));
+			throw new WorkflowExecutionError(phaseOutcome.summary, plan, new Error(phaseOutcome.summary), phaseOutputs);
 		}
 
 		phaseOutputs = appendPhaseOutput(phaseOutputs, phase, phaseOutcome);
@@ -1885,20 +2264,27 @@ async function continueWorkflowExecution(
 			}, persistRequestId);
 
 			if (streamFinal) {
-				sendJson(socket, {
-					type: "event",
-					id: requestId,
-					event: "ai.done",
-					data: {
-						text: agentResult.text,
-						context: {
-							historyMessagesStored: session.messages.length,
-							historyBudgetTokens: state.historyBudgetTokens,
-							mcpServers: mcpHost.getConnectedServerIds()
-						}
+				sendSessionEvent(socket, requestId, session, "agent.message.done", {
+					runId: plan.id,
+					stepRunId: phaseRunId,
+					text: agentResult.text,
+					context: {
+						historyMessagesStored: session.messages.length,
+						historyBudgetTokens: state.historyBudgetTokens,
+						mcpServers: mcpHost.getConnectedServerIds()
 					}
-				});
+				}, persistRequestId);
 			} else {
+				sendSessionEvent(socket, requestId, session, "agent.message.done", {
+					runId: plan.id,
+					stepRunId: phaseRunId,
+					text: agentResult.text,
+					context: {
+						historyMessagesStored: session.messages.length,
+						historyBudgetTokens: state.historyBudgetTokens,
+						mcpServers: mcpHost.getConnectedServerIds()
+					}
+				}, persistRequestId);
 				sendJson(socket, {
 					type: "response",
 					id: requestId,
@@ -1945,7 +2331,7 @@ async function continueWorkflowExecution(
 				if ((revisedPlan.revision ?? 0) !== (plan.revision ?? 0)) {
 					plan = revisedPlan;
 					state = { ...state, plan, phaseIndex: index + 1, phaseOutputs };
-					sendWorkflowTodoSnapshot(socket, requestId, session, plan, persistRequestId);
+					sendWorkflowTodoSnapshot(socket, requestId, session, plan, persistRequestId, phaseOutputs);
 				}
 			} catch (error: unknown) {
 				console.warn("[workflow] LLM plan revision failed, continuing current plan:", error);
@@ -1971,6 +2357,7 @@ async function startWorkflowExecution(
 ): Promise<void> {
 	sendWorkflowEvent(socket, requestId, session, "workflow.started", {
 		workflowId: plan.id,
+		requestId,
 		title: plan.title,
 		source: plan.source ?? "fixed",
 		revision: plan.revision ?? 0,
@@ -1995,13 +2382,14 @@ async function startWorkflowExecution(
 		}, userCreatedAt, undefined, requestId, abortSignal);
 	} catch (error: unknown) {
 		const latestPlan: WorkflowPlan = error instanceof WorkflowExecutionError ? error.plan : plan;
+		const latestPhaseOutputs: WorkflowPhaseOutput[] = error instanceof WorkflowExecutionError ? error.phaseOutputs : [];
 		if (isCancellationError(error instanceof WorkflowExecutionError ? error.originalError : error, abortSignal)) {
 			const pausedPlan: WorkflowPlan = markRemainingWorkflowTodos(latestPlan, "paused");
-			sendWorkflowTodoSnapshot(socket, requestId, session, pausedPlan);
+			sendWorkflowTodoSnapshot(socket, requestId, session, pausedPlan, requestId, latestPhaseOutputs);
 			throw error;
 		}
 		const failedPlan: WorkflowPlan = markRemainingWorkflowTodos(latestPlan, "failed");
-		sendWorkflowTodoSnapshot(socket, requestId, session, failedPlan);
+		sendWorkflowTodoSnapshot(socket, requestId, session, failedPlan, requestId, latestPhaseOutputs);
 		sendWorkflowEvent(socket, requestId, session, "workflow.error", {
 			workflowId: latestPlan.id,
 			title: latestPlan.title,
@@ -2527,6 +2915,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 					session.summaryMessage = undefined;
 					session.summaryCoveredMessageCount = undefined;
 				}
+				maybeScheduleSessionTitleGeneration(socket, request.id, session, params, options, session.messages.length === 0);
 				const historyBudgetTokens: number = await computeHistoryBudget(
 					session.modelProfile,
 					params,
@@ -2540,137 +2929,73 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 						try {
 							workflowPlan = await createLlmWorkflowPlan(params, options, history, mcpSystemContext + additionalContextSection + guidePromptSection, abortController.signal);
 						} catch (error: unknown) {
-							console.warn("[workflow] LLM planner failed, falling back to fixed workflow:", error);
-							workflowPlan = planWorkflow({
-								...params,
-								options: {
-									...(params.options ?? {}),
-									workflow: "auto"
+							const runId: string = `agent-run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+							sendSessionEvent(socket, request.id, session, "agent.run.started", {
+								runId,
+								requestId: request.id,
+								title: "LLM 计划失败",
+								source: "llm",
+								steps: []
+							});
+							sendSessionEvent(socket, request.id, session, "agent.run.error", {
+								runId,
+								code: "planner_failed",
+								message: error instanceof Error ? error.message : "LLM planner failed"
+							});
+							sendJson(socket, {
+								type: "response",
+								id: request.id,
+								ok: false,
+								error: {
+									code: "planner_failed",
+									message: error instanceof Error ? error.message : "LLM planner failed"
 								}
 							});
+							break;
 						}
 					} else {
 						workflowPlan = planWorkflow(params);
 					}
 				}
 
-				if (workflowPlan !== null) {
-					await startWorkflowExecution(
-						socket,
-						request.id,
-						session,
-						mcpHost,
-						options,
-						workflowPlan,
-						params,
-						history,
-						historyBudgetTokens,
-						turnStartedAt,
-						mcpSystemContext + additionalContextSection + guidePromptSection,
-						guidePromptSection,
-						abortController.signal
-					);
-					break;
+				if (workflowPlan === null) {
+					workflowPlan = createSingleAnswerPlan(params, allowedToolNames);
 				}
 
-				const onToolEvent: OnToolEvent = createToolEventForwarder(socket, request.id, session);
-
-				if (params.options?.stream === true) {
-					const agentResult: DeepSeekAgentResult = await runDeepSeekAgentStreaming(params, options, history, fullSystemPrompt, mcpHost, session.approvalGateway, allowedToolNames, onToolEvent, abortController.signal);
-
-					if (agentResult.status === "approval_required") {
-						const pendingContinuation: PendingAiContinuation = createPendingAiContinuation(
-							params,
-							options,
-							agentResult.continuation,
-							allowedToolNames,
-							params.message,
-							request.id,
-							turnStartedAt,
-							true
-						);
-						await registerPendingApprovalContinuation(session, mcpHost, agentResult.approvalId, pendingContinuation);
-						sendAiPaused(socket, request.id, agentResult);
-						break;
-					}
-
-					const text: string = agentResult.text;
-
-					await appendChatTurnToSession(session, history, params.message, text, request.id, turnStartedAt, undefined, params.additionalContext);
-					sendJson(socket, {
-						type: "event",
-						id: request.id,
-						event: "ai.done",
-						data: {
-							text,
-							context: {
-								historyMessagesUsed: history.length,
-								historyMessagesStored: session.messages.length,
-								historyBudgetTokens,
-								mcpServers: mcpHost.getConnectedServerIds()
-							}
-						}
-					});
-				} else {
-					const agentResult: DeepSeekAgentResult = await runDeepSeekAgent(params, options, history, fullSystemPrompt, mcpHost, session.approvalGateway, allowedToolNames, onToolEvent, abortController.signal);
-
-					if (agentResult.status === "approval_required") {
-						const pendingContinuation: PendingAiContinuation = createPendingAiContinuation(
-							params,
-							options,
-							agentResult.continuation,
-							allowedToolNames,
-							params.message,
-							request.id,
-							turnStartedAt,
-							false
-						);
-						await registerPendingApprovalContinuation(session, mcpHost, agentResult.approvalId, pendingContinuation);
-						sendJson(socket, {
-							type: "response",
-							id: request.id,
-							ok: true,
-							result: {
-								paused: true,
-								reason: "approval_required",
-								approvalId: agentResult.approvalId,
-								toolName: agentResult.toolName,
-								message: `工具 ${agentResult.toolName} 需要审批：${agentResult.approvalId}`
-							}
-						});
-						break;
-					}
-
-					const text: string = agentResult.text;
-					await appendChatTurnToSession(session, history, params.message, text, request.id, turnStartedAt, undefined, params.additionalContext);
-
-					sendJson(socket, {
-						type: "response",
-						id: request.id,
-						ok: true,
-						result: {
-							text,
-							context: {
-								historyMessagesUsed: history.length,
-								historyMessagesStored: session.messages.length,
-								historyBudgetTokens,
-								mcpServers: mcpHost.getConnectedServerIds()
-							}
-						}
-					});
-				}
+				await startWorkflowExecution(
+					socket,
+					request.id,
+					session,
+					mcpHost,
+					options,
+					workflowPlan,
+					params,
+					history,
+					historyBudgetTokens,
+					turnStartedAt,
+					mcpSystemContext + additionalContextSection + guidePromptSection,
+					guidePromptSection,
+					abortController.signal
+				);
+				break;
 			} catch (error: unknown) {
 				if (isCancellationError(error, abortController.signal)) {
-					sendAiCancelled(socket, request.id);
+					sendAgentCancelled(socket, request.id, session);
 					break;
 				}
+				const providerError = classifyProviderError(error);
+				sendSessionEvent(socket, request.id, session, "agent.run.error", {
+					runId: request.id,
+					code: providerError.code,
+					message: providerError.message
+				});
 				sendJson(socket, {
 					type: "response",
 					id: request.id,
 					ok: false,
 					error: {
-						code: "provider_error",
-						message: error instanceof Error ? error.message : "DeepSeek API call failed"
+						code: providerError.code,
+						message: providerError.message
 					}
 				});
 			} finally {
@@ -3984,13 +4309,19 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 						continued: pendingContinuation !== undefined
 					}
 				});
-				sendSessionEvent(socket, request.id, session, "tool.approved", {
-					type: "tool.approved",
+				const continuationRunId: string = pendingContinuation?.workflowState?.plan.id ?? pendingContinuation?.requestId ?? request.id;
+				const continuationStepRunId: string = pendingContinuation?.workflowState?.activePhaseRunId ?? pendingContinuation?.requestId ?? request.id;
+				sendSessionEvent(socket, request.id, session, "agent.tool.approved", {
+					type: "agent.tool.approved",
+					runId: continuationRunId,
+					stepRunId: continuationStepRunId,
 					approvalId: request.params.approvalId,
 					toolName: pending.llmToolName
 				}, pendingContinuation?.requestId ?? request.id);
-				sendSessionEvent(socket, request.id, session, "tool.result", {
-					type: "tool.result",
+				sendSessionEvent(socket, request.id, session, "agent.tool.result", {
+					type: "agent.tool.result",
+					runId: continuationRunId,
+					stepRunId: continuationStepRunId,
 					step: pendingContinuation?.continuation.nextStep ?? 0,
 					toolCallId: pending.toolCallId,
 					toolName: pending.llmToolName,
@@ -4009,7 +4340,14 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 				}
 
 				session.pendingAiContinuations.delete(request.params.approvalId);
-				const onToolEvent: OnToolEvent = createToolEventForwarder(socket, request.id, session, pendingContinuation.requestId);
+				const onToolEvent: OnToolEvent = createAgentToolEventForwarder(
+					socket,
+					request.id,
+					session,
+					continuationRunId,
+					continuationStepRunId,
+					pendingContinuation.requestId
+				);
 				const agentResult: DeepSeekAgentResult = pendingContinuation.stream
 					? await continueDeepSeekAgentStreaming(
 						pendingContinuation.params,
@@ -4067,7 +4405,7 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 				);
 			} catch (error: unknown) {
 				if (isCancellationError(error, abortController.signal)) {
-					sendAiCancelled(socket, request.id);
+					sendAgentCancelled(socket, request.id, session);
 					break;
 				}
 				if (session.sessionId !== undefined) {
@@ -4107,11 +4445,13 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 					ok: true,
 					result: { rejected: true, approvalId: request.params.approvalId, toolName: rejected.llmToolName }
 				});
-				sendSessionEvent(socket, request.id, session, "tool.rejected", {
-					type: "tool.rejected",
+				sendSessionEvent(socket, request.id, session, "agent.tool.rejected", {
+					type: "agent.tool.rejected",
+					runId: pendingState?.requestId ?? request.id,
+					stepRunId: pendingState?.requestId ?? request.id,
 					approvalId: request.params.approvalId,
 					toolName: rejected.llmToolName
-				});
+				}, pendingState?.requestId ?? request.id);
 			} catch (error: unknown) {
 				sendJson(socket, {
 					type: "response",

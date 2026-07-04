@@ -8,7 +8,8 @@ import type {
 	WorkflowToolObservation
 } from "./types.js";
 
-const VERIFY_REQUIRES_FIX_PATTERN: RegExp = /\bVERIFY_REQUIRES_FIX\b|验证失败|验证未通过|校验失败|运行失败/iu;
+const SUMMARY_TOOL_INTENT_PATTERN: RegExp = /(准备|将要|接下来|现在|马上|先).{0,20}(调用|使用|读取|运行|查询)|\b(I will|I'll|I am going to|I'm going to)\b/iu;
+const TOOL_REFERENCE_PATTERN: RegExp = /\b(mcp_[a-z0-9_]+|read_text_file|inspect_scene_tree|replace_text_in_file|query_docs|resolve_library_id|godot\.[a-z0-9_.-]+)\b/iu;
 
 export function createWorkflowPhaseRunId(phaseId: string): string {
 	return `phase-run-${phaseId}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -144,7 +145,7 @@ function isVerificationObservation(observation: WorkflowToolObservation): boolea
 		|| observation.toolName === "mcp_godot_validate_scene_script_references";
 }
 
-function collectFailedChecks(observations: WorkflowToolObservation[], agentResultText: string): WorkflowFailedCheck[] {
+function collectFailedChecks(phase: WorkflowPhase, observations: WorkflowToolObservation[], agentResultText: string): WorkflowFailedCheck[] {
 	const failedChecks: WorkflowFailedCheck[] = [];
 	for (const observation of observations) {
 		if (observation.status === "approval_required") {
@@ -193,10 +194,16 @@ function collectFailedChecks(observations: WorkflowToolObservation[], agentResul
 		}
 	}
 
-	if (VERIFY_REQUIRES_FIX_PATTERN.test(agentResultText) && failedChecks.length === 0) {
+	if (
+		phase.toolGroup === "summarize"
+		&& observations.length === 0
+		&& SUMMARY_TOOL_INTENT_PATTERN.test(agentResultText)
+		&& TOOL_REFERENCE_PATTERN.test(agentResultText)
+	) {
 		failedChecks.push({
-			code: "llm_reported_verify_requires_fix",
-			message: agentResultText.trim()
+			code: "summary_requested_tool",
+			message: "总结阶段输出了工具调用预告或后续读取动作，但 summarize 阶段不能调用工具，也不能把未执行动作当作最终交付。",
+			severity: "error"
 		});
 	}
 
@@ -253,6 +260,10 @@ function createOutcomeStatus(
 		}
 	}
 
+	if (phase.toolGroup === "summarize" && failedChecks.length > 0) {
+		return "blocked";
+	}
+
 	if (failedChecks.length > 0) {
 		return phase.toolGroup === "write" ? "failed" : "needs_fix";
 	}
@@ -266,11 +277,13 @@ export function createWorkflowPhaseOutcome(
 	agentResultText: string,
 	observations: WorkflowToolObservation[]
 ): WorkflowPhaseOutput {
-	const failedChecks: WorkflowFailedCheck[] = collectFailedChecks(observations, agentResultText);
+	const failedChecks: WorkflowFailedCheck[] = collectFailedChecks(phase, observations, agentResultText);
 	const status: WorkflowPhaseOutcomeStatus = createOutcomeStatus(phase, failedChecks, observations);
-	const summaries: string[] = collectSummaries(observations);
+	const summaries: string[] = failedChecks.some((check: WorkflowFailedCheck): boolean => check.code === "summary_requested_tool")
+		? failedChecks.map((check: WorkflowFailedCheck): string => check.message)
+		: collectSummaries(observations);
 	const blockedReason: string | undefined = status === "blocked"
-		? "验证阶段没有运行任何可判定的验证工具。"
+		? (phase.toolGroup === "verify" ? "验证阶段没有运行任何可判定的验证工具。" : summaries[0])
 		: undefined;
 	const trimmedAgentText: string = agentResultText.trim();
 	const summary: string = blockedReason

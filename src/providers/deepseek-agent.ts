@@ -17,24 +17,20 @@ import {
 	type DeepSeekChatOptions
 } from "../providers/deepseek-client.js";
 import type { McpHost } from "../mcp/mcp-host.js";
-import { getToolDefinitions, getToolDefinitionsForNames, DEFAULT_TOOL_STEPS, resolveToolBudget, MAX_TOTAL_TOOL_RESULT_CHARS } from "../tools/llm-tools.js";
+import { getToolDefinitions, getToolDefinitionsForNames, resolveToolBudget, MAX_TOTAL_TOOL_RESULT_CHARS } from "../tools/llm-tools.js";
 import { dispatchToolCalls, ToolApprovalRequiredError, type OnToolEvent } from "../tools/tool-dispatcher.js";
 import { ApprovalGateway } from "../tools/approval-gateway.js";
-import { containsDsmlToolCalls, parseDsmlToolCalls, stripDsmlToolCalls } from "./deepseek-dsml-tools.js";
-import { containsLooseToolCalls, isKnownLooseToolTagName, isPotentialLooseToolTagName, normalizeKnownToolName, parseLooseToolCalls, stripLooseToolCalls } from "./deepseek-loose-tools.js";
+import { containsDsmlToolCalls } from "./deepseek-dsml-tools.js";
+import { containsLooseToolCalls, isKnownLooseToolTagName, isPotentialLooseToolTagName, normalizeKnownToolName } from "./deepseek-loose-tools.js";
 
 const DEFAULT_BASE_URL = "https://api.deepseek.com";
 const DEFAULT_MODEL = "deepseek-v4-flash";
 const FINALIZE_AFTER_TOOL_LIMIT_PROMPT: string =
 	"工具调用阶段已经达到后端限制。请停止请求更多工具，基于目前已经获得的工具结果直接回答用户。"
 	+ "如果信息不完整，请明确说明哪些部分是根据已有信息总结的，哪些部分还需要进一步检查。";
-const RETRY_WITHOUT_TOOL_SYNTAX_PROMPT: string =
-	"上一条候选回复包含内部工具调用标签，但当前阶段不允许调用工具。"
-	+ "请不要输出 XML、DSML、函数调用标签或任何工具请求。"
-	+ "直接基于对话和已有工具结果给用户最终答复；如果缺少信息，请简短说明限制。";
-
 export type DeepSeekAgentResult =
 	| { status: "completed"; text: string }
+	| { status: "protocol_violation"; text: string; reason: string }
 	| {
 		status: "approval_required";
 		approvalId: string;
@@ -150,37 +146,6 @@ function containsKnownToolSyntax(text: string | null | undefined): boolean {
 	return containsDsmlToolCalls(text) || containsLooseToolCalls(text);
 }
 
-function stripKnownToolSyntax(text: string): string {
-	return stripLooseToolCalls(stripDsmlToolCalls(text));
-}
-
-function parseTextToolCalls(
-	text: string,
-	step: number,
-	allowedToolNames: ReadonlySet<string>
-): ChatCompletionMessageToolCall[] {
-	const dsmlToolCalls: ChatCompletionMessageToolCall[] = containsDsmlToolCalls(text)
-		? filterToolCallsForAllowedTools(parseDsmlToolCalls(text, `dsml-step-${step}`), allowedToolNames)
-		: [];
-	const looseToolCalls: ChatCompletionMessageToolCall[] = containsLooseToolCalls(text, allowedToolNames)
-		? parseLooseToolCalls(text, `loose-step-${step}`, allowedToolNames)
-		: [];
-
-	return [...dsmlToolCalls, ...looseToolCalls];
-}
-
-function extractToolNames(toolCalls: ChatCompletionMessageToolCall[]): string[] {
-	const toolNames: Set<string> = new Set();
-
-	for (const toolCall of toolCalls) {
-		if (isFunctionToolCall(toolCall)) {
-			toolNames.add(normalizeKnownToolName(toolCall.function.name) ?? toolCall.function.name);
-		}
-	}
-
-	return [...toolNames];
-}
-
 function createToolCallPreludeDelta(
 	contentText: string | null,
 	emittedContentText: string
@@ -189,7 +154,7 @@ function createToolCallPreludeDelta(
 		return "";
 	}
 
-	const naturalPrelude: string = stripKnownToolSyntax(contentText ?? "").trim();
+	const naturalPrelude: string = (contentText ?? "").trim();
 	if (naturalPrelude.length > 0) {
 		return `\n\n${naturalPrelude}\n\n`;
 	}
@@ -253,23 +218,6 @@ function findDsmlClosingTagEnd(text: string): number {
 	const closingPattern: RegExp = /<\/\s*[｜|]+\s*DSML\s*[｜|]+\s*tool_calls\s*>/iu;
 	const match: RegExpExecArray | null = closingPattern.exec(text);
 	return match === null ? -1 : match.index + match[0].length;
-}
-
-function getUnemittedSuffix(finalText: string, emittedText: string): string {
-	if (emittedText.length === 0) {
-		return finalText;
-	}
-
-	if (finalText.startsWith(emittedText)) {
-		return finalText.slice(emittedText.length);
-	}
-
-	const trimmedEmittedText: string = emittedText.trimEnd();
-	if (trimmedEmittedText.length > 0 && finalText.startsWith(trimmedEmittedText)) {
-		return finalText.slice(trimmedEmittedText.length);
-	}
-
-	return `\n\n${finalText}`;
 }
 
 class ToolSyntaxStreamFilter {
@@ -555,7 +503,7 @@ function createAssistantToolMessage(
 ): ChatCompletionMessageParam {
 	const message: Record<string, unknown> = {
 		role: "assistant",
-		content: contentText === null ? contentText : stripKnownToolSyntax(contentText),
+		content: contentText,
 		tool_calls: toolCalls
 	};
 
@@ -564,25 +512,6 @@ function createAssistantToolMessage(
 	}
 
 	return message as unknown as ChatCompletionMessageParam;
-}
-
-function createToolSyntaxLeakFallback(text: string, reason: string): string {
-	const strippedText: string = stripKnownToolSyntax(text);
-	const parsedToolCalls: ChatCompletionMessageToolCall[] = [
-		...parseDsmlToolCalls(text, "blocked-dsml"),
-		...parseLooseToolCalls(text, "blocked-loose")
-	];
-	const toolNames: string[] = extractToolNames(parsedToolCalls);
-	const toolText: string = toolNames.length > 0 ? `\n\n模型还尝试调用工具：${toolNames.map((name: string): string => `\`${name}\``).join(", ")}。` : "";
-	const prefix: string = strippedText.length > 0 ? `${strippedText}\n\n` : "";
-
-	return [
-		prefix.trimEnd(),
-		"工具调用没有继续执行，因为当前回复已经进入收束阶段。",
-		`原因：${reason}`,
-		"我已隐藏模型输出中的工具调用文本，避免把内部工具协议直接显示给你。",
-		toolText.trim()
-	].filter((part: string): boolean => part.length > 0).join("\n");
 }
 
 async function createFinalAnswer(
@@ -615,46 +544,10 @@ async function createFinalAnswer(
 	}
 
 	if (containsKnownToolSyntax(text)) {
-		return createToolSyntaxLeakFallback(text, reason);
+		throw new Error(`protocol_violation: ${reason}`);
 	}
 
 	return text;
-}
-
-async function createToollessRetryAnswer(
-	client: OpenAI,
-	params: AiChatParams,
-	options: DeepSeekChatOptions,
-	messages: ChatCompletionMessageParam[],
-	reason: string,
-	abortSignal?: AbortSignal | undefined
-): Promise<string> {
-	const retryMessages: ChatCompletionMessageParam[] = [
-		...messages,
-		{
-			role: "system",
-			content: `${RETRY_WITHOUT_TOOL_SYNTAX_PROMPT}\n\n拦截原因：${reason}`
-		}
-	];
-	const requestBody: ChatCompletionCreateParamsNonStreaming = {
-		model: options.model ?? process.env.DEEPSEEK_MODEL ?? DEFAULT_MODEL,
-		messages: retryMessages
-	};
-
-	applyChatOptions(requestBody, params);
-
-	const completion = await client.chat.completions.create(requestBody, { signal: abortSignal });
-	const text: string | null | undefined = completion.choices[0]?.message.content;
-
-	if (!text) {
-		throw new Error("LLM returned empty response after tool syntax retry");
-	}
-
-	if (containsKnownToolSyntax(text)) {
-		return createToolSyntaxLeakFallback(text, "无工具阶段重试后仍输出工具标签");
-	}
-
-	return stripKnownToolSyntax(text);
 }
 
 async function runAgentLoop(
@@ -729,13 +622,6 @@ async function runAgentLoop(
 			toolCalls = filterToolCallsForAllowedTools(toolCalls, allowedToolNames);
 		}
 
-		if (tools.length > 0 && (!toolCalls || toolCalls.length === 0) && contentText !== null) {
-			const parsedToolCalls: ChatCompletionMessageToolCall[] = parseTextToolCalls(contentText, step, allowedToolNames);
-			if (parsedToolCalls.length > 0) {
-				toolCalls = parsedToolCalls;
-			}
-		}
-
 		if (!toolCalls || toolCalls.length === 0) {
 			const text: string | null = contentText;
 
@@ -744,19 +630,15 @@ async function runAgentLoop(
 			}
 
 			const hasKnownToolSyntax: boolean = containsKnownToolSyntax(text) || suppressedStreamToolSyntax;
-			const finalText: string = hasKnownToolSyntax && tools.length === 0
-				? await createToollessRetryAnswer(client, params, options, messages, "当前阶段没有可执行的工具调用", abortSignal)
-				: hasKnownToolSyntax
-					? createToolSyntaxLeakFallback(text, "当前阶段没有可执行的工具调用")
-					: stripKnownToolSyntax(text);
-			if (streamAssistant && hasKnownToolSyntax) {
-				const suffixText: string = getUnemittedSuffix(finalText, emittedContentText);
-				if (suffixText.length > 0) {
-					onEvent?.({ type: "ai.delta", text: suffixText });
-				}
+			if (hasKnownToolSyntax) {
+				return {
+					status: "protocol_violation",
+					text: "",
+					reason: "模型在文本内容中输出了 XML/DSML/裸工具标签；AgentRun v2 只接受 API tool_calls。"
+				};
 			}
 
-			return { status: "completed", text: finalText };
+			return { status: "completed", text };
 		}
 
 		emitModelToolCallPrelude(contentText, streamAssistant ? emittedContentText : "", onEvent);

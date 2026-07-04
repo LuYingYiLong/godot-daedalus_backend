@@ -165,22 +165,56 @@ function sendChatText(
 		return;
 	}
 
+	const runId: string = `slash-${request.id}`;
+	sendJson(socket, {
+		type: "event",
+		id: request.id,
+		event: "agent.run.started",
+		data: {
+			runId,
+			requestId: request.id,
+			title: "Slash command",
+			source: "slash",
+			steps: [{
+				id: "answer",
+				title: "回答命令",
+				toolGroup: "answer",
+				acceptanceCriteria: []
+			}]
+		}
+	});
+
 	for (let index: number = 0; index < text.length; index += 1) {
 		sendJson(socket, {
 			type: "event",
 			id: request.id,
-			event: "ai.delta",
-			data: { text: text[index] }
+			event: "agent.message.delta",
+			data: {
+				runId,
+				stepRunId: `${runId}-answer`,
+				text: text[index]
+			}
 		});
 	}
 
 	sendJson(socket, {
 		type: "event",
 		id: request.id,
-		event: "ai.done",
+		event: "agent.message.done",
 		data: {
+			runId,
+			stepRunId: `${runId}-answer`,
 			text,
 			context: createSessionInfo(session, mcpHost)
+		}
+	});
+	sendJson(socket, {
+		type: "event",
+		id: request.id,
+		event: "agent.run.done",
+		data: {
+			runId,
+			title: "Slash command"
 		}
 	});
 }

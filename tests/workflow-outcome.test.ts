@@ -78,6 +78,19 @@ test("verify phase without deterministic validation tool becomes blocked", (): v
 	assert.equal(outcome.failedChecks[0]?.code, "verify_tool_missing");
 });
 
+test("summarize phase cannot complete with a tool-call prelude", (): void => {
+	const outcome = createWorkflowPhaseOutcome(
+		createPhase("summarize", "summarize"),
+		"phase-run-1",
+		"已经拿到了上下文。现在读取 `AGENTS.md` 内容，准备用 `read_text_file` 读取 `res://addons/godot_daedalus/AGENTS.md`，大概几秒。",
+		[]
+	);
+
+	assert.equal(outcome.status, "blocked");
+	assert.equal(outcome.failedChecks[0]?.code, "summary_requested_tool");
+	assert.match(outcome.summary, /summarize 阶段不能调用工具/);
+});
+
 test("successful LSP diagnostics lets verify phase complete", (): void => {
 	const observations: WorkflowToolObservation[] = applyEvents([
 		{
@@ -106,8 +119,20 @@ test("summarize gate blocks unresolved failed outcome until a later completed ou
 	const failedOutcome = createWorkflowPhaseOutcome(
 		verifyPhase,
 		"phase-run-1",
-		"VERIFY_REQUIRES_FIX: 场景引用缺失。",
-		[]
+		"",
+		applyEvents([{
+			type: "tool.result",
+			step: 0,
+			toolCallId: "call-1",
+			toolName: "mcp_godot_validate_scene_script_references",
+			resultChars: 120,
+			truncated: false,
+			ok: false,
+			validationStatus: "failed",
+			summary: "场景引用缺失。",
+			failedChecks: ["`%TitleLabel` 未设置 unique name。"],
+			artifactRefs: ["res://scenes/main.tscn"]
+		}])
 	);
 	const repairedOutcome = createWorkflowPhaseOutcome(
 		verifyPhase,

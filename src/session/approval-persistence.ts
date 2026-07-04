@@ -20,6 +20,7 @@ export type PersistedPendingAiContinuation = {
 	requestId: string;
 	userCreatedAt: string;
 	stream: boolean;
+	agentRunState?: WorkflowRunState | undefined;
 	workflowState?: WorkflowRunState | undefined;
 };
 
@@ -88,8 +89,10 @@ export function createRuntimePendingContinuation(
 	if (persisted.allowedToolNames !== undefined) {
 		continuation.allowedToolNames = [...persisted.allowedToolNames];
 	}
-	if (persisted.workflowState !== undefined) {
-		continuation.workflowState = persisted.workflowState;
+	const persistedRunState: WorkflowRunState | undefined = persisted.agentRunState ?? persisted.workflowState;
+	if (persistedRunState !== undefined) {
+		continuation.agentRunState = persistedRunState;
+		continuation.workflowState = persistedRunState;
 	}
 
 	return continuation;
@@ -206,8 +209,9 @@ function createPersistedPendingContinuation(continuation: PendingAiContinuation)
 	if (continuation.allowedToolNames !== undefined) {
 		persisted.allowedToolNames = [...continuation.allowedToolNames];
 	}
-	if (continuation.workflowState !== undefined) {
-		persisted.workflowState = continuation.workflowState;
+	const runState: WorkflowRunState | undefined = continuation.agentRunState ?? continuation.workflowState;
+	if (runState !== undefined) {
+		persisted.agentRunState = runState;
 	}
 
 	return persisted;

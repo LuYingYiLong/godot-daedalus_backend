@@ -108,7 +108,7 @@ const PHASE_TEMPLATES: Record<FixedWorkflowPhaseId, WorkflowPhase> = {
 		toolGroup: "verify",
 		toolBudget: "normal",
 		allowedTools: [...READ_TOOLS, ...VERIFY_TOOLS],
-		instruction: "运行可用的低成本验证。修改 .gd 后优先读取 LSP diagnostics，再运行 Godot check-only、类型检查或安全预设。记录通过、失败和未覆盖项。如果发现失败或需要修改的问题，用 VERIFY_REQUIRES_FIX: 开头说明阻塞点，不要把验证阶段标成通过。",
+		instruction: "运行可用的低成本验证。修改 .gd 后优先读取 LSP diagnostics，再运行 Godot check-only、类型检查或安全预设。记录通过、失败和未覆盖项。如果发现失败或需要修改的问题，明确列出失败检查和修复要求，不要把验证阶段标成通过。",
 		acceptanceCriteria: ["相关 LSP diagnostics、Godot check-only 或场景验证已经实际运行且无阻塞失败。"]
 	},
 	summarize: {
@@ -155,6 +155,29 @@ function createPlan(title: string, phaseIds: FixedWorkflowPhaseId[]): WorkflowPl
 		title,
 		phases,
 		todos: createTodos(phases),
+		source: "fixed",
+		revision: 0
+	};
+}
+
+export function createSingleAnswerPlan(params: AiChatParams, allowedTools?: readonly string[] | undefined): WorkflowPlan {
+	const title: string = createWorkflowTitle(params.message);
+	const phase: WorkflowPhase = {
+		id: "answer",
+		title: "回答用户",
+		toolGroup: "summarize",
+		promptId: params.promptId,
+		skillId: params.skillId,
+		toolBudget: (params.options?.toolBudget ?? "normal"),
+		allowedTools: allowedTools !== undefined ? [...allowedTools] : [...READ_TOOLS, ...VERIFY_TOOLS, CUSTOM_MCP_TOOLS_SENTINEL],
+		instruction: "完成用户本轮请求。可以读取或验证必要信息，但不得用文本 XML/DSML/裸标签模拟工具调用；如需工具，必须使用 API tool_calls。",
+		acceptanceCriteria: ["已直接回答用户本轮请求，或说明无法完成的明确原因。"]
+	};
+	return {
+		id: createWorkflowId(),
+		title,
+		phases: [phase],
+		todos: createTodos([phase]),
 		source: "fixed",
 		revision: 0
 	};

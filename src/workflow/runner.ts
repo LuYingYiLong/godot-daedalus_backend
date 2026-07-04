@@ -134,7 +134,7 @@ function createPhaseToolGroupRules(phase: WorkflowPhase): string[] {
 	if (phase.toolGroup === "verify") {
 		return [
 			"- 当前是验证阶段：优先实际调用诊断或验证工具，不要只描述验证计划。",
-			"- 如果验证失败或发现需要修改的问题，不要声称阶段完成；用 `VERIFY_REQUIRES_FIX:` 开头说明失败点和需要修复的内容。",
+			"- 如果验证失败或发现需要修改的问题，不要声称阶段完成；明确列出失败点和需要修复的内容。",
 			"- 当前阶段没有写入职责；不要说“接下来我会修改”后直接结束。需要修改时明确交给后续修复阶段。"
 		];
 	}
@@ -142,11 +142,8 @@ function createPhaseToolGroupRules(phase: WorkflowPhase): string[] {
 	return [];
 }
 
-export function appendPhaseOutput(outputs: WorkflowPhaseOutput[], phase: WorkflowPhase, output: WorkflowPhaseOutput | string): WorkflowPhaseOutput[] {
-	const normalizedOutput: WorkflowPhaseOutput = typeof output === "string"
-		? createLegacyCompletedPhaseOutput(phase, output)
-		: output;
-	const text: string | undefined = normalizedOutput.text;
+export function appendPhaseOutput(outputs: WorkflowPhaseOutput[], _phase: WorkflowPhase, output: WorkflowPhaseOutput): WorkflowPhaseOutput[] {
+	const text: string | undefined = output.text;
 	const clippedText: string | undefined = text !== undefined && text.length > MAX_PHASE_OUTPUT_CHARS
 		? `${text.slice(0, MAX_PHASE_OUTPUT_CHARS)}\n\n[阶段输出已截断，原始长度 ${text.length} 字符]`
 		: text;
@@ -154,7 +151,7 @@ export function appendPhaseOutput(outputs: WorkflowPhaseOutput[], phase: Workflo
 	return [
 		...outputs,
 		{
-			...normalizedOutput,
+			...output,
 			text: clippedText
 		}
 	];
@@ -179,26 +176,6 @@ function formatPhaseOutput(output: WorkflowPhaseOutput): string {
 		parts.push(output.text);
 	}
 	return parts.join("\n");
-}
-
-function createLegacyCompletedPhaseOutput(phase: WorkflowPhase, text: string): WorkflowPhaseOutput {
-	const clippedText: string = text.length > MAX_PHASE_OUTPUT_CHARS
-		? `${text.slice(0, MAX_PHASE_OUTPUT_CHARS)}\n\n[阶段输出已截断，原始长度 ${text.length} 字符]`
-		: text;
-	return {
-		phaseId: phase.id,
-		phaseRunId: `legacy-${phase.id}`,
-		title: phase.title,
-		status: "completed",
-		summary: clippedText,
-		evidence: [],
-		failedChecks: [],
-		requiredFixes: [],
-		modifiedArtifacts: [],
-		verifiedArtifacts: [],
-		toolObservations: [],
-		text: clippedText
-	};
 }
 
 function getPhaseStatus(plan: WorkflowPlan, phaseId: string): WorkflowTodoStatus {
