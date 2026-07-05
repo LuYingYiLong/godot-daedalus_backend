@@ -23,11 +23,14 @@
     "terminal:mcp": "tsx src/mcp/terminal-mcp-server.ts",
     "typecheck": "tsc --noEmit",
     "test": "npm run typecheck && node --import tsx --test \"tests/*.test.ts\"",
+    "check": "npm test && npm run pack:check",
     "pack:check": "npm pack --dry-run",
-    "prepublishOnly": "npm test"
+    "prepublishOnly": "npm test",
+    "prepare": "husky",
+    "commitlint": "commitlint --from=HEAD~10"
   },
   "engines": {
-    "node": ">=20.19"
+    "node": ">=22.12.0"
   },
   "keywords": [
     "godot",
@@ -49,7 +52,10 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@commitlint/cli": "^21.2.0",
+    "@commitlint/config-conventional": "^21.2.0",
     "@types/node": "^26.0.1",
-    "@types/ws": "^8.18.1"
+    "@types/ws": "^8.18.1",
+    "husky": "^9.1.7"
   }
 }
