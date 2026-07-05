@@ -23,31 +23,13 @@ import { dispatchToolCalls, ToolApprovalRequiredError, type OnToolEvent } from "
 import { ApprovalGateway } from "../tools/approval-gateway.js";
 import { containsDsmlToolCalls } from "./deepseek-dsml-tools.js";
 import { containsLooseToolCalls, isKnownLooseToolTagName, isPotentialLooseToolTagName, normalizeKnownToolName } from "./deepseek-loose-tools.js";
+import type { ApprovedToolResult, ChatCompletionsAgentContinuation, ProviderAgentResult } from "./agent-types.js";
 
 const FINALIZE_AFTER_TOOL_LIMIT_PROMPT: string =
 	"工具调用阶段已经达到后端限制。请停止请求更多工具，基于目前已经获得的工具结果直接回答用户。"
 	+ "如果信息不完整，请明确说明哪些部分是根据已有信息总结的，哪些部分还需要进一步检查。";
-export type DeepSeekAgentResult =
-	| { status: "completed"; text: string }
-	| { status: "protocol_violation"; text: string; reason: string }
-	| {
-		status: "approval_required";
-		approvalId: string;
-		toolName: string;
-		reason: string;
-		continuation: DeepSeekAgentContinuation;
-	};
-
-export type DeepSeekAgentContinuation = {
-	messages: ChatCompletionMessageParam[];
-	nextStep: number;
-	totalToolResultChars: number;
-};
-
-export type ApprovedToolResult = {
-	toolCallId: string;
-	content: string;
-};
+export type DeepSeekAgentContinuation = ChatCompletionsAgentContinuation;
+export type DeepSeekAgentResult = ProviderAgentResult;
 
 type StreamedAssistantMessage = {
 	contentText: string;
@@ -669,6 +651,7 @@ async function runAgentLoop(
 					toolName: error.pendingApproval.llmToolName,
 					reason: error.pendingApproval.reason,
 					continuation: {
+						kind: "chat_completions",
 						messages: continuationMessages,
 						nextStep: step + 1,
 						totalToolResultChars

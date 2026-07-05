@@ -187,6 +187,7 @@ import {
 	normalizeNextStepHints,
 	createNextStepHintPrompt,
 	createNextStepHints,
+	normalizeChatParamsForMode,
 	resolveAllowedToolsForChatParams,
 	shouldPersistSessionEvent,
 	getThinkingEventBufferKey,
@@ -309,9 +310,9 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				break;
 			}
 
-			const params: AiChatParams = slashCommandResult.type === "ai"
+			const params: AiChatParams = normalizeChatParamsForMode(slashCommandResult.type === "ai"
 				? slashCommandResult.params
-				: request.params;
+				: request.params);
 			const apiKey: string | undefined = await ensureProviderConfigured(session);
 
 			if (!apiKey) {
@@ -357,7 +358,8 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				const systemPrompt: string = await composeSystemPrompt(
 					promptId,
 					params.systemPrompt,
-					createProviderRuntimeContext(session)
+					createProviderRuntimeContext(session),
+					params.mode
 				);
 				const skillPrompt: string = await composeSkillPrompt(activeSkillId);
 				const mcpSystemContext: string = await createMcpSystemContext(mcpHost, session);

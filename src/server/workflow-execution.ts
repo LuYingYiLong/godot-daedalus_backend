@@ -1,14 +1,8 @@
 import WebSocket from "ws";
 import { composeSystemPrompt, listPromptTemplates } from "../prompts/registry.js";
 import type { AdditionalContextItem, AiChatParams, ChatMessage, ClientRequest, ModelProfile, ProviderId, ServerEvent } from "../protocol/types.js";
-import {
-	continueDeepSeekAgent,
-	continueDeepSeekAgentStreaming,
-	runDeepSeekAgent,
-	runDeepSeekAgentStreaming,
-	type DeepSeekAgentContinuation,
-	type DeepSeekAgentResult
-} from "../providers/deepseek-agent.js";
+import type { ProviderAgentResult } from "../providers/agent-types.js";
+import { runProviderAgent, runProviderAgentStreaming } from "../providers/provider-agent.js";
 import type { OnToolEvent, ToolEvent } from "../tools/tool-dispatcher.js";
 import { parseToolResultSummary } from "../tools/tool-result-parser.js";
 import { chatWithDeepSeek, createDeepSeekClient, resolveChatModel, type ProviderChatOptions } from "../providers/deepseek-client.js";
@@ -506,9 +500,9 @@ export async function runWorkflowPhase(
 		toolObservations = applyToolEventToWorkflowObservations(toolObservations, event);
 		forwardToolEvent(event);
 	};
-	const agentResult: DeepSeekAgentResult = streamPhase
-		? await runDeepSeekAgentStreaming(params, options, history, fullSystemPrompt, mcpHost, session.approvalGateway, phase.allowedTools, onToolEvent, abortSignal)
-		: await runDeepSeekAgent(params, options, history, fullSystemPrompt, mcpHost, session.approvalGateway, phase.allowedTools, onToolEvent, abortSignal);
+	const agentResult: ProviderAgentResult = streamPhase
+		? await runProviderAgentStreaming(params, options, history, fullSystemPrompt, mcpHost, session.approvalGateway, phase.allowedTools, onToolEvent, abortSignal)
+		: await runProviderAgent(params, options, history, fullSystemPrompt, mcpHost, session.approvalGateway, phase.allowedTools, onToolEvent, abortSignal);
 	return {
 		agentResult,
 		toolStats,
@@ -524,7 +518,7 @@ export async function createWorkflowPhasePrompt(
 	requestId: string,
 	guidePromptSection: string = ""
 ): Promise<string> {
-	const systemPrompt: string = await composeSystemPrompt(phase.promptId ?? params.promptId, params.systemPrompt, createProviderRuntimeContext(session));
+	const systemPrompt: string = await composeSystemPrompt(phase.promptId ?? params.promptId, params.systemPrompt, createProviderRuntimeContext(session), params.mode);
 	const skillPrompt: string = await composeSkillPrompt(phase.skillId);
 	const mcpSystemContext: string = await createMcpSystemContext(mcpHost, session);
 	const additionalContextSection: string = createAdditionalContextPromptSection(params.additionalContext);
@@ -553,7 +547,7 @@ export async function createWorkflowPhasePrompt(
 export function createWorkflowPendingContinuation(
 	phaseParams: AiChatParams,
 	options: ProviderChatOptions,
-	agentResult: Extract<DeepSeekAgentResult, { status: "approval_required" }>,
+	agentResult: Extract<ProviderAgentResult, { status: "approval_required" }>,
 	phase: WorkflowPhase,
 	workflowState: WorkflowRunState,
 	requestId: string,
@@ -581,7 +575,7 @@ export async function continueWorkflowExecution(
 	options: ProviderChatOptions,
 	workflowState: WorkflowRunState,
 	userCreatedAt: string,
-	initialAgentResult?: DeepSeekAgentResult | undefined,
+	initialAgentResult?: ProviderAgentResult | undefined,
 	persistRequestId: string = requestId,
 	abortSignal?: AbortSignal | undefined,
 	initialToolObservations: WorkflowToolObservation[] = []
@@ -589,7 +583,7 @@ export async function continueWorkflowExecution(
 	let state: WorkflowRunState = workflowState;
 	let plan: WorkflowPlan = state.plan;
 	let phaseOutputs = state.phaseOutputs;
-	let agentResultOverride: DeepSeekAgentResult | undefined = initialAgentResult;
+	let agentResultOverride: ProviderAgentResult | undefined = initialAgentResult;
 	let agentResultOverrideToolObservations: WorkflowToolObservation[] = initialToolObservations;
 	const streamFinal: boolean = state.originalParams.options?.stream === true;
 	const planningContext: string = state.planningContext ?? "";
@@ -660,7 +654,7 @@ export async function continueWorkflowExecution(
 			pendingGuidePromptSection
 		].filter((section: string): boolean => section.length > 0).join("\n\n");
 		const fullSystemPrompt: string = await createWorkflowPhasePrompt(phase, phaseParams, mcpHost, session, requestId, guidePromptSection);
-		let agentResult: DeepSeekAgentResult;
+		let agentResult: ProviderAgentResult;
 		let phaseToolStats: WorkflowPhaseToolStats = createEmptyWorkflowPhaseToolStats();
 		let phaseToolObservations: WorkflowToolObservation[] = [];
 		try {

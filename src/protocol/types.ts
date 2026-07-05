@@ -11,7 +11,7 @@ export type PromptId = z.infer<typeof promptIdSchema>;
 
 export type SkillId = z.infer<typeof skillIdSchema>;
 
-export type ProviderId = "deepseek" | "moonshot";
+export type ProviderId = "deepseek" | "moonshot" | "openai";
 
 export type ChatMessage = {
 	role: "system" | "user" | "assistant";

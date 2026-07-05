@@ -1,5 +1,5 @@
 import type { AiChatParams, ProviderId } from "../protocol/types.js";
-import type { DeepSeekAgentContinuation } from "../providers/deepseek-agent.js";
+import type { AgentContinuation } from "../providers/agent-types.js";
 import type { ProviderChatOptions } from "../providers/deepseek-client.js";
 import type { PendingAiContinuation } from "../server/client-session.js";
 import type { PendingApproval } from "../tools/approval-gateway.js";
@@ -15,7 +15,7 @@ export type PersistedProviderChatOptions = {
 export type PersistedPendingAiContinuation = {
 	params: AiChatParams;
 	options: PersistedProviderChatOptions;
-	continuation: DeepSeekAgentContinuation;
+	continuation: AgentContinuation;
 	allowedToolNames?: readonly string[] | undefined;
 	userMessage: string;
 	requestId: string;

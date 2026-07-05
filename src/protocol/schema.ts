@@ -16,7 +16,7 @@ export const skillIdSchema = z.enum([
 	"backend.helper"
 ]);
 
-export const providerIdSchema = z.enum(["deepseek", "moonshot"]);
+export const providerIdSchema = z.enum(["deepseek", "moonshot", "openai"]);
 
 const imageContextDataSchema = z.object({
 	mimeType: z.enum(SUPPORTED_IMAGE_MIME_TYPES as [string, ...string[]]),
@@ -65,6 +65,7 @@ export const additionalContextItemSchema = z.object({
 
 export const aiChatParamsSchema = z.object({
 	message: z.string(),
+	mode: z.enum(["agent", "ask"]).optional(),
 	promptId: promptIdSchema.optional(),
 	skillId: skillIdSchema.optional(),
 	systemPrompt: z.string().optional(),

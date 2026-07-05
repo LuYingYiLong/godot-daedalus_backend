@@ -9,6 +9,7 @@ import type {
 import type { AiChatParams, ChatMessage, ProviderId } from "../protocol/types.js";
 import { getProviderDefaultBaseUrl, getProviderDefaultModel } from "./provider-registry.js";
 import { createProviderMessages } from "./provider-image-content.js";
+import { chatWithOpenAIResponses, streamChatWithOpenAIResponses } from "./openai-responses-client.js";
 
 export type ProviderChatOptions = {
 	provider: ProviderId;
@@ -20,10 +21,13 @@ export type ProviderChatOptions = {
 export type DeepSeekChatOptions = ProviderChatOptions;
 
 export function createProviderClient(options: ProviderChatOptions): OpenAI {
-	return new OpenAI({
-		baseURL: options.baseUrl ?? getProviderDefaultBaseUrl(options.provider),
+	const clientOptions: ConstructorParameters<typeof OpenAI>[0] = {
 		apiKey: options.apiKey
-	});
+	};
+	if (options.provider !== "openai" || options.baseUrl !== undefined) {
+		clientOptions.baseURL = options.baseUrl ?? getProviderDefaultBaseUrl(options.provider);
+	}
+	return new OpenAI(clientOptions);
 }
 
 export function createDeepSeekClient(options: DeepSeekChatOptions): OpenAI {
@@ -75,6 +79,10 @@ export async function chatWithProvider(
 	systemPrompt: string,
 	abortSignal?: AbortSignal | undefined
 ): Promise<string> {
+	if (options.provider === "openai") {
+		return chatWithOpenAIResponses(params, options, history, systemPrompt, abortSignal);
+	}
+
 	const client: OpenAI = createProviderClient(options);
 	const requestBody: ChatCompletionCreateParamsNonStreaming = {
 		model: resolveChatModel(options),
@@ -110,6 +118,11 @@ export async function* streamChatWithProvider(
 	systemPrompt: string,
 	abortSignal?: AbortSignal | undefined
 ): AsyncGenerator<string> {
+	if (options.provider === "openai") {
+		yield* streamChatWithOpenAIResponses(params, options, history, systemPrompt, abortSignal);
+		return;
+	}
+
 	const client: OpenAI = createProviderClient(options);
 	const requestBody: ChatCompletionCreateParamsStreaming = {
 		model: resolveChatModel(options),

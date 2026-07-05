@@ -119,6 +119,27 @@ test("manager latest cache can skip network entirely", async (): Promise<void> =
 	}
 });
 
+test("manager latest cache falls back to cached version when network throws", async (): Promise<void> => {
+	const root: string = await mkdtemp(join(tmpdir(), "daedalus-manager-cache-error-"));
+	const previousAppDir: string | undefined = process.env.GODOT_DAEDALUS_APP_DIR;
+	process.env.GODOT_DAEDALUS_APP_DIR = join(root, "app");
+	try {
+		const firstVersion: string | null = await getCachedOrFetchLatestVersion("frontend", async (): Promise<string> => "1.0.1");
+		const secondVersion: string | null = await getCachedOrFetchLatestVersion("frontend", async (): Promise<string> => {
+			throw new Error("fetch failed");
+		}, { forceRefresh: true });
+		assert.equal(firstVersion, "1.0.1");
+		assert.equal(secondVersion, "1.0.1");
+	} finally {
+		if (previousAppDir === undefined) {
+			delete process.env.GODOT_DAEDALUS_APP_DIR;
+		} else {
+			process.env.GODOT_DAEDALUS_APP_DIR = previousAppDir;
+		}
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
 test("frontend package fixture has addon layout", async (): Promise<void> => {
 	const root: string = await mkdtemp(join(tmpdir(), "daedalus-manager-addon-"));
 	const pluginCfgPath: string = join(root, "addons", "godot_daedalus", "plugin.cfg");

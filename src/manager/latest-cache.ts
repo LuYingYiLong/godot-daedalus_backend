@@ -34,7 +34,12 @@ export async function getCachedOrFetchLatestVersion(
 		return cached?.version ?? null;
 	}
 
-	const latestVersion: string | null = await fetchLatest();
+	let latestVersion: string | null = null;
+	try {
+		latestVersion = await fetchLatest();
+	} catch {
+		return cached?.version ?? null;
+	}
 	if (latestVersion === null || latestVersion.trim() === "") {
 		return cached?.version ?? null;
 	}

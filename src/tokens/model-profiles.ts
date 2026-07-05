@@ -43,6 +43,10 @@ function inferProfile(provider: ProviderId, modelName: string): ModelProfile {
 		return createProfile(provider, modelName, 1_000_000, 384_000);
 	}
 
+	if (provider === "openai") {
+		return createProfile(provider, modelName, 400_000, 128_000);
+	}
+
 	const contextWindowTokens: number = inferMoonshotContext(modelName);
 	const maxOutputTokens: number = contextWindowTokens <= 8_192 ? 4_096 : Math.min(32_000, Math.floor(contextWindowTokens / 4));
 	return createProfile(provider, modelName, contextWindowTokens, maxOutputTokens);
@@ -52,7 +56,9 @@ export function resolveModelProfile(provider: ProviderId, modelName: string, con
 	if (contextWindowTokens !== undefined && Number.isFinite(contextWindowTokens) && contextWindowTokens > 0) {
 		const maxOutputTokens: number = provider === "deepseek"
 			? 384_000
-			: Math.min(32_000, Math.max(4_096, Math.floor(contextWindowTokens / 4)));
+			: provider === "openai"
+				? Math.min(128_000, Math.max(4_096, Math.floor(contextWindowTokens / 3)))
+				: Math.min(32_000, Math.max(4_096, Math.floor(contextWindowTokens / 4)));
 		return createProfile(provider, modelName, Math.floor(contextWindowTokens), maxOutputTokens);
 	}
 

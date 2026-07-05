@@ -1,6 +1,6 @@
 import WebSocket from "ws";
 import type { AiChatParams } from "../protocol/types.js";
-import type { DeepSeekAgentContinuation, DeepSeekAgentResult } from "../providers/deepseek-agent.js";
+import type { AgentContinuation, ProviderAgentResult } from "../providers/agent-types.js";
 import type { ProviderChatOptions } from "../providers/deepseek-client.js";
 import { appendApprovalEvent, readApprovalEvents } from "../session/session-store.js";
 import { createPersistedApprovalRequestedData, createRuntimePendingContinuation, foldPendingApprovalStates, type PendingApprovalState } from "../session/approval-persistence.js";
@@ -18,7 +18,7 @@ import { sendSessionEvent } from "./session-events.js";
 export function createPendingAiContinuation(
 	params: AiChatParams,
 	options: ProviderChatOptions,
-	continuation: DeepSeekAgentContinuation,
+	continuation: AgentContinuation,
 	allowedToolNames: readonly string[] | undefined,
 	userMessage: string,
 	requestId: string,
@@ -213,7 +213,7 @@ export function createApprovedWorkflowToolObservation(pendingApproval: PendingAp
 	};
 }
 
-export function sendAgentPaused(socket: WebSocket, requestId: string, session: ClientSession, runId: string, agentResult: Extract<DeepSeekAgentResult, { status: "approval_required" }>, persistRequestId: string = requestId): void {
+export function sendAgentPaused(socket: WebSocket, requestId: string, session: ClientSession, runId: string, agentResult: Extract<ProviderAgentResult, { status: "approval_required" }>, persistRequestId: string = requestId): void {
 	sendSessionEvent(socket, requestId, session, "agent.run.paused", {
 		runId,
 		reason: "approval_required",
@@ -228,7 +228,7 @@ export async function sendContinuedAgentResult(
 	requestId: string,
 	session: ClientSession,
 	mcpHost: McpHost,
-	agentResult: DeepSeekAgentResult,
+	agentResult: ProviderAgentResult,
 	pendingContinuation: PendingAiContinuation,
 	historyBudgetTokens: number | null = null
 ): Promise<void> {
@@ -284,4 +284,3 @@ export async function sendContinuedAgentResult(
 		}
 	}, pendingContinuation.requestId);
 }
-

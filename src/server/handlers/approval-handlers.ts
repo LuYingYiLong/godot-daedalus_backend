@@ -1,14 +1,8 @@
 import WebSocket from "ws";
 import { composeSystemPrompt, listPromptTemplates } from "../../prompts/registry.js";
 import type { AdditionalContextItem, AiChatParams, ChatMessage, ClientRequest, ModelProfile, ProviderId, ServerEvent } from "../../protocol/types.js";
-import {
-	continueDeepSeekAgent,
-	continueDeepSeekAgentStreaming,
-	runDeepSeekAgent,
-	runDeepSeekAgentStreaming,
-	type DeepSeekAgentContinuation,
-	type DeepSeekAgentResult
-} from "../../providers/deepseek-agent.js";
+import type { ProviderAgentResult } from "../../providers/agent-types.js";
+import { continueProviderAgent, continueProviderAgentStreaming } from "../../providers/provider-agent.js";
 import type { OnToolEvent, ToolEvent } from "../../tools/tool-dispatcher.js";
 import { parseToolResultSummary } from "../../tools/tool-result-parser.js";
 import { chatWithDeepSeek, createDeepSeekClient, resolveChatModel, type ProviderChatOptions } from "../../providers/deepseek-client.js";
@@ -423,8 +417,8 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 				continuationStepRunId,
 				pendingContinuation.requestId
 			);
-			const agentResult: DeepSeekAgentResult = pendingContinuation.stream
-				? await continueDeepSeekAgentStreaming(
+			const agentResult: ProviderAgentResult = pendingContinuation.stream
+				? await continueProviderAgentStreaming(
 					pendingContinuation.params,
 					pendingContinuation.options,
 					pendingContinuation.continuation,
@@ -438,7 +432,7 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 					onToolEvent,
 					abortController.signal
 				)
-				: await continueDeepSeekAgent(
+				: await continueProviderAgent(
 					pendingContinuation.params,
 					pendingContinuation.options,
 					pendingContinuation.continuation,

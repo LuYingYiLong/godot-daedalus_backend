@@ -42,6 +42,9 @@ function inferContextLength(provider: ProviderId, modelId: string, rawContextLen
 	if (provider === "deepseek") {
 		return 1_000_000;
 	}
+	if (provider === "openai") {
+		return 400_000;
+	}
 
 	const lowerId: string = modelId.toLowerCase();
 	if (lowerId.includes("8k")) {
@@ -66,13 +69,20 @@ function inferMaxOutputTokens(provider: ProviderId, modelId: string, contextWind
 	if (provider === "deepseek") {
 		return 384_000;
 	}
+	if (provider === "openai") {
+		return Math.min(128_000, Math.max(4_096, Math.floor(contextWindowTokens / 3)));
+	}
 
 	return contextWindowTokens <= 8_192 ? 4_096 : Math.min(32_000, Math.max(4_096, Math.floor(contextWindowTokens / 4)));
 }
 
 function normalizeCapabilities(raw: Record<string, unknown>, fallback: ProviderModelInfo | undefined): ProviderModelCapabilities {
 	return {
-		imageInput: typeof raw.supports_image_in === "boolean" ? raw.supports_image_in : fallback?.capabilities.imageInput,
+		imageInput: typeof raw.supports_image_in === "boolean"
+			? raw.supports_image_in
+			: typeof raw.input_modalities === "object" && Array.isArray(raw.input_modalities)
+				? raw.input_modalities.includes("image")
+				: fallback?.capabilities.imageInput,
 		videoInput: typeof raw.supports_video_in === "boolean" ? raw.supports_video_in : fallback?.capabilities.videoInput,
 		reasoning: typeof raw.supports_reasoning === "boolean" ? raw.supports_reasoning : fallback?.capabilities.reasoning
 	};

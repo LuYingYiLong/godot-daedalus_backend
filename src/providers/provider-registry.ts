@@ -151,6 +151,18 @@ const MOONSHOT_FALLBACK_MODELS: readonly ProviderModelInfo[] = [
 	}
 ];
 
+const OPENAI_FALLBACK_MODELS: readonly ProviderModelInfo[] = [
+	{
+		id: "gpt-5.5",
+		displayName: "GPT-5.5",
+		provider: "openai",
+		contextWindowTokens: 400_000,
+		maxOutputTokens: 128_000,
+		capabilities: { imageInput: true, reasoning: true },
+		ownedBy: "openai"
+	}
+];
+
 export const PROVIDER_DEFINITIONS: Record<ProviderId, ProviderDefinition> = {
 	deepseek: {
 		id: "deepseek",
@@ -172,13 +184,23 @@ export const PROVIDER_DEFINITIONS: Record<ProviderId, ProviderDefinition> = {
 		envBaseUrl: "MOONSHOT_BASE_URL",
 		envModel: "MOONSHOT_MODEL",
 		fallbackModels: MOONSHOT_FALLBACK_MODELS
+	},
+	openai: {
+		id: "openai",
+		displayName: "OpenAI",
+		defaultBaseUrl: "https://api.openai.com/v1",
+		defaultModel: "gpt-5.5",
+		modelsPath: "/models",
+		envBaseUrl: "OPENAI_BASE_URL",
+		envModel: "OPENAI_MODEL",
+		fallbackModels: OPENAI_FALLBACK_MODELS
 	}
 };
 
 export const DEFAULT_PROVIDER_ID: ProviderId = "deepseek";
 
 export function getProviderIds(): ProviderId[] {
-	return ["deepseek", "moonshot"];
+	return ["deepseek", "moonshot", "openai"];
 }
 
 export function getProviderDefinition(provider: ProviderId): ProviderDefinition {
@@ -209,5 +231,5 @@ export function getProviderFallbackModels(provider: ProviderId): ProviderModelIn
 }
 
 export function isProviderId(value: unknown): value is ProviderId {
-	return value === "deepseek" || value === "moonshot";
+	return value === "deepseek" || value === "moonshot" || value === "openai";
 }

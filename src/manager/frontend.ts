@@ -27,13 +27,12 @@ export async function getLatestFrontendVersion(options: LatestVersionOptions = {
 }
 
 async function fetchLatestFrontendVersion(): Promise<string | null> {
-	const response: Response = await fetch(`https://api.github.com/repos/${FRONTEND_REPOSITORY}/releases/latest`, {
-		headers: { "User-Agent": "godot-daedalus-manager" }
-	});
-	if (!response.ok) {
+	const data: { tag_name?: unknown } | null = await fetchJsonWithFallback<{ tag_name?: unknown }>(
+		`https://api.github.com/repos/${FRONTEND_REPOSITORY}/releases/latest`
+	);
+	if (data === null) {
 		return null;
 	}
-	const data = await response.json() as { tag_name?: unknown };
 	if (typeof data.tag_name !== "string") {
 		return null;
 	}
@@ -166,17 +165,15 @@ export function validateFrontendManifest(manifest: FrontendManifest): void {
 async function downloadFrontendManifest(version: string): Promise<FrontendManifest> {
 	const tag: string = version.startsWith("v") ? version : `v${version}`;
 	const assetName: string = `godot-daedalus-plugin-${tag}.manifest.json`;
-	const response: Response = await fetch(getReleaseAssetUrl(tag, assetName), {
-		headers: { "User-Agent": "godot-daedalus-manager" }
-	});
-	if (!response.ok) {
+	const manifest: FrontendManifest | null = await fetchJsonWithFallback<FrontendManifest>(getReleaseAssetUrl(tag, assetName));
+	if (manifest === null) {
 		throw new ManagerError({
 			code: "network_error",
 			message: `Could not download frontend manifest ${assetName}.`,
-			details: `${response.status} ${response.statusText}`
+			details: "GitHub release manifest request failed."
 		});
 	}
-	return await response.json() as FrontendManifest;
+	return manifest;
 }
 
 function getReleaseAssetUrl(tag: string, assetName: string): string {
@@ -184,16 +181,81 @@ function getReleaseAssetUrl(tag: string, assetName: string): string {
 }
 
 async function downloadFile(url: string, destination: string): Promise<void> {
-	const response: Response = await fetch(url, { headers: { "User-Agent": "godot-daedalus-manager" } });
-	if (!response.ok || response.body === null) {
+	await mkdir(dirname(destination), { recursive: true });
+	try {
+		const response: Response = await fetch(url, { headers: { "User-Agent": "godot-daedalus-manager" } });
+		if (!response.ok || response.body === null) {
+			throw new Error(`${response.status} ${response.statusText}`);
+		}
+		await pipeline(response.body, createWriteStream(destination));
+		return;
+	} catch (error: unknown) {
+		if (process.platform === "win32" && await downloadFileWithPowerShell(url, destination)) {
+			return;
+		}
 		throw new ManagerError({
 			code: "network_error",
 			message: `Could not download ${url}`,
-			details: `${response.status} ${response.statusText}`
+			details: error instanceof Error ? error.message : String(error)
 		});
 	}
-	await mkdir(dirname(destination), { recursive: true });
-	await pipeline(response.body, createWriteStream(destination));
+}
+
+async function fetchJsonWithFallback<T>(url: string): Promise<T | null> {
+	try {
+		const response: Response = await fetch(url, { headers: { "User-Agent": "godot-daedalus-manager" } });
+		if (!response.ok) {
+			return null;
+		}
+		return await response.json() as T;
+	} catch {
+		if (process.platform !== "win32") {
+			return null;
+		}
+		return fetchJsonWithPowerShell<T>(url);
+	}
+}
+
+async function fetchJsonWithPowerShell<T>(url: string): Promise<T | null> {
+	const command: string = [
+		"$ProgressPreference = 'SilentlyContinue';",
+		`Invoke-RestMethod -Uri ${quotePowerShellString(url)} -Headers @{ 'User-Agent' = 'godot-daedalus-manager' } -TimeoutSec 30 | ConvertTo-Json -Depth 64 -Compress`
+	].join(" ");
+	const result = await runCommand("powershell.exe", [
+		"-NoProfile",
+		"-ExecutionPolicy",
+		"Bypass",
+		"-Command",
+		command
+	], { timeoutMs: 45000 });
+	if (result.exitCode !== 0 || result.stdout.trim().length === 0) {
+		return null;
+	}
+
+	try {
+		return JSON.parse(result.stdout) as T;
+	} catch {
+		return null;
+	}
+}
+
+async function downloadFileWithPowerShell(url: string, destination: string): Promise<boolean> {
+	const command: string = [
+		"$ProgressPreference = 'SilentlyContinue';",
+		`Invoke-WebRequest -Uri ${quotePowerShellString(url)} -OutFile ${quotePowerShellString(destination)} -Headers @{ 'User-Agent' = 'godot-daedalus-manager' } -TimeoutSec 60`
+	].join(" ");
+	const result = await runCommand("powershell.exe", [
+		"-NoProfile",
+		"-ExecutionPolicy",
+		"Bypass",
+		"-Command",
+		command
+	], { timeoutMs: 90000 });
+	return result.exitCode === 0;
+}
+
+function quotePowerShellString(value: string): string {
+	return `'${value.replaceAll("'", "''")}'`;
 }
 
 async function sha256File(filePath: string): Promise<string> {

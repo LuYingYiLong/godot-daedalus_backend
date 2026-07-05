@@ -1,14 +1,7 @@
 import WebSocket from "ws";
 import { composeSystemPrompt, listPromptTemplates } from "../prompts/registry.js";
 import type { AdditionalContextItem, AiChatParams, ChatMessage, ClientRequest, ModelProfile, ProviderId, ServerEvent } from "../protocol/types.js";
-import {
-	continueDeepSeekAgent,
-	continueDeepSeekAgentStreaming,
-	runDeepSeekAgent,
-	runDeepSeekAgentStreaming,
-	type DeepSeekAgentContinuation,
-	type DeepSeekAgentResult
-} from "../providers/deepseek-agent.js";
+import type { ProviderAgentResult } from "../providers/agent-types.js";
 import type { OnToolEvent, ToolEvent } from "../tools/tool-dispatcher.js";
 import { parseToolResultSummary } from "../tools/tool-result-parser.js";
 import { chatWithDeepSeek, createDeepSeekClient, resolveChatModel, type ProviderChatOptions } from "../providers/deepseek-client.js";
@@ -146,7 +139,7 @@ export type WorkflowPhaseToolStats = {
 };
 
 export type WorkflowPhaseRunResult = {
-	agentResult: DeepSeekAgentResult;
+	agentResult: ProviderAgentResult;
 	toolStats: WorkflowPhaseToolStats;
 	toolObservations: WorkflowToolObservation[];
 };
@@ -219,7 +212,7 @@ export async function loadSessionCompressorPrompt(): Promise<string> {
 		return sessionCompressorPromptCache;
 	}
 
-	const promptPath: string = path.resolve(process.cwd(), "src/prompts/templates/session-compressor.md");
+	const promptPath: string = path.resolve(process.cwd(), "src/prompts/templates/internal/session-compressor.md");
 	const content: string = await fs.readFile(promptPath, "utf8");
 	const trimmedContent: string = content.trim();
 	sessionCompressorPromptCache = trimmedContent;
@@ -700,6 +693,7 @@ export function appendScriptSelectionPromptLines(lines: string[], item: Addition
 	const hasSelection: boolean = data?.hasSelection === true;
 	const selectedTextPreview: string = getContextString(data, "selectedTextPreview");
 	const lineTextPreview: string = getContextString(data, "lineTextPreview");
+	const editorTextPreview: string = getContextString(data, "editorTextPreview");
 	if (hasSelection && selectedTextPreview.trim().length > 0) {
 		lines.push("  - selectedTextPreview:");
 		lines.push(clipTextByChars(selectedTextPreview, 2000));
@@ -709,8 +703,20 @@ export function appendScriptSelectionPromptLines(lines: string[], item: Addition
 	} else if (lineTextPreview.trim().length > 0) {
 		lines.push(`  - currentLinePreview: ${clipTextByChars(lineTextPreview, 500)}`);
 	}
+	if (editorTextPreview.trim().length > 0) {
+		const editorTextLineCount: number | undefined = getContextNumber(data, "editorTextLineCount");
+		lines.push(`  - editorTextPreview${editorTextLineCount !== undefined ? ` (${editorTextLineCount} lines)` : ""}:`);
+		lines.push(clipTextByChars(editorTextPreview, 12000));
+		if (data?.editorTextTruncated === true) {
+			lines.push("  - editorTextPreviewTruncated: true");
+		}
+	}
 
-	lines.push("  - note: 这只是脚本选区/光标附近的短片段；如需上下文，请按 resourcePath 用读取工具按需读取。");
+	if (data?.resourcePathAvailable === false) {
+		lines.push("  - note: Godot 当前没有提供脚本资源路径，通常是脚本未保存或存在解析错误；优先使用 editorTextPreview 分析。");
+	} else {
+		lines.push("  - note: editorTextPreview 是当前脚本编辑器内容快照；如需磁盘上下文，请按 resourcePath 用读取工具按需读取。");
+	}
 }
 
 export function appendFilesystemSelectionPromptLines(lines: string[], item: AdditionalContextItem): void {
@@ -1051,17 +1057,10 @@ export async function createNextStepHints(
 	return normalizeNextStepHints(parseJsonObjectLoose(text), clippedMaxHints);
 }
 
-export function resolveAllowedToolsForChatParams(params: AiChatParams, activeSkillTools: readonly string[] | undefined): readonly string[] | undefined {
-	if (activeSkillTools !== undefined) {
-		return activeSkillTools;
-	}
-
-	if (params.options?.toolBudget === "project_edit") {
-		return [...READ_TOOLS, ...WRITE_TOOLS, ...VERIFY_TOOLS];
-	}
-
-	return undefined;
-}
+export {
+	normalizeChatParamsForMode,
+	resolveAllowedToolsForChatParams
+} from "./chat-mode.js";
 
 export {
 	shouldPersistSessionEvent,
