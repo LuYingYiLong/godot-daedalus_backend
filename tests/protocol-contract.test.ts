@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { REQUEST_HANDLER_METHODS } from "../src/server/request-dispatcher.js";
+import { REQUEST_HANDLER_METHODS, REQUEST_HANDLERS } from "../src/server/request-dispatcher.js";
 
 const pluginDir: string = process.env.GODOT_DAEDALUS_PLUGIN_DIR ?? "D:/GodotProjects/example/addons/godot_daedalus";
 
@@ -33,6 +33,10 @@ test("backend protocol schema and WebSocket dispatcher stay in sync", async (): 
 
 	assert.deepEqual(difference(schemaMethods, dispatcherMethods), [], "schema methods missing dispatcher handler");
 	assert.deepEqual(difference(dispatcherMethods, schemaMethods), [], "dispatcher handlers missing schema method");
+	for (const method of dispatcherMethods) {
+		assert.equal(typeof REQUEST_HANDLERS.get(method as never), "function", `dispatcher handler missing implementation: ${method}`);
+	}
+	assert.ok(new Set([...REQUEST_HANDLERS.values()]).size > 1, "dispatcher must use domain-specific handlers");
 });
 
 test("frontend RPC constants match backend protocol schema", async (): Promise<void> => {
