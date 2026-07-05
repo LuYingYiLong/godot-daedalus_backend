@@ -20,6 +20,14 @@ const MAX_PHASE_INSTRUCTION_CHARS: number = 1200;
 
 const toolGroupSchema = z.enum(["read", "write", "verify", "summarize"]);
 
+const normalizedPromptIdSchema = z.preprocess((value: unknown): unknown => {
+	if (value === null || value === undefined || value === "") {
+		return undefined;
+	}
+
+	return promptIdSchema.safeParse(value).success ? value : undefined;
+}, promptIdSchema.optional());
+
 const llmPlanStepSchema = z.object({
 	id: z.string().min(1).max(48).optional(),
 	title: z.string().min(1).max(80),
@@ -27,7 +35,7 @@ const llmPlanStepSchema = z.object({
 	toolGroup: toolGroupSchema,
 	acceptanceCriteria: z.array(z.string().min(1).max(240)).max(8).optional(),
 	skillId: z.string().nullable().optional(),
-	promptId: promptIdSchema.nullable().optional()
+	promptId: normalizedPromptIdSchema
 }).strict();
 
 const llmPlanSchema = z.object({

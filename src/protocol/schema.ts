@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_IMAGE_BYTES, SUPPORTED_IMAGE_MIME_TYPES } from "./image-attachments.js";
 
 export const promptIdSchema = z.enum([
 	"godot.assistant",
@@ -17,9 +18,17 @@ export const skillIdSchema = z.enum([
 
 export const providerIdSchema = z.enum(["deepseek", "moonshot"]);
 
+const imageContextDataSchema = z.object({
+	mimeType: z.enum(SUPPORTED_IMAGE_MIME_TYPES as [string, ...string[]]),
+	dataUrl: z.string().min(1).max(1_500_000),
+	byteSize: z.number().int().positive().max(MAX_IMAGE_BYTES),
+	width: z.number().int().positive().optional(),
+	height: z.number().int().positive().optional()
+});
+
 export const additionalContextItemSchema = z.object({
 	id: z.string().min(1).max(160),
-	kind: z.enum(["editor_selection", "scene", "node", "file", "folder", "script", "script_selection", "filesystem_selection"]),
+	kind: z.enum(["editor_selection", "scene", "node", "file", "folder", "script", "script_selection", "filesystem_selection", "image"]),
 	title: z.string().min(1).max(200),
 	subtitle: z.string().max(400).optional(),
 	pinned: z.boolean().optional(),
@@ -30,6 +39,28 @@ export const additionalContextItemSchema = z.object({
 	scriptPath: z.string().max(500).optional(),
 	summary: z.string().max(1200).optional(),
 	data: z.unknown().optional()
+}).superRefine((item, context): void => {
+	if (item.kind !== "image") {
+		return;
+	}
+
+	const parsed = imageContextDataSchema.safeParse(item.data);
+	if (!parsed.success) {
+		context.addIssue({
+			code: "custom",
+			path: ["data"],
+			message: "Image context data must contain mimeType, dataUrl, and byteSize."
+		});
+		return;
+	}
+
+	if (!parsed.data.dataUrl.startsWith(`data:${parsed.data.mimeType};base64,`)) {
+		context.addIssue({
+			code: "custom",
+			path: ["data", "dataUrl"],
+			message: "Image dataUrl must match mimeType."
+		});
+	}
 });
 
 export const aiChatParamsSchema = z.object({

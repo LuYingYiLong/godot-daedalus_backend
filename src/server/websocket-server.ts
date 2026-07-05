@@ -61,7 +61,14 @@ import {
 	type ProviderConfigWithSecret
 } from "../providers/provider-config-store.js";
 import { listProviderModels } from "../providers/provider-models.js";
-import { estimateProviderTextTokens } from "../providers/provider-token-estimator.js";
+import { estimateProviderMessagesTokens, estimateProviderTextTokens } from "../providers/provider-token-estimator.js";
+import {
+	createCurrentUserMessage,
+	getImageAttachments,
+	hasImageAttachments,
+	modelSupportsImageInput,
+	ProviderImageInputError
+} from "../providers/provider-image-content.js";
 import { getProviderDefaultBaseUrl, getProviderDefaultModel, getProviderDisplayName } from "../providers/provider-registry.js";
 import { classifyProviderError, createProviderStatusEvent } from "../providers/provider-error.js";
 import { generateSessionTitle, shouldApplyGeneratedSessionTitle } from "./session-title.js";
@@ -373,6 +380,26 @@ async function estimateTextTokensForProvider(options: ProviderChatOptions, text:
 	return estimateTextTokens(text);
 }
 
+async function estimateCurrentMessageTokensForProvider(options: ProviderChatOptions, params: AiChatParams, abortSignal?: AbortSignal | undefined): Promise<number> {
+	if (!hasImageAttachments(params)) {
+		return estimateTextTokensForProvider(options, params.message, abortSignal);
+	}
+
+	try {
+		const providerEstimate: number | null = await estimateProviderMessagesTokens(options, [createCurrentUserMessage(params)], abortSignal);
+		if (providerEstimate !== null) {
+			return providerEstimate;
+		}
+	} catch (error: unknown) {
+		const message: string = error instanceof Error ? error.message : String(error);
+		console.warn(`[token-counter] ${getProviderDisplayName(options.provider)} multimodal token estimate failed, using local counter: ${message}`);
+	}
+
+	const imageTokens: number = getImageAttachments(params.additionalContext)
+		.reduce((sum: number, image): number => sum + Math.ceil(image.byteSize / 384), 0);
+	return await estimateTextTokens(params.message) + imageTokens;
+}
+
 async function selectHistoryWithinBudget(messages: ChatMessage[], budgetTokens: number): Promise<ChatMessage[]> {
 	const tc: TokenCounter = await getTokenCounter();
 	return selectMessagesWithinBudget(messages, budgetTokens, tc);
@@ -390,7 +417,7 @@ async function computeHistoryBudget(
 	const outputReserveTokens: number = params.options?.maxTokens ?? profile.defaultOutputReserveTokens;
 	const systemPromptTokens: number = await estimateTextTokensForProvider(options, systemPrompt, abortSignal);
 	const mcpContextTokens: number = await estimateTextTokensForProvider(options, mcpContext, abortSignal);
-	const currentMessageTokens: number = await estimateTextTokensForProvider(options, params.message, abortSignal);
+	const currentMessageTokens: number = await estimateCurrentMessageTokensForProvider(options, params, abortSignal);
 
 	return computeInputBudget({
 		profile,
@@ -755,12 +782,15 @@ function createAdditionalContextPromptSection(items: readonly AdditionalContextI
 		if (item.summary !== undefined && item.summary.trim().length > 0) {
 			lines.push(`  - summary: ${clipTextByChars(item.summary.trim(), 500)}`);
 		}
+		if (item.kind === "image") {
+			lines.push("  - note: 图片二进制已作为多模态 image_url content part 单独发送给模型；不要在文本上下文中期待 base64。");
+		}
 		if (item.kind === "script_selection") {
 			appendScriptSelectionPromptLines(lines, item);
 		} else if (item.kind === "filesystem_selection") {
 			appendFilesystemSelectionPromptLines(lines, item);
 		}
-		if (item.data !== undefined && item.kind !== "script_selection" && item.kind !== "filesystem_selection") {
+		if (item.data !== undefined && item.kind !== "script_selection" && item.kind !== "filesystem_selection" && item.kind !== "image") {
 			lines.push(`  - data: ${clipTextByChars(JSON.stringify(createPreviewValue(item.data)), 1000)}`);
 		}
 	}
@@ -2920,6 +2950,23 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 			try {
 				const turnStartedAt: string = new Date().toISOString();
 				const options: ProviderChatOptions = createProviderChatOptions(session, apiKey);
+				const requestHasImages: boolean = hasImageAttachments(params);
+				if (requestHasImages) {
+					getImageAttachments(params.additionalContext);
+					const activeModelId: string = resolveChatModel(options);
+					if (!await modelSupportsImageInput(options.provider, activeModelId)) {
+						sendJson(socket, {
+							type: "response",
+							id: request.id,
+							ok: false,
+							error: {
+								code: "model_does_not_support_images",
+								message: `${getProviderDisplayName(options.provider)} model ${activeModelId} does not support image input. Switch to a model with image capability.`
+							}
+						});
+						break;
+					}
+				}
 				const activeSkillId: SkillId | undefined = params.skillId ?? session.activeSkillId;
 				const activeSkill = activeSkillId !== undefined ? getSkill(activeSkillId) : undefined;
 				const allowedToolNames: readonly string[] | undefined = resolveAllowedToolsForChatParams(params, activeSkill?.allowedTools);
@@ -2969,7 +3016,9 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 				);
 				const history: ChatMessage[] = await selectHistoryForModel(session, historyBudgetTokens);
 				let workflowPlan: WorkflowPlan | null = null;
-				if (slashCommandResult.type === "none") {
+				if (requestHasImages) {
+					workflowPlan = createSingleAnswerPlan(params, []);
+				} else if (slashCommandResult.type === "none") {
 					if (params.options?.workflow === "llm_planned") {
 						try {
 							workflowPlan = await createLlmWorkflowPlan(params, options, history, mcpSystemContext + additionalContextSection + guidePromptSection, abortController.signal);
@@ -3026,6 +3075,18 @@ async function handleRequest(socket: WebSocket, request: ClientRequest, session:
 			} catch (error: unknown) {
 				if (isCancellationError(error, abortController.signal)) {
 					sendAgentCancelled(socket, request.id, session);
+					break;
+				}
+				if (error instanceof ProviderImageInputError) {
+					sendJson(socket, {
+						type: "response",
+						id: request.id,
+						ok: false,
+						error: {
+							code: error.code,
+							message: error.message
+						}
+					});
 					break;
 				}
 				const providerError = classifyProviderError(error);

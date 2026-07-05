@@ -8,6 +8,7 @@ import type {
 } from "openai/resources/chat/completions";
 import type { AiChatParams, ChatMessage, ProviderId } from "../protocol/types.js";
 import { getProviderDefaultBaseUrl, getProviderDefaultModel } from "./provider-registry.js";
+import { createProviderMessages } from "./provider-image-content.js";
 
 export type ProviderChatOptions = {
 	provider: ProviderId;
@@ -34,20 +35,7 @@ export function resolveChatModel(options: ProviderChatOptions): string {
 }
 
 export function createMessages(params: AiChatParams, history: ChatMessage[], systemPrompt: string): ChatCompletionMessageParam[] {
-	return [
-		{
-			role: "system",
-			content: systemPrompt,
-		},
-		...history.map((message: ChatMessage): ChatCompletionMessageParam => ({
-			role: message.role,
-			content: message.content
-		})),
-		{
-			role: "user",
-			content: params.message,
-		}
-	];
+	return createProviderMessages(params, history, systemPrompt);
 }
 
 function normalizeTemperature(options: ProviderChatOptions, temperature: number): number {

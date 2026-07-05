@@ -52,8 +52,8 @@ export function createProviderStatusEvent(error: unknown): Record<string, string
 	if (info.code === "provider_quota_exhausted") {
 		return {
 			status: "error",
-			title: "模型额度不足",
-			details: "模型供应商返回额度或余额不足，当前回复已停止。请检查账户余额、套餐额度或切换可用的 API Key 后重试。",
+			title: "Quota Exhausted",
+			details: "The model provider returned insufficient quota or balance. The current response has been stopped. Please check your account balance, plan quota, or switch to another API key and try again.",
 			actionLabel: "Open settings",
 			actionId: "provider-settings",
 			code: info.code
@@ -62,7 +62,7 @@ export function createProviderStatusEvent(error: unknown): Record<string, string
 
 	return {
 		status: "error",
-		title: "模型请求失败",
+		title: "Model Request Failed",
 		details: info.message,
 		code: info.code
 	};

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ChatCompletionCreateParamsBase } from "openai/resources/chat/completions";
 import { applyChatOptions } from "../src/providers/deepseek-client.js";
-import { estimateProviderTextTokens } from "../src/providers/provider-token-estimator.js";
+import { estimateProviderMessagesTokens, estimateProviderTextTokens } from "../src/providers/provider-token-estimator.js";
 import { resolveModelProfile } from "../src/tokens/model-profiles.js";
 
 test("moonshot token estimator reads data.total_tokens", async (): Promise<void> => {
@@ -31,6 +31,42 @@ test("moonshot token estimator reads data.total_tokens", async (): Promise<void>
 		assert.deepEqual(requestedBody, {
 			model: "kimi-k2.7-code",
 			messages: [{ role: "user", content: "你好" }]
+		});
+	} finally {
+		globalThis.fetch = originalFetch;
+	}
+});
+
+test("moonshot token estimator accepts multimodal message parts", async (): Promise<void> => {
+	const originalFetch: typeof fetch = globalThis.fetch;
+	let requestedBody: unknown;
+
+	globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+		requestedBody = JSON.parse(String(init?.body ?? "{}")) as unknown;
+		return new Response(JSON.stringify({ data: { total_tokens: 128 } }), {
+			status: 200,
+			headers: { "Content-Type": "application/json" }
+		});
+	}) as typeof fetch;
+
+	try {
+		const messages = [{
+			role: "user" as const,
+			content: [
+				{ type: "image_url" as const, image_url: { url: "data:image/png;base64,aGVsbG8=" } },
+				{ type: "text" as const, text: "描述图片" }
+			]
+		}];
+		const tokens: number | null = await estimateProviderMessagesTokens({
+			provider: "moonshot",
+			apiKey: "test-key",
+			model: "kimi-k2.6"
+		}, messages);
+
+		assert.equal(tokens, 128);
+		assert.deepEqual(requestedBody, {
+			model: "kimi-k2.6",
+			messages
 		});
 	} finally {
 		globalThis.fetch = originalFetch;
