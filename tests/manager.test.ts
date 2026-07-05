@@ -131,7 +131,9 @@ test("frontend package fixture has addon layout", async (): Promise<void> => {
 test("backend install stages local packages and rollback switches current version", async (): Promise<void> => {
 	const root: string = await mkdtemp(join(tmpdir(), "daedalus-manager-install-"));
 	const previousAppDir: string | undefined = process.env.GODOT_DAEDALUS_APP_DIR;
+	const previousNpmDryRun: string | undefined = process.env.npm_config_dry_run;
 	process.env.GODOT_DAEDALUS_APP_DIR = join(root, "app");
+	process.env.npm_config_dry_run = "true";
 	try {
 		const package103: string = await createFakeBackendPackage(root, "1.0.3");
 		const package104: string = await createFakeBackendPackage(root, "1.0.4");
@@ -145,6 +147,11 @@ test("backend install stages local packages and rollback switches current versio
 			delete process.env.GODOT_DAEDALUS_APP_DIR;
 		} else {
 			process.env.GODOT_DAEDALUS_APP_DIR = previousAppDir;
+		}
+		if (previousNpmDryRun === undefined) {
+			delete process.env.npm_config_dry_run;
+		} else {
+			process.env.npm_config_dry_run = previousNpmDryRun;
 		}
 		await rm(root, { recursive: true, force: true });
 	}

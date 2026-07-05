@@ -2,17 +2,6 @@ import type WebSocket from "ws";
 import type { ClientRequest } from "../protocol/types.js";
 import type { McpHost } from "../mcp/mcp-host.js";
 import type { ClientSession } from "./client-session.js";
-import { handleApprovalRequest } from "./handlers/approval-handlers.js";
-import { handleChatRequest } from "./chat-orchestrator.js";
-import { handleCoreRequest } from "./handlers/core-handlers.js";
-import { handleEditorRequest } from "./handlers/editor-handlers.js";
-import { handleEnvironmentRequest } from "./handlers/environment-handlers.js";
-import { handleFileChangeRequest } from "./handlers/file-change-handlers.js";
-import { handleGuideRequest } from "./handlers/guide-handlers.js";
-import { handleMcpRequest } from "./handlers/mcp-handlers.js";
-import { handleProviderRequest } from "./handlers/provider-handlers.js";
-import { handleSessionRequest } from "./session-rpc-handlers.js";
-import { handleWorkspaceRequest } from "./handlers/workspace-handlers.js";
 
 export type RequestHandler = (
 	socket: WebSocket,
@@ -20,6 +9,61 @@ export type RequestHandler = (
 	session: ClientSession,
 	mcpHost: McpHost
 ) => Promise<void> | void;
+
+function createLazyHandler(loadHandler: () => Promise<RequestHandler>): RequestHandler {
+	let handlerPromise: Promise<RequestHandler> | null = null;
+	return async (socket: WebSocket, request: ClientRequest, session: ClientSession, mcpHost: McpHost): Promise<void> => {
+		if (handlerPromise === null) {
+			handlerPromise = loadHandler();
+		}
+		const handler: RequestHandler = await handlerPromise;
+		await handler(socket, request, session, mcpHost);
+	};
+}
+
+const handleCoreRequest: RequestHandler = createLazyHandler(async (): Promise<RequestHandler> => {
+	return (await import("./handlers/core-handlers.js")).handleCoreRequest;
+});
+
+const handleProviderRequest: RequestHandler = createLazyHandler(async (): Promise<RequestHandler> => {
+	return (await import("./handlers/provider-handlers.js")).handleProviderRequest;
+});
+
+const handleChatRequest: RequestHandler = createLazyHandler(async (): Promise<RequestHandler> => {
+	return (await import("./chat-orchestrator.js")).handleChatRequest;
+});
+
+const handleSessionRequest: RequestHandler = createLazyHandler(async (): Promise<RequestHandler> => {
+	return (await import("./session-rpc-handlers.js")).handleSessionRequest;
+});
+
+const handleGuideRequest: RequestHandler = createLazyHandler(async (): Promise<RequestHandler> => {
+	return (await import("./handlers/guide-handlers.js")).handleGuideRequest;
+});
+
+const handleMcpRequest: RequestHandler = createLazyHandler(async (): Promise<RequestHandler> => {
+	return (await import("./handlers/mcp-handlers.js")).handleMcpRequest;
+});
+
+const handleFileChangeRequest: RequestHandler = createLazyHandler(async (): Promise<RequestHandler> => {
+	return (await import("./handlers/file-change-handlers.js")).handleFileChangeRequest;
+});
+
+const handleApprovalRequest: RequestHandler = createLazyHandler(async (): Promise<RequestHandler> => {
+	return (await import("./handlers/approval-handlers.js")).handleApprovalRequest;
+});
+
+const handleEnvironmentRequest: RequestHandler = createLazyHandler(async (): Promise<RequestHandler> => {
+	return (await import("./handlers/environment-handlers.js")).handleEnvironmentRequest;
+});
+
+const handleEditorRequest: RequestHandler = createLazyHandler(async (): Promise<RequestHandler> => {
+	return (await import("./handlers/editor-handlers.js")).handleEditorRequest;
+});
+
+const handleWorkspaceRequest: RequestHandler = createLazyHandler(async (): Promise<RequestHandler> => {
+	return (await import("./handlers/workspace-handlers.js")).handleWorkspaceRequest;
+});
 
 export const REQUEST_HANDLER_METHODS: readonly ClientRequest["method"][] = [
 	"ping",

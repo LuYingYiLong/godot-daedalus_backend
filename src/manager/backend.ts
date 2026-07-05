@@ -17,7 +17,10 @@ export async function getLatestBackendVersion(options: LatestVersionOptions = {}
 }
 
 async function fetchLatestBackendVersion(): Promise<string | null> {
-	const result: CommandResult = await runCommand(getNpmCommand(), ["view", BACKEND_PACKAGE_NAME, "version"], { timeoutMs: 20000 });
+	const result: CommandResult = await runCommand(getNpmCommand(), ["view", BACKEND_PACKAGE_NAME, "version"], {
+		env: createNpmCommandEnv(),
+		timeoutMs: 20000
+	});
 	if (result.exitCode !== 0) {
 		return null;
 	}
@@ -43,7 +46,10 @@ export async function installBackend(versionSpec: string = "latest"): Promise<{ 
 
 	await rm(stagingDir, { recursive: true, force: true });
 	await mkdir(stagingDir, { recursive: true });
-	const installResult: CommandResult = await runCommand(getNpmCommand(), ["install", "--prefix", stagingDir, "--prefer-online", packageSpec], { timeoutMs: 120000 });
+	const installResult: CommandResult = await runCommand(getNpmCommand(), ["install", "--prefix", stagingDir, "--prefer-online", packageSpec], {
+		env: createNpmCommandEnv(),
+		timeoutMs: 120000
+	});
 	if (installResult.exitCode !== 0) {
 		await rm(stagingDir, { recursive: true, force: true });
 		throw new ManagerError({
@@ -365,4 +371,15 @@ export function sha256Text(value: string): string {
 
 function getNpmCommand(): string {
 	return process.platform === "win32" ? "npm.cmd" : "npm";
+}
+
+function createNpmCommandEnv(): NodeJS.ProcessEnv {
+	const env: NodeJS.ProcessEnv = { ...process.env };
+	for (const key of Object.keys(env)) {
+		if (key.toLowerCase() === "npm_config_dry_run") {
+			delete env[key];
+		}
+	}
+	env.npm_config_dry_run = "false";
+	return env;
 }
