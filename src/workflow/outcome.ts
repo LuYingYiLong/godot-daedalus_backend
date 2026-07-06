@@ -242,6 +242,15 @@ function createRequiredFixes(failedChecks: WorkflowFailedCheck[]): string[] {
 	return uniqueStrings(failedChecks.map((check: WorkflowFailedCheck): string => `修复：${check.message}`));
 }
 
+function summarizeFailedChecks(failedChecks: WorkflowFailedCheck[]): string | undefined {
+	const messages: string[] = uniqueStrings(failedChecks.map((check: WorkflowFailedCheck): string => check.message));
+	if (messages.length === 0) {
+		return undefined;
+	}
+
+	return messages.slice(0, 3).join("\n");
+}
+
 function createOutcomeStatus(
 	phase: WorkflowPhase,
 	failedChecks: WorkflowFailedCheck[],
@@ -287,6 +296,7 @@ export function createWorkflowPhaseOutcome(
 		: undefined;
 	const trimmedAgentText: string = agentResultText.trim();
 	const summary: string = blockedReason
+		?? (status === "completed" || status === "approval_required" ? undefined : summarizeFailedChecks(failedChecks))
 		?? summaries[0]
 		?? (trimmedAgentText.length > 0 ? trimmedAgentText : undefined)
 		?? phase.title;

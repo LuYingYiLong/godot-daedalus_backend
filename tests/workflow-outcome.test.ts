@@ -70,6 +70,41 @@ test("verify phase with failed terminal validation becomes needs_fix", (): void 
 	assert.deepEqual(outcome.requiredFixes, ["修复：Parser Error"]);
 });
 
+test("failed write phase summary prefers failed checks over prior read summaries", (): void => {
+	const observations: WorkflowToolObservation[] = applyEvents([
+		{
+			type: "tool.result",
+			step: 0,
+			toolCallId: "read-scene",
+			toolName: "mcp_godot_read_text_file",
+			resultChars: 120,
+			truncated: false,
+			ok: true,
+			validationStatus: "unknown",
+			summary: "[gd_scene format=3 uid=\"uid://lfje63a3doaj\"]",
+			artifactRefs: ["scenes/guess_number.tscn"]
+		},
+		{
+			type: "tool.result",
+			step: 0,
+			toolCallId: "replace-scene",
+			toolName: "mcp_godot_propose_replace_text_in_file",
+			resultChars: 120,
+			truncated: false,
+			ok: false,
+			validationStatus: "failed",
+			summary: "mcp_godot_propose_replace_text_in_file failed",
+			failedChecks: ["oldText not found in file. Ensure exact match including whitespace and indentation."],
+			artifactRefs: ["scenes/guess_number.tscn"]
+		}
+	]);
+	const outcome = createWorkflowPhaseOutcome(createPhase("write", "write"), "phase-run-1", "", observations);
+
+	assert.equal(outcome.status, "failed");
+	assert.match(outcome.summary, /oldText not found/);
+	assert.doesNotMatch(outcome.summary, /^\[gd_scene/);
+});
+
 test("verify phase without deterministic validation tool becomes blocked", (): void => {
 	const outcome = createWorkflowPhaseOutcome(createPhase("verify", "verify"), "phase-run-1", "我检查过了，应该没问题。", []);
 
