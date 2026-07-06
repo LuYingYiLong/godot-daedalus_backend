@@ -1,6 +1,7 @@
 import { DEFAULT_BACKEND_PORT, type BackendPidFile, type ManagerStatus } from "./types.js";
 import { getInstalledBackendVersion, getLatestBackendVersion, getRunningBackend, healthBackend } from "./backend.js";
 import { getInstalledFrontendVersion, getLatestFrontendVersion, getPendingFrontendVersion } from "./frontend.js";
+import { isVersionNewer } from "./semver.js";
 
 export type ReadStatusOptions = {
 	includeLatest?: boolean;
@@ -11,11 +12,13 @@ export async function readStatus(projectPath: string | undefined, options: ReadS
 	const running: BackendPidFile | null = await getRunningBackend();
 	const url: string = running?.url ?? `ws://localhost:${DEFAULT_BACKEND_PORT}`;
 	const health = await healthBackend(url);
+	const installedFrontendVersion: string | null = await getInstalledFrontendVersion(projectPath);
+	const pendingFrontendVersion: string | null = await getPendingFrontendVersion();
 	return {
 		frontend: {
-			installedVersion: await getInstalledFrontendVersion(projectPath),
+			installedVersion: installedFrontendVersion,
 			latestVersion: includeLatest ? await getLatestFrontendVersion() : null,
-			pendingVersion: await getPendingFrontendVersion()
+			pendingVersion: getActionablePendingFrontendVersion(pendingFrontendVersion, installedFrontendVersion)
 		},
 		backend: {
 			installedVersion: await getInstalledBackendVersion(),
@@ -29,4 +32,14 @@ export async function readStatus(projectPath: string | undefined, options: ReadS
 			error: health.error
 		}
 	};
+}
+
+function getActionablePendingFrontendVersion(pendingVersion: string | null, installedVersion: string | null): string | null {
+	if (pendingVersion === null || pendingVersion.trim() === "") {
+		return null;
+	}
+	if (installedVersion === null || installedVersion.trim() === "") {
+		return pendingVersion;
+	}
+	return isVersionNewer(pendingVersion, installedVersion) ? pendingVersion : null;
 }

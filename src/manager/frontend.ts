@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { copyFile, mkdir, readdir, readFile, rename, rm, stat } from "node:fs/promises";
+import { appendFile, copyFile, mkdir, readdir, readFile, rename, rm, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { FRONTEND_ADDON_DIR_NAME, FRONTEND_REPOSITORY, type FrontendManifest, type PendingFrontendUpdate } from "./types.js";
@@ -8,7 +8,7 @@ import { ManagerError } from "./manager-error.js";
 import { assertInside, getManagerPaths, resolveProjectPluginDir, type ManagerPaths } from "./paths.js";
 import { readJsonFile, writeJsonFile } from "./json-file.js";
 import { getCachedOrFetchLatestVersion, type LatestVersionOptions } from "./latest-cache.js";
-import { runCommand } from "./process.js";
+import { isProcessAlive, runCommand } from "./process.js";
 
 export type GithubReleaseAsset = {
 	name?: unknown;
@@ -138,8 +138,13 @@ export async function applyFrontendUpdate(projectPath: string | undefined): Prom
 
 	const backupDir: string = `${pluginDir}.backup-${Date.now()}`;
 	await rm(backupDir, { recursive: true, force: true });
-	await rename(pluginDir, backupDir).catch(async (): Promise<void> => {
+	await rename(pluginDir, backupDir).catch(async (error: unknown): Promise<void> => {
 		await rm(backupDir, { recursive: true, force: true });
+		throw new ManagerError({
+			code: "process_failed",
+			message: "Could not move the current Daedalus plugin directory. Close Godot, then try again.",
+			details: formatUpdateError(error)
+		});
 	});
 	try {
 		await copyDirectory(stagedPluginDir, pluginDir);
@@ -150,6 +155,73 @@ export async function applyFrontendUpdate(projectPath: string | undefined): Prom
 		await rename(backupDir, pluginDir).catch((): void => undefined);
 		throw error;
 	}
+}
+
+export type ApplyFrontendUpdateWaitOptions = {
+	timeoutMs?: number;
+	intervalMs?: number;
+	waitPid?: number;
+	applyUpdate?: (projectPath: string | undefined) => Promise<{ applied: boolean; version: string | null; backupDir?: string }>;
+};
+
+export async function applyFrontendUpdateWait(
+	projectPath: string | undefined,
+	options: ApplyFrontendUpdateWaitOptions = {}
+): Promise<{ applied: boolean; version: string | null; backupDir?: string; logPath: string }> {
+	const paths: ManagerPaths = getManagerPaths();
+	const logPath: string = join(paths.logsDir, `frontend-update-${new Date().toISOString().replace(/[:.]/g, "-")}.log`);
+	await mkdir(paths.logsDir, { recursive: true });
+	await writeUpdateLog(logPath, "Daedalus frontend update installer started.");
+	await writeUpdateLog(logPath, `Project: ${projectPath ?? ""}`);
+	await assertPendingFrontendUpdateExists(paths);
+
+	const timeoutMs: number = options.timeoutMs ?? 5 * 60 * 1000;
+	const intervalMs: number = options.intervalMs ?? 1000;
+	const applyUpdate = options.applyUpdate ?? applyFrontendUpdate;
+	const deadlineMs: number = Date.now() + timeoutMs;
+	if (options.waitPid !== undefined && Number.isFinite(options.waitPid) && options.waitPid > 0) {
+		await writeUpdateLog(logPath, `Waiting for Godot editor process ${options.waitPid} to exit.`);
+		while (Date.now() <= deadlineMs && isProcessAlive(options.waitPid)) {
+			await sleep(intervalMs);
+		}
+		if (isProcessAlive(options.waitPid)) {
+			throw new ManagerError({
+				code: "process_failed",
+				message: "Godot editor is still running; Daedalus plugin update was not applied.",
+				details: "Close Godot editor, then run the pending plugin installer again.",
+				logPath,
+				suggestedAction: "Close Godot editor and run Install pending update again."
+			});
+		}
+		await writeUpdateLog(logPath, "Godot editor process has exited.");
+	}
+	let attempt: number = 0;
+	let lastError: unknown = null;
+	while (Date.now() <= deadlineMs) {
+		attempt += 1;
+		try {
+			await writeUpdateLog(logPath, `Attempt ${attempt}: applying staged plugin update.`);
+			const result = await applyUpdate(projectPath);
+			await writeUpdateLog(logPath, `Update applied successfully. Version: ${result.version ?? "unknown"}.`);
+			return { ...result, logPath };
+		} catch (error: unknown) {
+			lastError = error;
+			await writeUpdateLog(logPath, `Attempt ${attempt} failed: ${formatUpdateError(error)}`);
+			if (!isRetryableApplyError(error)) {
+				throw addLogPathToManagerError(error, logPath);
+			}
+			await writeUpdateLog(logPath, "Waiting for Godot editor to close before retrying.");
+			await sleep(intervalMs);
+		}
+	}
+
+	throw new ManagerError({
+		code: "process_failed",
+		message: "Could not apply Daedalus plugin update before the timeout.",
+		details: `Close Godot editor and run the installer again.\nLast error: ${formatUpdateError(lastError)}`,
+		logPath,
+		suggestedAction: "Close Godot editor, then run the pending plugin installer again."
+	});
 }
 
 export async function rollbackFrontend(projectPath: string | undefined): Promise<{ rolledBack: boolean }> {
@@ -170,6 +242,82 @@ export async function rollbackFrontend(projectPath: string | undefined): Promise
 	await rm(pluginDir, { recursive: true, force: true });
 	await rename(join(parent, backup), pluginDir);
 	return { rolledBack: true };
+}
+
+async function assertPendingFrontendUpdateExists(paths: ManagerPaths): Promise<void> {
+	const pending: PendingFrontendUpdate | null = await readJsonFile<PendingFrontendUpdate>(paths.pendingFrontendUpdatePath);
+	if (pending === null) {
+		throw new ManagerError({
+			code: "frontend_update_missing",
+			message: "No pending Daedalus plugin update is staged."
+		});
+	}
+
+	const stagedPluginDir: string = join(pending.stagedDir, "addons", FRONTEND_ADDON_DIR_NAME);
+	const stagedStats = await stat(stagedPluginDir).catch((): null => null);
+	if (stagedStats === null || !stagedStats.isDirectory()) {
+		throw new ManagerError({
+			code: "frontend_update_missing",
+			message: "Pending frontend update staged directory is missing."
+		});
+	}
+}
+
+function isRetryableApplyError(error: unknown): boolean {
+	const code: string = getErrorCode(error);
+	if (code === "EBUSY" || code === "EPERM" || code === "EACCES" || code === "ENOTEMPTY") {
+		return true;
+	}
+	if (error instanceof ManagerError) {
+		return error.code === "process_failed" && error.message.toLowerCase().includes("close godot");
+	}
+	return false;
+}
+
+function getErrorCode(error: unknown): string {
+	if (typeof error !== "object" || error === null || !("code" in error)) {
+		return "";
+	}
+	const value: unknown = (error as { code?: unknown }).code;
+	return typeof value === "string" ? value : "";
+}
+
+function addLogPathToManagerError(error: unknown, logPath: string): ManagerError {
+	if (error instanceof ManagerError) {
+		return new ManagerError({
+			code: error.code,
+			message: error.message,
+			...(error.details === undefined ? {} : { details: error.details }),
+			logPath,
+			...(error.suggestedAction === undefined ? {} : { suggestedAction: error.suggestedAction })
+		});
+	}
+	return new ManagerError({
+		code: "unknown_error",
+		message: error instanceof Error ? error.message : String(error),
+		logPath
+	});
+}
+
+function formatUpdateError(error: unknown): string {
+	if (error instanceof ManagerError) {
+		return `${error.code}: ${error.message}${error.details === undefined ? "" : ` (${error.details})`}`;
+	}
+	if (error instanceof Error) {
+		const code: string = getErrorCode(error);
+		return `${code.length === 0 ? "error" : code}: ${error.message}`;
+	}
+	return String(error);
+}
+
+async function writeUpdateLog(logPath: string, message: string): Promise<void> {
+	await appendFile(logPath, `[${new Date().toISOString()}] ${message}\n`, "utf8");
+}
+
+async function sleep(ms: number): Promise<void> {
+	await new Promise<void>((resolve): void => {
+		setTimeout(resolve, ms);
+	});
 }
 
 export function getVersionFromGithubRelease(release: GithubRelease | null): string | null {
@@ -234,6 +382,9 @@ export function validateFrontendManifest(manifest: FrontendManifest): void {
 	}
 	if (!manifest.sha256.match(/^[a-fA-F0-9]{64}$/)) {
 		throw new ManagerError({ code: "manifest_invalid", message: "Frontend manifest sha256 is invalid." });
+	}
+	if (manifest.minGodotVersion === undefined || !manifest.minGodotVersion.match(/^\d+\.\d+(?:\.\d+)?$/)) {
+		throw new ManagerError({ code: "manifest_invalid", message: "Frontend manifest minGodotVersion is required." });
 	}
 }
 

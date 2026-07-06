@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { mkdir, readdir, readFile, rename, rm, stat } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createConnection } from "node:net";
 import { BACKEND_BIN_NAME, BACKEND_PACKAGE_NAME, DEFAULT_BACKEND_PORT, type BackendCurrentFile, type BackendPidFile } from "./types.js";
@@ -11,6 +11,9 @@ import { getCachedOrFetchLatestVersion, type LatestVersionOptions } from "./late
 import { runCommand, stopProcess, isProcessAlive, type CommandResult } from "./process.js";
 
 const MAX_BACKEND_VERSIONS: number = 3;
+const START_LOCK_STALE_MS: number = 30000;
+const START_LOCK_WAIT_MS: number = 10000;
+const START_LOCK_POLL_MS: number = 250;
 
 export async function getLatestBackendVersion(options: LatestVersionOptions = {}): Promise<string | null> {
 	return getCachedOrFetchLatestVersion("backend", fetchLatestBackendVersion, options);
@@ -97,42 +100,152 @@ export async function startBackend(port: number = DEFAULT_BACKEND_PORT): Promise
 		});
 	}
 
-	const existingPid: BackendPidFile | null = await readJsonFile<BackendPidFile>(paths.backendPidPath);
-	if (existingPid !== null && isProcessAlive(existingPid.pid)) {
+	await mkdir(paths.backendRuntimeDir, { recursive: true });
+	const existingPid: BackendPidFile | null = await getRunningBackendPidForPort(paths, port);
+	if (existingPid !== null) {
 		return existingPid;
 	}
 
-	await mkdir(paths.logsDir, { recursive: true });
-	await mkdir(paths.backendRuntimeDir, { recursive: true });
-	const logPath: string = join(paths.logsDir, `backend_${current.version}_${Date.now()}.log`);
-	const out = createWriteStream(logPath, { flags: "a" });
-	const packageRoot: string = join(current.path, "node_modules", BACKEND_PACKAGE_NAME);
-	const entryPath: string = join(packageRoot, "src", "main.ts");
-	const child = (await import("node:child_process")).spawn(
-		process.execPath,
-		["--import", "tsx", entryPath],
-		{
-			cwd: packageRoot,
-			env: { ...process.env, DAEDALUS_BACKEND_MODE: "runtime", PORT: String(port) },
-			detached: true,
-			windowsHide: true,
-			stdio: ["ignore", "pipe", "pipe"]
+	const releaseLock: () => Promise<void> = await acquireBackendStartLock(paths);
+	try {
+		const lockedExistingPid: BackendPidFile | null = await getRunningBackendPidForPort(paths, port);
+		if (lockedExistingPid !== null) {
+			return lockedExistingPid;
 		}
-	);
-	child.stdout.pipe(out, { end: false });
-	child.stderr.pipe(out, { end: false });
-	child.unref();
 
-	const pidFile: BackendPidFile = {
-		pid: child.pid ?? 0,
-		version: current.version,
-		port,
-		url: `ws://localhost:${port}`,
-		logPath,
-		startedAt: new Date().toISOString()
-	};
-	await writeJsonFile(paths.backendPidPath, pidFile);
-	return pidFile;
+		const url: string = `ws://localhost:${port}`;
+		const existingHealth = await healthBackend(url);
+		if (existingHealth.ok) {
+			return {
+				pid: 0,
+				version: current.version,
+				port,
+				url,
+				logPath: "",
+				startedAt: new Date().toISOString()
+			};
+		}
+		if (!isConnectionRefusedHealthError(existingHealth.error)) {
+			throw new ManagerError({
+				code: "health_failed",
+				message: `Backend port ${port} is already occupied by a non-Daedalus service or an incompatible backend.`,
+				details: existingHealth.error ?? "Unknown health check failure.",
+				suggestedAction: "Stop the process using this port, or change Daedalus backend URL in Settings."
+			});
+		}
+
+		await mkdir(paths.logsDir, { recursive: true });
+		const logPath: string = join(paths.logsDir, `backend_${current.version}_${Date.now()}.log`);
+		const out = createWriteStream(logPath, { flags: "a" });
+		const packageRoot: string = join(current.path, "node_modules", BACKEND_PACKAGE_NAME);
+		const entryPath: string = join(packageRoot, "src", "main.ts");
+		const child = (await import("node:child_process")).spawn(
+			process.execPath,
+			["--import", "tsx", entryPath],
+			{
+				cwd: packageRoot,
+				env: { ...process.env, DAEDALUS_BACKEND_MODE: "runtime", PORT: String(port) },
+				detached: true,
+				windowsHide: true,
+				stdio: ["ignore", "pipe", "pipe"]
+			}
+		);
+		child.stdout.pipe(out, { end: false });
+		child.stderr.pipe(out, { end: false });
+		child.unref();
+
+		const pidFile: BackendPidFile = {
+			pid: child.pid ?? 0,
+			version: current.version,
+			port,
+			url: `ws://localhost:${port}`,
+			logPath,
+			startedAt: new Date().toISOString()
+		};
+		await writeJsonFile(paths.backendPidPath, pidFile);
+		return pidFile;
+	} finally {
+		await releaseLock();
+	}
+}
+
+async function getRunningBackendPidForPort(paths: ManagerPaths, port: number): Promise<BackendPidFile | null> {
+	const existingPid: BackendPidFile | null = await readJsonFile<BackendPidFile>(paths.backendPidPath);
+	if (existingPid === null) {
+		return null;
+	}
+
+	if (existingPid.pid > 0 && existingPid.port === port && isProcessAlive(existingPid.pid)) {
+		return existingPid;
+	}
+
+	if (existingPid.pid <= 0 || !isProcessAlive(existingPid.pid)) {
+		await rm(paths.backendPidPath, { force: true });
+	}
+
+	return null;
+}
+
+async function acquireBackendStartLock(paths: ManagerPaths): Promise<() => Promise<void>> {
+	const lockDir: string = join(paths.backendRuntimeDir, "backend-start.lock");
+	const ownerPath: string = join(lockDir, "owner.json");
+	const deadline: number = Date.now() + START_LOCK_WAIT_MS;
+	while (Date.now() < deadline) {
+		try {
+			await mkdir(lockDir);
+			await writeFile(ownerPath, JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }), "utf8");
+			return async (): Promise<void> => {
+				await rm(lockDir, { recursive: true, force: true });
+			};
+		} catch (error: unknown) {
+			if (!isFileSystemError(error, "EEXIST")) {
+				throw error;
+			}
+
+			if (await isBackendStartLockStale(lockDir, ownerPath)) {
+				await rm(lockDir, { recursive: true, force: true });
+				continue;
+			}
+
+			await sleep(START_LOCK_POLL_MS);
+		}
+	}
+
+	throw new ManagerError({
+		code: "process_failed",
+		message: "Another Daedalus backend startup is still in progress.",
+		suggestedAction: "Wait a few seconds, then reconnect. If this repeats, close duplicate Godot editors and try again."
+	});
+}
+
+async function isBackendStartLockStale(lockDir: string, ownerPath: string): Promise<boolean> {
+	const lockStats = await stat(ownerPath).catch(async (): Promise<Awaited<ReturnType<typeof stat>> | null> => {
+		return stat(lockDir).catch((): null => null);
+	});
+	if (lockStats === null || lockStats === undefined) {
+		return true;
+	}
+
+	return Date.now() - Number(lockStats.mtimeMs) > START_LOCK_STALE_MS;
+}
+
+function isConnectionRefusedHealthError(error: string | null): boolean {
+	if (error === null) {
+		return false;
+	}
+
+	const normalized: string = error.toLowerCase();
+	return normalized.includes("econnrefused") || normalized.includes("connection refused");
+}
+
+function isFileSystemError(error: unknown, code: string): boolean {
+	return error instanceof Error && "code" in error && error.code === code;
+}
+
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve): void => {
+		setTimeout(resolve, ms);
+	});
 }
 
 export async function stopBackend(): Promise<{ stopped: boolean; pid: number | null; details: string }> {

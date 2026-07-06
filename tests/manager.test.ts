@@ -14,9 +14,11 @@ import {
 	type GithubRelease
 } from "../src/manager/frontend.js";
 import { readJsonFile, writeJsonFile } from "../src/manager/json-file.js";
-import type { BackendCurrentFile } from "../src/manager/types.js";
+import type { BackendCurrentFile, PendingFrontendUpdate } from "../src/manager/types.js";
 import { installBackend, rollbackBackend } from "../src/manager/backend.js";
+import { applyFrontendUpdateWait } from "../src/manager/frontend.js";
 import { getCachedOrFetchLatestVersion } from "../src/manager/latest-cache.js";
+import { readStatus } from "../src/manager/status.js";
 
 test("manager semver parser compares stable versions", (): void => {
 	assert.deepEqual(parseSemver("v1.2.3"), [1, 2, 3]);
@@ -45,10 +47,19 @@ test("frontend manifest validation rejects unsafe metadata", (): void => {
 	});
 	assert.throws((): void => {
 		validateFrontendManifest({
+			version: "1.0.0",
+			tag: "v1.0.0",
+			assetName: "godot-daedalus-plugin-v1.0.0.zip",
+			sha256: "a".repeat(64)
+		});
+	}, ManagerError);
+	assert.throws((): void => {
+		validateFrontendManifest({
 			version: "1.0",
 			tag: "v1.0",
 			assetName: "plugin.zip",
-			sha256: "a".repeat(64)
+			sha256: "a".repeat(64),
+			minGodotVersion: "4.4"
 		});
 	}, ManagerError);
 	assert.throws((): void => {
@@ -56,7 +67,8 @@ test("frontend manifest validation rejects unsafe metadata", (): void => {
 			version: "1.0.0",
 			tag: "v1.0.1",
 			assetName: "plugin.zip",
-			sha256: "a".repeat(64)
+			sha256: "a".repeat(64),
+			minGodotVersion: "4.4"
 		});
 	}, ManagerError);
 });
@@ -174,6 +186,89 @@ test("frontend package fixture has addon layout", async (): Promise<void> => {
 	await rm(root, { recursive: true, force: true });
 });
 
+test("frontend apply-wait reports missing pending update", async (): Promise<void> => {
+	const root: string = await mkdtemp(join(tmpdir(), "daedalus-manager-apply-wait-missing-"));
+	const previousAppDir: string | undefined = process.env.GODOT_DAEDALUS_APP_DIR;
+	process.env.GODOT_DAEDALUS_APP_DIR = join(root, "app");
+	try {
+		await assert.rejects(
+			applyFrontendUpdateWait(root, { timeoutMs: 5, intervalMs: 1 }),
+			(error: unknown): boolean => error instanceof ManagerError && error.code === "frontend_update_missing"
+		);
+	} finally {
+		restoreEnv("GODOT_DAEDALUS_APP_DIR", previousAppDir);
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("frontend apply-wait reports missing staged directory", async (): Promise<void> => {
+	const root: string = await mkdtemp(join(tmpdir(), "daedalus-manager-apply-wait-staged-"));
+	const previousAppDir: string | undefined = process.env.GODOT_DAEDALUS_APP_DIR;
+	process.env.GODOT_DAEDALUS_APP_DIR = join(root, "app");
+	try {
+		await writePendingFrontendUpdate(root, join(root, "missing-staged"), "1.0.9");
+		await assert.rejects(
+			applyFrontendUpdateWait(root, { timeoutMs: 5, intervalMs: 1 }),
+			(error: unknown): boolean => error instanceof ManagerError && error.code === "frontend_update_missing"
+		);
+	} finally {
+		restoreEnv("GODOT_DAEDALUS_APP_DIR", previousAppDir);
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("frontend apply-wait retries locked plugin directory and then succeeds", async (): Promise<void> => {
+	const root: string = await mkdtemp(join(tmpdir(), "daedalus-manager-apply-wait-retry-"));
+	const previousAppDir: string | undefined = process.env.GODOT_DAEDALUS_APP_DIR;
+	process.env.GODOT_DAEDALUS_APP_DIR = join(root, "app");
+	try {
+		const stagedDir: string = join(root, "staged");
+		await mkdir(join(stagedDir, "addons", "godot_daedalus"), { recursive: true });
+		await writeFile(join(stagedDir, "addons", "godot_daedalus", "plugin.cfg"), "[plugin]\nversion=\"1.0.9\"\n", "utf8");
+		await writePendingFrontendUpdate(root, stagedDir, "1.0.9");
+		let attempts: number = 0;
+		const result = await applyFrontendUpdateWait(root, {
+			timeoutMs: 100,
+			intervalMs: 1,
+			applyUpdate: async (): Promise<{ applied: boolean; version: string | null }> => {
+				attempts += 1;
+				if (attempts < 3) {
+					const error = new Error("locked");
+					(error as NodeJS.ErrnoException).code = "EBUSY";
+					throw error;
+				}
+				return { applied: true, version: "1.0.9" };
+			}
+		});
+		assert.equal(result.applied, true);
+		assert.equal(result.version, "1.0.9");
+		assert.equal(attempts, 3);
+	} finally {
+		restoreEnv("GODOT_DAEDALUS_APP_DIR", previousAppDir);
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("manager status hides stale pending frontend update when installed version already matches", async (): Promise<void> => {
+	const root: string = await mkdtemp(join(tmpdir(), "daedalus-manager-status-pending-"));
+	const previousAppDir: string | undefined = process.env.GODOT_DAEDALUS_APP_DIR;
+	process.env.GODOT_DAEDALUS_APP_DIR = join(root, "app");
+	try {
+		const projectRoot: string = join(root, "project");
+		await mkdir(join(projectRoot, "addons", "godot_daedalus"), { recursive: true });
+		await writeFile(join(projectRoot, "addons", "godot_daedalus", "plugin.cfg"), "[plugin]\nversion=\"1.0.1\"\n", "utf8");
+		const stagedDir: string = join(root, "staged");
+		await mkdir(join(stagedDir, "addons", "godot_daedalus"), { recursive: true });
+		await writePendingFrontendUpdate(root, stagedDir, "1.0.1");
+		const status = await readStatus(projectRoot, { includeLatest: false });
+		assert.equal(status.frontend.installedVersion, "1.0.1");
+		assert.equal(status.frontend.pendingVersion, null);
+	} finally {
+		restoreEnv("GODOT_DAEDALUS_APP_DIR", previousAppDir);
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
 test("backend install stages local packages and rollback switches current version", async (): Promise<void> => {
 	const root: string = await mkdtemp(join(tmpdir(), "daedalus-manager-install-"));
 	const previousAppDir: string | undefined = process.env.GODOT_DAEDALUS_APP_DIR;
@@ -223,4 +318,29 @@ async function createFakeBackendPackage(root: string, version: string): Promise<
 	await writeFile(join(packageDir, "bin", "backend.js"), "#!/usr/bin/env node\n", "utf8");
 	await writeFile(join(packageDir, "bin", "manager.js"), "#!/usr/bin/env node\n", "utf8");
 	return packageDir;
+}
+
+async function writePendingFrontendUpdate(root: string, stagedDir: string, version: string): Promise<void> {
+	const pending: PendingFrontendUpdate = {
+		version,
+		sourceZipPath: join(root, "plugin.zip"),
+		stagedDir,
+		manifest: {
+			version,
+			tag: `v${version}`,
+			sha256: "a".repeat(64),
+			assetName: "godot_daedalus.zip",
+			minGodotVersion: "4.7"
+		},
+		createdAt: new Date(0).toISOString()
+	};
+	await writeJsonFile(join(root, "app", "frontend", "pending_frontend_update.json"), pending);
+}
+
+function restoreEnv(name: string, previousValue: string | undefined): void {
+	if (previousValue === undefined) {
+		delete process.env[name];
+		return;
+	}
+	process.env[name] = previousValue;
 }

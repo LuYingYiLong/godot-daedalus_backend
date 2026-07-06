@@ -7,13 +7,19 @@ on:
     branches: [main]
 
 jobs:
-  test:
+  test-ubuntu:
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Checkout frontend plugin repository
+        uses: actions/checkout@v4
+        with:
+          repository: LuYingYiLong/godot-daedalus
+          path: godot-daedalus-frontend
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -29,3 +35,57 @@ jobs:
 
       - name: Check
         run: npm run check
+        env:
+          GODOT_DAEDALUS_PLUGIN_DIR: ${{ github.workspace }}/godot-daedalus-frontend/addons/godot_daedalus
+
+  beta-windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    env:
+      GODOT_VERSION: 4.7-stable
+      FRONTEND_DIR: ${{ github.workspace }}\godot-daedalus-frontend
+      GODOT_DAEDALUS_PLUGIN_DIR: ${{ github.workspace }}\godot-daedalus-frontend\addons\godot_daedalus
+      GODOT_PROJECT_PATH: ${{ github.workspace }}\godot-daedalus-frontend
+
+    steps:
+      - name: Checkout backend repository
+        uses: actions/checkout@v4
+        with:
+          path: backend
+
+      - name: Checkout frontend plugin repository
+        uses: actions/checkout@v4
+        with:
+          repository: LuYingYiLong/godot-daedalus
+          path: godot-daedalus-frontend
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: backend/.nvmrc
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Check backend package and protocol contract
+        working-directory: backend
+        run: npm run check
+
+      - name: Download Godot
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $zip = Join-Path $env:RUNNER_TEMP "godot.zip"
+          $out = Join-Path $env:RUNNER_TEMP "godot"
+          $url = "https://github.com/godotengine/godot/releases/download/$env:GODOT_VERSION/Godot_v$env:GODOT_VERSION`_win64.exe.zip"
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          Expand-Archive -LiteralPath $zip -DestinationPath $out -Force
+          "GODOT_EXECUTABLE_PATH=$out\Godot_v$env:GODOT_VERSION`_win64.exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Run Beta smoke
+        working-directory: backend
+        run: npm run smoke:beta

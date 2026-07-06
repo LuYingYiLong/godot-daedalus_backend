@@ -6,9 +6,9 @@ This npm package is a source-runtime package. It publishes the TypeScript source
 
 ## Requirements
 
-- Node.js 20.19 or newer.
+- Node.js 22.12.0 or newer.
 - npm.
-- Godot 4.x for Godot validation and editor workflows.
+- Godot 4.7 for the public Beta validation path. Godot 4.x may work, but Windows + Godot 4.7 is the first supported Beta target.
 - Optional Python 3 for the DeepSeek tokenizer helper.
 
 The Python tokenizer bridge is included as `scripts/deepseek-tokenizer-server.py`. The tokenizer model files are intentionally not included in the npm package because they can be large. If you want exact tokenizer counting, install the Python dependency and point the backend at your tokenizer directory:
@@ -92,7 +92,14 @@ godot-daedalus-plugin-vX.Y.Z.zip
 godot-daedalus-plugin-vX.Y.Z.manifest.json
 ```
 
-The zip must contain `addons/godot_daedalus/plugin.cfg`. The manifest must include `version`, `tag`, `sha256`, `assetName`, and optionally `minGodotVersion`.
+The zip must contain `addons/godot_daedalus/plugin.cfg`. The manifest must include `version`, `tag`, `sha256`, `assetName`, and `minGodotVersion`.
+
+Manager logs and runtime state live under `%APPDATA%\.godot_daedalus`. If a frontend update is blocked by a Godot file lock, close Godot and run the pending update again. Rollback commands are available for both backend and frontend:
+
+```powershell
+godot-daedalus-manager --json backend rollback
+godot-daedalus-manager --json frontend rollback --project "D:\GodotProjects\example"
+```
 
 ## Run The Godot MCP Server
 
@@ -129,6 +136,9 @@ Useful scripts:
 - `npm run terminal:mcp`: run the terminal MCP server from source.
 - `npm run ping`: run the local ping client.
 - `npm run pack:check`: inspect the npm package contents without publishing.
+- `npm run smoke:beta`: start the backend and run the Windows/Godot public Beta smoke checks.
+
+Public Beta release readiness is tracked in [`docs/beta-release-checklist.md`](docs/beta-release-checklist.md). The checklist covers Windows CI, Godot headless checks, real provider manual validation, frontend package rules, rollback, and security regression checks.
 
 ## Published Files
 
@@ -146,6 +156,8 @@ Before publishing:
 
 ```powershell
 npm test
+npm run check
+npm run smoke:beta
 npm publish --dry-run
 npm publish
 ```

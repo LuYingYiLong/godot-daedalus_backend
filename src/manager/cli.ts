@@ -1,7 +1,7 @@
 import { DEFAULT_BACKEND_PORT, type ManagerResult } from "./types.js";
 import { toManagerFailure, ManagerError } from "./manager-error.js";
 import { installBackend, rollbackBackend, startBackend, stopBackend, healthBackend, getLatestBackendVersion } from "./backend.js";
-import { applyFrontendUpdate, downloadAndStageFrontend, getLatestFrontendVersion, rollbackFrontend } from "./frontend.js";
+import { applyFrontendUpdate, applyFrontendUpdateWait, downloadAndStageFrontend, getLatestFrontendVersion, rollbackFrontend } from "./frontend.js";
 import { readStatus } from "./status.js";
 
 type ParsedArgs = {
@@ -76,6 +76,16 @@ async function handleCommand(args: ParsedArgs): Promise<ManagerResult> {
 		}
 		if (second === "apply") {
 			return { ok: true, frontend: await applyFrontendUpdate(getRequiredStringOption(args, "project")) };
+		}
+		if (second === "apply-wait") {
+			return {
+				ok: true,
+				frontend: await applyFrontendUpdateWait(getRequiredStringOption(args, "project"), {
+					...(getNumberOption(args, "timeout-ms") === null ? {} : { timeoutMs: getNumberOption(args, "timeout-ms")! }),
+					...(getNumberOption(args, "interval-ms") === null ? {} : { intervalMs: getNumberOption(args, "interval-ms")! }),
+					...(getNumberOption(args, "wait-pid") === null ? {} : { waitPid: getNumberOption(args, "wait-pid")! })
+				})
+			};
 		}
 		if (second === "rollback") {
 			return { ok: true, frontend: await rollbackFrontend(getRequiredStringOption(args, "project")) };
@@ -179,6 +189,7 @@ function getHelpText(): string {
 		"  frontend check [--project <path>] [--no-latest]",
 		"  frontend download|stage [--version <version>]",
 		"  frontend apply --project <path>",
+		"  frontend apply-wait --project <path>",
 		"  frontend rollback --project <path>"
 	].join("\n");
 }
