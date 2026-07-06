@@ -1,0 +1,159 @@
+import type { AdditionalContextItem, ChatMessage } from "../protocol/types.js";
+import {
+	openSession,
+	type StoredMessage,
+	type StoredSessionEvent,
+	type StoredSessionTimelinePage
+} from "../session/session-store.js";
+import type { ClientSession } from "./client-session.js";
+import { hydratePendingGuides } from "./pending-guides.js";
+
+const DEFAULT_SESSION_OPEN_MESSAGE_LIMIT: number = 80;
+const MAX_SESSION_OPEN_MESSAGE_LIMIT: number = 500;
+const DEFAULT_SESSION_OPEN_EVENT_LIMIT: number = 80;
+const MAX_SESSION_OPEN_EVENT_LIMIT: number = 160;
+const SESSION_OPEN_PREVIEW_STRING_LIMIT: number = 1200;
+const SESSION_OPEN_PREVIEW_ARRAY_LIMIT: number = 80;
+
+function cloneStoredAdditionalContextItems(items: readonly AdditionalContextItem[] | undefined): AdditionalContextItem[] | undefined {
+	if (items === undefined || items.length === 0) {
+		return undefined;
+	}
+
+	return items.map((item: AdditionalContextItem): AdditionalContextItem => ({ ...item }));
+}
+
+export function getSessionProjectPath(session: ClientSession): string {
+	return session.activeWorkspace?.rootPath ?? session.godotProjectPath ?? process.env.GODOT_PROJECT_PATH ?? "";
+}
+
+export function toChatMessage(message: StoredMessage): ChatMessage {
+	const chatMessage: ChatMessage = {
+		role: message.role,
+		content: message.content
+	};
+
+	if (message.requestId !== undefined) {
+		chatMessage.requestId = message.requestId;
+	}
+
+	if (message.createdAt !== undefined) {
+		chatMessage.createdAt = message.createdAt;
+	}
+
+	if (message.additionalContext !== undefined && message.additionalContext.length > 0) {
+		chatMessage.additionalContext = cloneStoredAdditionalContextItems(message.additionalContext);
+	}
+
+	return chatMessage;
+}
+
+export function clampSessionOpenMessageLimit(limit: number | undefined): number {
+	if (limit === undefined) {
+		return DEFAULT_SESSION_OPEN_MESSAGE_LIMIT;
+	}
+
+	return Math.min(MAX_SESSION_OPEN_MESSAGE_LIMIT, Math.max(1, Math.floor(limit)));
+}
+
+export function createPreviewValue(value: unknown, depth: number = 0): unknown {
+	if (typeof value === "string") {
+		if (value.length <= SESSION_OPEN_PREVIEW_STRING_LIMIT) {
+			return value;
+		}
+
+		return [
+			value.slice(0, SESSION_OPEN_PREVIEW_STRING_LIMIT),
+			`\n\n[历史事件内容已截断，原始长度 ${value.length} 字符]`
+		].join("");
+	}
+
+	if (value === null || typeof value !== "object") {
+		return value;
+	}
+
+	if (depth >= 6) {
+		return "[历史事件嵌套内容已截断]";
+	}
+
+	if (Array.isArray(value)) {
+		const previewItems: unknown[] = value
+			.slice(0, SESSION_OPEN_PREVIEW_ARRAY_LIMIT)
+			.map((item: unknown): unknown => createPreviewValue(item, depth + 1));
+
+		if (value.length > SESSION_OPEN_PREVIEW_ARRAY_LIMIT) {
+			previewItems.push(`[历史事件数组已截断，原始长度 ${value.length}]`);
+		}
+
+		return previewItems;
+	}
+
+	const source: Record<string, unknown> = value as Record<string, unknown>;
+	const preview: Record<string, unknown> = {};
+
+	for (const [key, item] of Object.entries(source)) {
+		preview[key] = createPreviewValue(item, depth + 1);
+	}
+
+	return preview;
+}
+
+export function createSessionEventPreview(event: StoredSessionEvent): StoredSessionEvent {
+	return {
+		...event,
+		data: createPreviewValue(event.data)
+	};
+}
+
+export function createTimelinePageResult(page: StoredSessionTimelinePage, limit: number): Record<string, unknown> {
+	const eventLimit: number = Math.min(
+		MAX_SESSION_OPEN_EVENT_LIMIT,
+		Math.max(DEFAULT_SESSION_OPEN_EVENT_LIMIT, limit * 2)
+	);
+	const events: StoredSessionEvent[] = page.events.length > eventLimit
+		? page.events.slice(page.events.length - eventLimit)
+		: page.events;
+
+	return {
+		messageCount: page.messageCount,
+		eventCount: page.eventCount,
+		messagesOffset: page.messagesOffset,
+		eventsIncluded: events.length,
+		limit,
+		eventLimit,
+		hasMoreBefore: page.hasMoreBefore,
+		messages: page.messages.map(toChatMessage),
+		events: events.map(createSessionEventPreview),
+		latestWorkflowSnapshot: page.latestWorkflowSnapshot === null ? null : createPreviewValue(page.latestWorkflowSnapshot),
+		latestAgentSnapshot: page.latestAgentSnapshot === null ? null : createPreviewValue(page.latestAgentSnapshot)
+	};
+}
+
+export function startFullSessionLoad(session: ClientSession, sessionId: string): void {
+	const loadPromise: Promise<void> = (async (): Promise<void> => {
+		try {
+			const stored = await openSession(sessionId);
+			if (session.sessionId !== sessionId) {
+				return;
+			}
+
+			session.messages = stored.messages.map(toChatMessage);
+			session.pendingGuides = hydratePendingGuides(stored.events);
+		} catch (error: unknown) {
+			console.error(`[session] Failed to load complete history for ${sessionId}:`, error);
+		}
+	})();
+
+	const trackedPromise: Promise<void> = loadPromise.finally((): void => {
+		if (session.fullSessionLoadPromise === trackedPromise) {
+			session.fullSessionLoadPromise = undefined;
+		}
+	});
+	session.fullSessionLoadPromise = trackedPromise;
+}
+
+export async function waitForFullSessionLoad(session: ClientSession): Promise<void> {
+	if (session.fullSessionLoadPromise !== undefined) {
+		await session.fullSessionLoadPromise;
+	}
+}

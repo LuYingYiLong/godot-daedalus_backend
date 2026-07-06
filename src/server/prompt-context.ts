@@ -101,7 +101,7 @@ import {
 import { getToolPolicy } from "../tools/tool-policy.js";
 import type { PendingApproval } from "../tools/approval-gateway.js";
 import { getLlmToolExecutionIdentity } from "../tools/tool-idempotency.js";
-import { resolveToolMapping } from "../tools/llm-tools.js";
+import { resolveToolMapping } from "../tools/tool-mapping.js";
 import {
 	createPersistedApprovalRequestedData,
 	createRuntimePendingContinuation,
@@ -116,78 +116,20 @@ import {
 	type SlashCommandResult
 } from "./slash-commands.js";
 
+import { normalizeChatParamsForMode, resolveAllowedToolsForChatParams } from "./chat-mode.js";
+import { logPromptTrace, logProjectInstructionTrace } from "./prompt-trace.js";
+import { isCancellationError, sendAgentCancelled, sendAiCancelled, beginRequestExecution, finishRequestExecution, parseMessage } from "./request-lifecycle.js";
+import { estimateTextTokens, estimateMessagesTokens, computeHistoryBudget, appendChatTurnToSession, selectHistoryForModel, createSummaryMessage, loadSessionCompressorPrompt } from "./token-budget.js";
+import { getSessionProjectPath, toChatMessage, clampSessionOpenMessageLimit, createPreviewValue, createSessionEventPreview, createTimelinePageResult, startFullSessionLoad, waitForFullSessionLoad } from "./session-preview.js";
+import { createProviderChatOptions } from "./provider-chat-options.js";
+import { clipTextByChars, cloneAdditionalContextItems, getAdditionalContextDataRecord, getContextNumber, getContextString, createLineColumnRangeText, appendScriptSelectionPromptLines, appendFilesystemSelectionPromptLines, createAdditionalContextPromptSection } from "./additional-context.js";
+import { MAX_GUIDE_TEXT_CHARS, createGuideId, createPendingGuide, serializePendingGuide, findPendingGuideIndexById, findPendingGuideByClientId, readEventDataObject, hydratePendingGuides, persistGuideEvent, formatGuidePromptSection, consumePendingGuideSection } from "./pending-guides.js";
+import { DEFAULT_NEXT_STEP_HINT_COUNT, MAX_NEXT_STEP_HINT_COUNT, parseJsonObjectLoose, normalizeNextStepHints, createNextStepHintPrompt, createNextStepHints } from "./next-step-hints.js";
+import type { NextStepHint } from "./next-step-hints.js";
+import { WorkflowExecutionError } from "./workflow/workflow-error.js";
+import type { WorkflowPhaseToolStats, WorkflowPhaseRunResult } from "./workflow/shared-types.js";
+import { MAX_WORKFLOW_AUTO_REPAIR_ROUNDS } from "./workflow/limits.js";
 import {
-	tokenCounterPromise,
-	sessionCompressorPromptCache,
-	DEFAULT_SESSION_OPEN_MESSAGE_LIMIT,
-	MAX_SESSION_OPEN_MESSAGE_LIMIT,
-	DEFAULT_SESSION_OPEN_EVENT_LIMIT,
-	MAX_SESSION_OPEN_EVENT_LIMIT,
-	SESSION_OPEN_PREVIEW_STRING_LIMIT,
-	SESSION_OPEN_PREVIEW_ARRAY_LIMIT,
-	THINKING_EVENT_FLUSH_CHARS,
-	REQUEST_DEDUP_TTL_MS,
-	MAX_COMPLETED_REQUEST_IDS,
-	CUSTOM_INSTRUCTIONS_TRACE_WARNING_CHARS,
-	DEFAULT_NEXT_STEP_HINT_COUNT,
-	MAX_NEXT_STEP_HINT_COUNT,
-	MAX_NEXT_STEP_HINT_MESSAGE_CHARS,
-	MAX_GUIDE_TEXT_CHARS,
-	MAX_WORKFLOW_AUTO_REPAIR_ROUNDS,
-	fingerprintText,
-	logPromptTrace,
-	logProjectInstructionTrace,
-	getTokenCounter,
-	loadSessionCompressorPrompt,
-	isCancellationError,
-	sendAgentCancelled,
-	sendAiCancelled,
-	pruneCompletedRequestIds,
-	beginRequestExecution,
-	finishRequestExecution,
-	parseMessage,
-	estimateTextTokens,
-	estimateMessagesTokens,
-	estimateTextTokensForProvider,
-	estimateCurrentMessageTokensForProvider,
-	selectHistoryWithinBudget,
-	computeHistoryBudget,
-	appendChatTurnToSession,
-	selectHistoryForModel,
-	createSummaryMessage,
-	getSessionProjectPath,
-	toChatMessage,
-	clampSessionOpenMessageLimit,
-	createPreviewValue,
-	createSessionEventPreview,
-	createTimelinePageResult,
-	startFullSessionLoad,
-	waitForFullSessionLoad,
-	createProviderChatOptions,
-	createGuideId,
-	clipTextByChars,
-	cloneAdditionalContextItems,
-	getAdditionalContextDataRecord,
-	getContextNumber,
-	getContextString,
-	createLineColumnRangeText,
-	appendScriptSelectionPromptLines,
-	appendFilesystemSelectionPromptLines,
-	createAdditionalContextPromptSection,
-	createPendingGuide,
-	serializePendingGuide,
-	findPendingGuideIndexById,
-	findPendingGuideByClientId,
-	readEventDataObject,
-	hydratePendingGuides,
-	persistGuideEvent,
-	formatGuidePromptSection,
-	consumePendingGuideSection,
-	parseJsonObjectLoose,
-	normalizeNextStepHints,
-	createNextStepHintPrompt,
-	createNextStepHints,
-	resolveAllowedToolsForChatParams,
 	shouldPersistSessionEvent,
 	getThinkingEventBufferKey,
 	getThinkingDeltaText,
@@ -202,10 +144,8 @@ import {
 	persistSessionEvent,
 	sendSessionEvent,
 	sendGlobalEvent,
-	maybeScheduleSessionTitleGeneration,
-	WorkflowExecutionError
-} from "./websocket-support.js";
-import type { WorkflowPhaseToolStats, WorkflowPhaseRunResult, NextStepHint } from "./websocket-support.js";
+	maybeScheduleSessionTitleGeneration
+} from "./session-events.js";
 
 import {
 	createPendingAiContinuation,
@@ -220,24 +160,11 @@ import {
 	sendAgentPaused,
 	sendContinuedAgentResult
 } from "./approval-continuation.js";
-import {
-	createAgentToolEventForwarder,
-	createEmptyWorkflowPhaseToolStats,
-	updateWorkflowPhaseToolStats,
-	shouldRequireWorkflowWriteTool,
-	didWorkflowWritePhaseExecute,
-	isWorkflowProposalPhase,
-	createWorkflowWriteGuardRetryMessage,
-	sendWorkflowEvent,
-	mapWorkflowEventToAgentEvent,
-	convertWorkflowSnapshotToAgentSnapshot,
-	sendWorkflowTodoSnapshot,
-	runWorkflowPhase,
-	createWorkflowPhasePrompt,
-	createWorkflowPendingContinuation,
-	continueWorkflowExecution,
-	startWorkflowExecution
-} from "./workflow-execution.js";
+import { createAgentToolEventForwarder, createEmptyWorkflowPhaseToolStats, updateWorkflowPhaseToolStats, shouldRequireWorkflowWriteTool, didWorkflowWritePhaseExecute, isWorkflowProposalPhase, createWorkflowWriteGuardRetryMessage } from "./workflow/tool-events.js";
+import { sendWorkflowEvent, mapWorkflowEventToAgentEvent, convertWorkflowSnapshotToAgentSnapshot, sendWorkflowTodoSnapshot } from "./workflow/events.js";
+import { runWorkflowPhase, createWorkflowPhasePrompt } from "./workflow/phase-runner.js";
+import { createWorkflowPendingContinuation, continueWorkflowExecution } from "./workflow/continuation.js";
+import { startWorkflowExecution } from "./workflow/executor.js";
 
 function applyProviderConfigToSession(session: ClientSession, config: ProviderConfigWithSecret): void {
 	session.activeProvider = config.provider;

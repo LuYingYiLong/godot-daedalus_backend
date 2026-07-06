@@ -3,7 +3,7 @@ import { chatWithDeepSeek, type DeepSeekChatOptions } from "../providers/deepsee
 import { promptIdSchema } from "../protocol/schema.js";
 import type { AiChatParams, ChatMessage, PromptId } from "../protocol/types.js";
 import { isSkillId, type SkillId } from "../skills/registry.js";
-import type { ToolBudgetLevel } from "../tools/llm-tools.js";
+import type { ToolBudgetLevel } from "../tools/llm-tool-budget.js";
 import { createWorkflowId, createWorkflowTitle, READ_TOOLS, VERIFY_TOOLS, WRITE_TOOLS } from "./planner.js";
 import type {
 	WorkflowPhase,

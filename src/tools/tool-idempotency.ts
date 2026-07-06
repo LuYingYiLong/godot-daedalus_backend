@@ -3,7 +3,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { getToolExecutionLedgerPath } from "../app-paths.js";
 import type { McpHost } from "../mcp/mcp-host.js";
-import { MAX_TOOL_RESULT_CHARS, resolveToolMapping } from "./llm-tools.js";
+import { MAX_TOOL_RESULT_CHARS } from "./llm-tool-budget.js";
+import { resolveToolMapping } from "./tool-mapping.js";
 import { getToolPolicy } from "./tool-policy.js";
 
 const TOOL_EXECUTION_DEDUP_TTL_MS: number = 30 * 60 * 1000;

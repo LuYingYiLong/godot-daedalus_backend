@@ -1,5 +1,5 @@
 import type { AiChatParams } from "../protocol/types.js";
-import { CUSTOM_MCP_TOOLS_SENTINEL } from "../tools/llm-tools.js";
+import { CUSTOM_MCP_TOOLS_SENTINEL } from "../tools/tool-sentinels.js";
 import type { WorkflowPhase, WorkflowPhaseId, WorkflowPlan, WorkflowTodoItem } from "./types.js";
 
 type FixedWorkflowPhaseId = "inspect" | "implement" | "review" | "verify" | "summarize";

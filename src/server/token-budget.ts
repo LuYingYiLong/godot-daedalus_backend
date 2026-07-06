@@ -1,0 +1,170 @@
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+import type { AdditionalContextItem, AiChatParams, ChatMessage, ModelProfile } from "../protocol/types.js";
+import { type TokenCounter } from "../tokens/token-counter.js";
+import { createTokenCounter } from "../tokens/token-counter-factory.js";
+import { computeInputBudget, selectMessagesWithinBudget } from "../session/session-compressor.js";
+import type { SessionSummary } from "../session/session-store.js";
+import { estimateProviderMessagesTokens, estimateProviderTextTokens } from "../providers/provider-token-estimator.js";
+import {
+	createCurrentUserMessage,
+	getImageAttachments,
+	hasImageAttachments
+} from "../providers/provider-image-content.js";
+import { getProviderDisplayName } from "../providers/provider-registry.js";
+import type { ProviderChatOptions } from "../providers/deepseek-client.js";
+import type { ClientSession } from "./client-session.js";
+import { cloneAdditionalContextItems } from "./additional-context.js";
+
+const tokenCounterPromise: Promise<TokenCounter> = createTokenCounter();
+let sessionCompressorPromptCache: string | undefined;
+
+export async function getTokenCounter(): Promise<TokenCounter> {
+	return tokenCounterPromise;
+}
+
+export async function loadSessionCompressorPrompt(): Promise<string> {
+	if (sessionCompressorPromptCache !== undefined) {
+		return sessionCompressorPromptCache;
+	}
+
+	const promptPath: string = path.resolve(process.cwd(), "src/prompts/templates/internal/session-compressor.md");
+	const content: string = await fs.readFile(promptPath, "utf8");
+	const trimmedContent: string = content.trim();
+	sessionCompressorPromptCache = trimmedContent;
+	return trimmedContent;
+}
+
+export async function estimateTextTokens(text: string): Promise<number> {
+	const tc: TokenCounter = await getTokenCounter();
+	return tc.countText(text);
+}
+
+export async function estimateMessagesTokens(messages: ChatMessage[]): Promise<number> {
+	const tc: TokenCounter = await getTokenCounter();
+	let total: number = 0;
+
+	for (const message of messages) {
+		total += await tc.countText(`${message.role}: ${message.content}`);
+	}
+
+	return total;
+}
+
+export async function estimateTextTokensForProvider(options: ProviderChatOptions, text: string, abortSignal?: AbortSignal | undefined): Promise<number> {
+	try {
+		const providerEstimate: number | null = await estimateProviderTextTokens(options, text, abortSignal);
+		if (providerEstimate !== null) {
+			return providerEstimate;
+		}
+	} catch (error: unknown) {
+		const message: string = error instanceof Error ? error.message : String(error);
+		console.warn(`[token-counter] ${getProviderDisplayName(options.provider)} token estimate failed, using local counter: ${message}`);
+	}
+
+	return estimateTextTokens(text);
+}
+
+export async function estimateCurrentMessageTokensForProvider(options: ProviderChatOptions, params: AiChatParams, abortSignal?: AbortSignal | undefined): Promise<number> {
+	if (!hasImageAttachments(params)) {
+		return estimateTextTokensForProvider(options, params.message, abortSignal);
+	}
+
+	try {
+		const providerEstimate: number | null = await estimateProviderMessagesTokens(options, [createCurrentUserMessage(params)], abortSignal);
+		if (providerEstimate !== null) {
+			return providerEstimate;
+		}
+	} catch (error: unknown) {
+		const message: string = error instanceof Error ? error.message : String(error);
+		console.warn(`[token-counter] ${getProviderDisplayName(options.provider)} multimodal token estimate failed, using local counter: ${message}`);
+	}
+
+	const imageTokens: number = getImageAttachments(params.additionalContext)
+		.reduce((sum: number, image): number => sum + Math.ceil(image.byteSize / 384), 0);
+	return await estimateTextTokens(params.message) + imageTokens;
+}
+
+export async function selectHistoryWithinBudget(messages: ChatMessage[], budgetTokens: number): Promise<ChatMessage[]> {
+	const tc: TokenCounter = await getTokenCounter();
+	return selectMessagesWithinBudget(messages, budgetTokens, tc);
+}
+
+export async function computeHistoryBudget(
+	profile: ModelProfile,
+	options: ProviderChatOptions,
+	params: AiChatParams,
+	systemPrompt: string,
+	mcpContext: string,
+	abortSignal?: AbortSignal | undefined
+): Promise<number> {
+	const tc: TokenCounter = await getTokenCounter();
+	const outputReserveTokens: number = params.options?.maxTokens ?? profile.defaultOutputReserveTokens;
+	const systemPromptTokens: number = await estimateTextTokensForProvider(options, systemPrompt, abortSignal);
+	const mcpContextTokens: number = await estimateTextTokensForProvider(options, mcpContext, abortSignal);
+	const currentMessageTokens: number = await estimateCurrentMessageTokensForProvider(options, params, abortSignal);
+
+	return computeInputBudget({
+		profile,
+		outputReserveTokens,
+		systemPromptTokens,
+		mcpContextTokens,
+		toolDefinitionsTokens: 0,
+		currentMessageTokens,
+		tokenCounter: tc
+	});
+}
+
+export async function appendChatTurnToSession(
+	session: ClientSession,
+	_history: ChatMessage[],
+	userMessage: string,
+	assistantMessage: string,
+	requestId: string,
+	userCreatedAt: string = new Date().toISOString(),
+	assistantCreatedAt: string = new Date().toISOString(),
+	additionalContext?: readonly AdditionalContextItem[] | undefined
+): Promise<boolean> {
+	if (session.messages.some((message: ChatMessage): boolean => message.requestId === requestId)) {
+		return false;
+	}
+
+	const userChatMessage: ChatMessage = { role: "user", content: userMessage, requestId, createdAt: userCreatedAt };
+	const clonedAdditionalContext: AdditionalContextItem[] | undefined = cloneAdditionalContextItems(additionalContext);
+	if (clonedAdditionalContext !== undefined) {
+		userChatMessage.additionalContext = clonedAdditionalContext;
+	}
+
+	const nextMessages: ChatMessage[] = [
+		...session.messages,
+		userChatMessage,
+		{ role: "assistant", content: assistantMessage, requestId, createdAt: assistantCreatedAt }
+	];
+	session.messages = nextMessages;
+	return true;
+}
+
+export async function selectHistoryForModel(session: ClientSession, budgetTokens: number): Promise<ChatMessage[]> {
+	if (session.summaryMessage === undefined) {
+		return selectHistoryWithinBudget(session.messages, budgetTokens);
+	}
+
+	const summaryTokens: number = await estimateMessagesTokens([session.summaryMessage]);
+	const recentBudgetTokens: number = Math.max(0, budgetTokens - summaryTokens);
+	const recentSourceMessages: ChatMessage[] = session.summaryCoveredMessageCount !== undefined
+		? session.messages.slice(session.summaryCoveredMessageCount)
+		: session.messages;
+	const recentMessages: ChatMessage[] = await selectHistoryWithinBudget(recentSourceMessages, recentBudgetTokens);
+	return [session.summaryMessage, ...recentMessages];
+}
+
+export function createSummaryMessage(summary: SessionSummary): ChatMessage {
+	const generatedAtText: string = summary.generatedAt.length > 0
+		? ` — 生成于 ${summary.generatedAt}`
+		: "";
+
+	return {
+		role: "system",
+		content: `[会话摘要${generatedAtText}]\n${summary.content}`
+	};
+}

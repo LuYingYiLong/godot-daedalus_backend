@@ -1,6 +1,6 @@
 import type { AiChatParams, ChatMessage, PromptId } from "../protocol/types.js";
 import type { SkillId } from "../skills/registry.js";
-import type { ToolBudgetLevel } from "../tools/llm-tools.js";
+import type { ToolBudgetLevel } from "../tools/llm-tool-budget.js";
 
 export type WorkflowPhaseId = string;
 

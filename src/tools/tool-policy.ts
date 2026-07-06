@@ -1,4 +1,4 @@
-import { isDynamicMcpToolName } from "./llm-tools.js";
+import { isDynamicMcpToolName } from "./dynamic-mcp-tools.js";
 import { HARD_BLOCKED_TOOLS, TOOL_POLICIES } from "./tool-policy-table.js";
 
 export type ApprovalMode = "read-only" | "manual" | "auto-safe" | "bypass";

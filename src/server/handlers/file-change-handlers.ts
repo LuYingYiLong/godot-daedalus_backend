@@ -5,7 +5,7 @@ import type { ClientRequest } from "../../protocol/types.js";
 import type { McpHost } from "../../mcp/mcp-host.js";
 import type { ClientSession } from "../client-session.js";
 import { sendJson } from "../send-json.js";
-import { getSessionProjectPath } from "../websocket-support.js";
+import { getSessionProjectPath } from "../session-preview.js";
 
 export async function handleFileChangeRequest(socket: WebSocket, request: ClientRequest, session: ClientSession, _mcpHost: McpHost): Promise<void> {
 	switch (request.method) {

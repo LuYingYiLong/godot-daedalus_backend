@@ -8,11 +8,11 @@ import type { WorkflowRunState, WorkflowToolObservation } from "../workflow/type
 import { getToolPolicy } from "../tools/tool-policy.js";
 import type { PendingApproval } from "../tools/approval-gateway.js";
 import { getLlmToolExecutionIdentity } from "../tools/tool-idempotency.js";
-import { resolveToolMapping } from "../tools/llm-tools.js";
+import { resolveToolMapping } from "../tools/tool-mapping.js";
 import { parseToolResultSummary } from "../tools/tool-result-parser.js";
 import { McpHost } from "../mcp/mcp-host.js";
 import type { ClientSession, PendingAiContinuation } from "./client-session.js";
-import { appendChatTurnToSession } from "./websocket-support.js";
+import { appendChatTurnToSession } from "./token-budget.js";
 import { sendSessionEvent } from "./session-events.js";
 
 export function createPendingAiContinuation(

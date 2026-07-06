@@ -8,21 +8,14 @@ import { createClientSession, type ClientSession } from "./client-session.js";
 import { dispatchRequest } from "./request-dispatcher.js";
 import { sendJson } from "./send-json.js";
 import {
-	waitForFullSessionLoad,
+	beginRequestExecution,
+	finishRequestExecution,
+	parseMessage
+} from "./request-lifecycle.js";
+import { waitForFullSessionLoad } from "./session-preview.js";
+import {
 	waitForSessionEventPersistence
-} from "./websocket-support.js";
-
-const REQUEST_DEDUP_TTL_MS: number = 5 * 60 * 1000;
-const MAX_COMPLETED_REQUEST_IDS: number = 512;
-
-function parseMessage(data: WebSocket.RawData, isBinary: boolean): unknown {
-	if (isBinary) {
-		throw new Error("Binary messages are not supported");
-	}
-
-	const text: string = typeof data === "string" ? data : data.toString("utf8");
-	return JSON.parse(text) as unknown;
-}
+} from "./session-events.js";
 
 function sendProtocolError(socket: WebSocket, code: string, message: string, requestId: string = ""): void {
 	sendJson(socket, {
@@ -34,70 +27,6 @@ function sendProtocolError(socket: WebSocket, code: string, message: string, req
 			message
 		}
 	});
-}
-
-function pruneCompletedRequestIds(session: ClientSession, now: number = Date.now()): void {
-	for (const [requestId, completedAt] of session.completedRequestIds.entries()) {
-		if (now - completedAt > REQUEST_DEDUP_TTL_MS) {
-			session.completedRequestIds.delete(requestId);
-		}
-	}
-
-	while (session.completedRequestIds.size > MAX_COMPLETED_REQUEST_IDS) {
-		const oldestRequestId: string | undefined = session.completedRequestIds.keys().next().value;
-		if (oldestRequestId === undefined) {
-			break;
-		}
-		session.completedRequestIds.delete(oldestRequestId);
-	}
-}
-
-function sendDuplicateRequestResponse(
-	socket: WebSocket,
-	request: ClientRequest,
-	state: "in_flight" | "completed"
-): void {
-	sendJson(socket, {
-		type: "response",
-		id: request.id,
-		ok: true,
-		result: {
-			duplicate: true,
-			ignored: true,
-			state,
-			method: request.method
-		}
-	});
-}
-
-function beginRequestExecution(socket: WebSocket, request: ClientRequest, session: ClientSession): boolean {
-	if (request.id.length === 0) {
-		return true;
-	}
-
-	pruneCompletedRequestIds(session);
-	if (session.inFlightRequestIds.has(request.id)) {
-		sendDuplicateRequestResponse(socket, request, "in_flight");
-		return false;
-	}
-
-	if (session.completedRequestIds.has(request.id)) {
-		sendDuplicateRequestResponse(socket, request, "completed");
-		return false;
-	}
-
-	session.inFlightRequestIds.add(request.id);
-	return true;
-}
-
-function finishRequestExecution(request: ClientRequest, session: ClientSession): void {
-	if (request.id.length === 0) {
-		return;
-	}
-
-	session.inFlightRequestIds.delete(request.id);
-	session.completedRequestIds.set(request.id, Date.now());
-	pruneCompletedRequestIds(session);
 }
 
 function parseClientRequest(socket: WebSocket, data: WebSocket.RawData, isBinary: boolean): ClientRequest | null {

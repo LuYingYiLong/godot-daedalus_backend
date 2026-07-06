@@ -18,7 +18,8 @@ import {
 	type DeepSeekChatOptions
 } from "../providers/deepseek-client.js";
 import type { McpHost } from "../mcp/mcp-host.js";
-import { getToolDefinitions, getToolDefinitionsForNames, resolveToolBudget, MAX_TOTAL_TOOL_RESULT_CHARS } from "../tools/llm-tools.js";
+import { getToolDefinitions, getToolDefinitionsForNames } from "../tools/builtin-tool-definitions.js";
+import { resolveToolBudget, MAX_TOTAL_TOOL_RESULT_CHARS } from "../tools/llm-tool-budget.js";
 import { dispatchToolCalls, ToolApprovalRequiredError, type OnToolEvent } from "../tools/tool-dispatcher.js";
 import { ApprovalGateway } from "../tools/approval-gateway.js";
 import { containsDsmlToolCalls } from "./deepseek-dsml-tools.js";

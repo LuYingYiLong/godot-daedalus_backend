@@ -6,7 +6,7 @@ import { McpSession } from "./mcp-session.js";
 import type { McpServerConfig } from "./types.js";
 import { findWorkspace, getDefaultWorkspace } from "../workspace/registry.js";
 import type { WorkspaceConfig } from "../workspace/types.js";
-import { replaceDynamicMcpTools, type DynamicMcpToolSource } from "../tools/llm-tools.js";
+import { replaceDynamicMcpTools, type DynamicMcpToolSource } from "../tools/dynamic-mcp-tools.js";
 
 const CUSTOM_MCP_CONNECT_TIMEOUT_MS: number = 30_000;
 const CUSTOM_MCP_LIST_TOOLS_TIMEOUT_MS: number = 10_000;

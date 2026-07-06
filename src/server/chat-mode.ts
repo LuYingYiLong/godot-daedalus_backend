@@ -1,5 +1,5 @@
 import type { AiChatParams } from "../protocol/types.js";
-import { CUSTOM_MCP_TOOLS_SENTINEL } from "../tools/llm-tools.js";
+import { CUSTOM_MCP_TOOLS_SENTINEL } from "../tools/tool-sentinels.js";
 import { READ_TOOLS, VERIFY_TOOLS, WRITE_TOOLS } from "../workflow/planner.js";
 
 export function resolveAllowedToolsForChatParams(params: AiChatParams, activeSkillTools: readonly string[] | undefined): readonly string[] | undefined {

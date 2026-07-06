@@ -3,15 +3,15 @@ import type { ClientRequest } from "../../protocol/types.js";
 import type { McpHost } from "../../mcp/mcp-host.js";
 import type { ClientSession, PendingGuide } from "../client-session.js";
 import { sendJson } from "../send-json.js";
+import { clipTextByChars } from "../additional-context.js";
 import {
 	MAX_GUIDE_TEXT_CHARS,
-	clipTextByChars,
 	createPendingGuide,
 	findPendingGuideByClientId,
 	findPendingGuideIndexById,
 	persistGuideEvent,
 	serializePendingGuide
-} from "../websocket-support.js";
+} from "../pending-guides.js";
 
 export async function handleGuideRequest(socket: WebSocket, request: ClientRequest, session: ClientSession, _mcpHost: McpHost): Promise<void> {
 	switch (request.method) {

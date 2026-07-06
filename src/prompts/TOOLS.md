@@ -2,7 +2,7 @@
 
 本文档说明 prompt 写作时如何描述工具能力。它不是权限来源；实际可用工具、风险分组和审批语义以代码为准：
 
-- `src/tools/llm-tools.ts`
+- `src/tools/builtin-tool-definitions.ts`
 - `src/workflow/planner.ts`
 - `src/tools/tool-policy.ts`
 

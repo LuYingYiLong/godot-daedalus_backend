@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { PromptId } from "../protocol/types.js";
-import { CUSTOM_MCP_TOOLS_SENTINEL } from "../tools/llm-tools.js";
+import { CUSTOM_MCP_TOOLS_SENTINEL } from "../tools/tool-sentinels.js";
 
 export const skillIds = [
 	"godot.project_init",

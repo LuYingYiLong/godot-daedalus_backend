@@ -1,0 +1,183 @@
+import type { AdditionalContextItem } from "../protocol/types.js";
+import { createPreviewValue } from "./session-preview.js";
+
+export function clipTextByChars(text: string, maxChars: number): string {
+	if (text.length <= maxChars) {
+		return text;
+	}
+
+	return text.slice(0, maxChars);
+}
+
+export function cloneAdditionalContextItems(items: readonly AdditionalContextItem[] | undefined): AdditionalContextItem[] | undefined {
+	if (items === undefined || items.length === 0) {
+		return undefined;
+	}
+
+	return items.map((item: AdditionalContextItem): AdditionalContextItem => ({ ...item }));
+}
+
+export function getAdditionalContextDataRecord(item: AdditionalContextItem): Record<string, unknown> | undefined {
+	if (item.data === undefined || typeof item.data !== "object" || item.data === null || Array.isArray(item.data)) {
+		return undefined;
+	}
+
+	return item.data as Record<string, unknown>;
+}
+
+export function getContextNumber(data: Record<string, unknown> | undefined, key: string): number | undefined {
+	if (data === undefined) {
+		return undefined;
+	}
+
+	const value: unknown = data[key];
+	if (typeof value !== "number" || !Number.isFinite(value)) {
+		return undefined;
+	}
+
+	return Math.floor(value);
+}
+
+export function getContextString(data: Record<string, unknown> | undefined, key: string): string {
+	const value: unknown = data?.[key];
+	return typeof value === "string" ? value : "";
+}
+
+export function createLineColumnRangeText(data: Record<string, unknown> | undefined): string {
+	const lineStart: number | undefined = getContextNumber(data, "lineStart");
+	const columnStart: number | undefined = getContextNumber(data, "columnStart");
+	const lineEnd: number | undefined = getContextNumber(data, "lineEnd");
+	const columnEnd: number | undefined = getContextNumber(data, "columnEnd");
+	if (lineStart === undefined || columnStart === undefined || lineEnd === undefined || columnEnd === undefined) {
+		return "";
+	}
+
+	return `${lineStart}:${columnStart}-${lineEnd}:${columnEnd}`;
+}
+
+export function appendScriptSelectionPromptLines(lines: string[], item: AdditionalContextItem): void {
+	const data: Record<string, unknown> | undefined = getAdditionalContextDataRecord(item);
+	const rangeText: string = createLineColumnRangeText(data);
+	if (rangeText.length > 0) {
+		lines.push(`  - range: ${rangeText} (1-based line/column)`);
+	}
+
+	const hasSelection: boolean = data?.hasSelection === true;
+	const selectedTextPreview: string = getContextString(data, "selectedTextPreview");
+	const lineTextPreview: string = getContextString(data, "lineTextPreview");
+	const editorTextPreview: string = getContextString(data, "editorTextPreview");
+	if (hasSelection && selectedTextPreview.trim().length > 0) {
+		lines.push("  - selectedTextPreview:");
+		lines.push(clipTextByChars(selectedTextPreview, 2000));
+		if (data?.selectedTextTruncated === true) {
+			lines.push("  - selectedTextPreviewTruncated: true");
+		}
+	} else if (lineTextPreview.trim().length > 0) {
+		lines.push(`  - currentLinePreview: ${clipTextByChars(lineTextPreview, 500)}`);
+	}
+	if (editorTextPreview.trim().length > 0) {
+		const editorTextLineCount: number | undefined = getContextNumber(data, "editorTextLineCount");
+		lines.push(`  - editorTextPreview${editorTextLineCount !== undefined ? ` (${editorTextLineCount} lines)` : ""}:`);
+		lines.push(clipTextByChars(editorTextPreview, 12000));
+		if (data?.editorTextTruncated === true) {
+			lines.push("  - editorTextPreviewTruncated: true");
+		}
+	}
+
+	if (data?.resourcePathAvailable === false) {
+		lines.push("  - note: Godot 当前没有提供脚本资源路径，通常是脚本未保存或存在解析错误；优先使用 editorTextPreview 分析。");
+	} else {
+		lines.push("  - note: editorTextPreview 是当前脚本编辑器内容快照；如需磁盘上下文，请按 resourcePath 用读取工具按需读取。");
+	}
+}
+
+export function appendFilesystemSelectionPromptLines(lines: string[], item: AdditionalContextItem): void {
+	const data: Record<string, unknown> | undefined = getAdditionalContextDataRecord(item);
+	const selectedPaths: unknown = data?.selectedPaths;
+	if (!Array.isArray(selectedPaths)) {
+		lines.push("  - note: 文件系统选择只提供资源引用；文件内容需要用 MCP read/search 工具按需读取。");
+		return;
+	}
+
+	const pathLines: string[] = [];
+	for (const selectedPath of selectedPaths.slice(0, 20)) {
+		if (typeof selectedPath !== "object" || selectedPath === null || Array.isArray(selectedPath)) {
+			continue;
+		}
+
+		const selectedPathRecord: Record<string, unknown> = selectedPath as Record<string, unknown>;
+		const resourcePath: string = typeof selectedPathRecord.resourcePath === "string" ? selectedPathRecord.resourcePath : "";
+		if (resourcePath.length === 0) {
+			continue;
+		}
+
+		const selectedKind: string = typeof selectedPathRecord.kind === "string" ? selectedPathRecord.kind : "file";
+		pathLines.push(`    - ${selectedKind}: ${clipTextByChars(resourcePath, 300)}`);
+	}
+
+	if (pathLines.length > 0) {
+		lines.push("  - selectedPaths:");
+		lines.push(...pathLines);
+	}
+	if (selectedPaths.length > 20 || data?.truncated === true) {
+		lines.push(`  - selectedPathsTruncated: true (${selectedPaths.length} total reported)`);
+	}
+	lines.push("  - note: 大文件和文件夹不内联内容；只在需要时按 resourcePath 读取或搜索。");
+}
+
+export function createAdditionalContextPromptSection(items: readonly AdditionalContextItem[] | undefined): string {
+	if (items === undefined || items.length === 0) {
+		return "";
+	}
+
+	const lines: string[] = [
+		"## 用户附加上下文",
+		"以下是用户本轮显式附加的紧凑上下文。不要把这些条目当成长期记忆；它们只对本轮任务生效。大文件和文件夹只提供引用，不内联全文；如需内容，使用可用 MCP 读取工具按需读取。",
+		"编辑器上下文规则：如果 Godot 编辑器在线，并且任务目标明显指向当前打开场景、选中节点、当前脚本/这几行或 FileSystem Dock 选中项，优先使用 godot_editor 读取/检查/patch；如果返回 editor_unavailable、上下文 stale，或目标不在当前编辑器上下文中，回退到离线 .tscn/text/headless 工具。"
+	];
+
+	for (const item of items.slice(0, 20)) {
+		const title: string = clipTextByChars(item.title.trim(), 120);
+		const subtitle: string = clipTextByChars((item.subtitle ?? "").trim(), 220);
+		const headerParts: string[] = [
+			`- [${item.kind}] ${title}`,
+			subtitle.length > 0 ? `— ${subtitle}` : "",
+			item.pinned === true ? "(pinned)" : "",
+			`source=${item.source}`
+		].filter((part: string): boolean => part.length > 0);
+		lines.push(headerParts.join(" "));
+
+		if (item.resourcePath !== undefined) {
+			lines.push(`  - resourcePath: ${clipTextByChars(item.resourcePath, 300)}`);
+		}
+		if (item.nodePath !== undefined) {
+			lines.push(`  - nodePath: ${clipTextByChars(item.nodePath, 300)}`);
+		}
+		if (item.nodeType !== undefined) {
+			lines.push(`  - nodeType: ${clipTextByChars(item.nodeType, 120)}`);
+		}
+		if (item.scriptPath !== undefined) {
+			lines.push(`  - scriptPath: ${clipTextByChars(item.scriptPath, 300)}`);
+		}
+		if (item.summary !== undefined && item.summary.trim().length > 0) {
+			lines.push(`  - summary: ${clipTextByChars(item.summary.trim(), 500)}`);
+		}
+		if (item.kind === "image") {
+			lines.push("  - note: 图片二进制已作为多模态 image_url content part 单独发送给模型；不要在文本上下文中期待 base64。");
+		}
+		if (item.kind === "script_selection") {
+			appendScriptSelectionPromptLines(lines, item);
+		} else if (item.kind === "filesystem_selection") {
+			appendFilesystemSelectionPromptLines(lines, item);
+		}
+		if (item.data !== undefined && item.kind !== "script_selection" && item.kind !== "filesystem_selection" && item.kind !== "image") {
+			lines.push(`  - data: ${clipTextByChars(JSON.stringify(createPreviewValue(item.data)), 1000)}`);
+		}
+	}
+
+	if (items.length > 20) {
+		lines.push(`- [truncated] 另有 ${items.length - 20} 条上下文未注入。`);
+	}
+
+	return lines.join("\n");
+}

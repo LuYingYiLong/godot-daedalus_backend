@@ -33,7 +33,7 @@ Chat Completions 映射：
 - `templates/modes/`：模式 overlay，例如 Ask mode，未来 Plan mode 放这里。
 - `templates/fragments/`：可复用系统片段，例如工具沟通约定、指令优先级、Settings 自定义提示词边界。
 - `templates/internal/`：内部任务模板，例如 session compressor。
-- `TOOLS.md`：工具能力说明，代码源头仍是 `src/tools/llm-tools.ts`、`src/workflow/planner.ts`、`src/tools/tool-policy.ts`。
+- `TOOLS.md`：工具能力说明，代码源头仍是 `src/tools/builtin-tool-definitions.ts`、`src/tools/tool-mapping.ts`、`src/workflow/planner.ts`、`src/tools/tool-policy.ts`。
 
 ## 模板格式
 

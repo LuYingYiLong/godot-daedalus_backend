@@ -3,7 +3,7 @@ import test from "node:test";
 import { aiChatParamsSchema } from "../src/protocol/schema.js";
 import type { AiChatParams } from "../src/protocol/types.js";
 import { composeSystemPrompt } from "../src/prompts/registry.js";
-import { CUSTOM_MCP_TOOLS_SENTINEL } from "../src/tools/llm-tools.js";
+import { CUSTOM_MCP_TOOLS_SENTINEL } from "../src/tools/tool-sentinels.js";
 import { READ_TOOLS, VERIFY_TOOLS, WRITE_TOOLS } from "../src/workflow/planner.js";
 import { normalizeChatParamsForMode, resolveAllowedToolsForChatParams } from "../src/server/chat-mode.js";
 

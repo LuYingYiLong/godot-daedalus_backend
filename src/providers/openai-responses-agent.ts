@@ -14,7 +14,8 @@ import type { AiChatParams, ChatMessage } from "../protocol/types.js";
 import type { McpHost } from "../mcp/mcp-host.js";
 import { ApprovalGateway } from "../tools/approval-gateway.js";
 import { dispatchToolCalls, ToolApprovalRequiredError, type OnToolEvent } from "../tools/tool-dispatcher.js";
-import { getToolDefinitions, getToolDefinitionsForNames, MAX_TOTAL_TOOL_RESULT_CHARS, resolveToolBudget } from "../tools/llm-tools.js";
+import { getToolDefinitions, getToolDefinitionsForNames } from "../tools/builtin-tool-definitions.js";
+import { MAX_TOTAL_TOOL_RESULT_CHARS, resolveToolBudget } from "../tools/llm-tool-budget.js";
 import type { ApprovedToolResult, ProviderAgentResult, ResponsesAgentContinuation } from "./agent-types.js";
 import type { ProviderChatOptions } from "./deepseek-client.js";
 import {

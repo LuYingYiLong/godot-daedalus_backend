@@ -1,4 +1,4 @@
-import { getDynamicMcpToolMetadata, isDynamicMcpToolName } from "./llm-tools.js";
+import { getDynamicMcpToolMetadata, isDynamicMcpToolName } from "./dynamic-mcp-tools.js";
 
 export type ToolEventCategory =
 	| "read"
