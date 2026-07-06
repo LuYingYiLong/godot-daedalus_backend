@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { copyFile, mkdir, readdir, readFile, rename, rm, stat } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { FRONTEND_ADDON_DIR_NAME, FRONTEND_REPOSITORY, type FrontendManifest, type PendingFrontendUpdate } from "./types.js";
 import { ManagerError } from "./manager-error.js";
@@ -9,6 +9,26 @@ import { assertInside, getManagerPaths, resolveProjectPluginDir, type ManagerPat
 import { readJsonFile, writeJsonFile } from "./json-file.js";
 import { getCachedOrFetchLatestVersion, type LatestVersionOptions } from "./latest-cache.js";
 import { runCommand } from "./process.js";
+
+export type GithubReleaseAsset = {
+	name?: unknown;
+	browser_download_url?: unknown;
+};
+
+export type GithubRelease = {
+	tag_name?: unknown;
+	html_url?: unknown;
+	assets?: unknown;
+};
+
+type FrontendReleasePackage = {
+	version: string;
+	tag: string;
+	assetName: string;
+	assetUrl: string;
+	sha256: string | null;
+	minGodotVersion: string | undefined;
+};
 
 export async function getInstalledFrontendVersion(projectPath: string | undefined): Promise<string | null> {
 	const pluginDir: string | null = resolveProjectPluginDir(projectPath);
@@ -27,16 +47,12 @@ export async function getLatestFrontendVersion(options: LatestVersionOptions = {
 }
 
 async function fetchLatestFrontendVersion(): Promise<string | null> {
-	const data: { tag_name?: unknown } | null = await fetchJsonWithFallback<{ tag_name?: unknown }>(
-		`https://api.github.com/repos/${FRONTEND_REPOSITORY}/releases/latest`
-	);
-	if (data === null) {
-		return null;
+	const latestRelease: GithubRelease | null = await fetchGithubRelease("latest");
+	const apiVersion: string | null = getVersionFromGithubRelease(latestRelease);
+	if (apiVersion !== null) {
+		return apiVersion;
 	}
-	if (typeof data.tag_name !== "string") {
-		return null;
-	}
-	return data.tag_name.replace(/^v/, "");
+	return fetchLatestFrontendVersionFromRedirect();
 }
 
 export async function getPendingFrontendVersion(): Promise<string | null> {
@@ -46,35 +62,44 @@ export async function getPendingFrontendVersion(): Promise<string | null> {
 }
 
 export async function downloadAndStageFrontend(version: string): Promise<PendingFrontendUpdate> {
-	const manifest: FrontendManifest = await downloadFrontendManifest(version);
-	validateFrontendManifest(manifest);
+	const releasePackage: FrontendReleasePackage = await resolveFrontendReleasePackage(version);
 	const paths: ManagerPaths = getManagerPaths();
 	await mkdir(paths.frontendDownloadsDir, { recursive: true });
 	await mkdir(paths.frontendStagedDir, { recursive: true });
-	const zipPath: string = assertInside(paths.frontendDownloadsDir, join(paths.frontendDownloadsDir, manifest.assetName));
-	const stagedDir: string = assertInside(paths.frontendStagedDir, join(paths.frontendStagedDir, manifest.version));
+	const zipPath: string = assertInside(paths.frontendDownloadsDir, join(paths.frontendDownloadsDir, releasePackage.assetName));
+	const stagedDir: string = assertInside(paths.frontendStagedDir, join(paths.frontendStagedDir, releasePackage.version));
 
-	await downloadFile(getReleaseAssetUrl(manifest.tag, manifest.assetName), zipPath);
+	await downloadFile(releasePackage.assetUrl, zipPath);
 	const hash: string = await sha256File(zipPath);
-	if (hash.toLowerCase() !== manifest.sha256.toLowerCase()) {
+	if (releasePackage.sha256 !== null && hash.toLowerCase() !== releasePackage.sha256.toLowerCase()) {
 		throw new ManagerError({
 			code: "hash_mismatch",
 			message: "Downloaded frontend package hash does not match manifest.",
-			details: `Expected ${manifest.sha256}, got ${hash}`
+			details: `Expected ${releasePackage.sha256}, got ${hash}`
 		});
 	}
 
 	await rm(stagedDir, { recursive: true, force: true });
 	await mkdir(stagedDir, { recursive: true });
 	await extractZip(zipPath, stagedDir);
-	const stagedPluginCfg: string = join(stagedDir, "addons", FRONTEND_ADDON_DIR_NAME, "plugin.cfg");
-	const stagedStats = await stat(stagedPluginCfg).catch((): null => null);
-	if (stagedStats === null || !stagedStats.isFile()) {
+	const stagedPluginDir: string = await ensureStagedFrontendAddonLayout(stagedDir);
+	const stagedPluginCfg: string = join(stagedPluginDir, "plugin.cfg");
+	const stagedVersion: string | null = await readPluginCfgVersion(stagedPluginCfg);
+	if (stagedVersion !== releasePackage.version) {
 		throw new ManagerError({
 			code: "manifest_invalid",
-			message: "Frontend package does not contain addons/godot_daedalus/plugin.cfg."
+			message: "Frontend package plugin.cfg version does not match the requested release.",
+			details: `Expected ${releasePackage.version}, got ${stagedVersion ?? "missing"}.`
 		});
 	}
+	const manifest: FrontendManifest = {
+		version: releasePackage.version,
+		tag: releasePackage.tag,
+		sha256: releasePackage.sha256 ?? hash,
+		assetName: releasePackage.assetName,
+		...(releasePackage.minGodotVersion === undefined ? {} : { minGodotVersion: releasePackage.minGodotVersion })
+	};
+	validateFrontendManifest(manifest);
 
 	const pending: PendingFrontendUpdate = {
 		version: manifest.version,
@@ -147,6 +172,56 @@ export async function rollbackFrontend(projectPath: string | undefined): Promise
 	return { rolledBack: true };
 }
 
+export function getVersionFromGithubRelease(release: GithubRelease | null): string | null {
+	if (release === null || typeof release.tag_name !== "string") {
+		return null;
+	}
+	return normalizeFrontendVersion(release.tag_name);
+}
+
+export function normalizeFrontendVersion(value: string): string | null {
+	const trimmed: string = value.trim().replace(/^v/i, "");
+	if (!trimmed.match(/^\d+\.\d+\.\d+$/)) {
+		return null;
+	}
+	return trimmed;
+}
+
+export function selectFrontendZipAsset(release: GithubRelease | null, version: string): GithubReleaseAsset | null {
+	const assets: GithubReleaseAsset[] = getGithubReleaseAssets(release);
+	if (assets.length === 0) {
+		return null;
+	}
+
+	const normalizedVersion: string = normalizeFrontendVersion(version) ?? version;
+	const tag: string = `v${normalizedVersion}`;
+	const exactNames: Set<string> = new Set<string>([
+		`godot-daedalus-plugin-${tag}.zip`,
+		`godot-daedalus-plugin-${normalizedVersion}.zip`,
+		"godot_daedalus.zip",
+		"godot-daedalus.zip"
+	]);
+	const exactAsset: GithubReleaseAsset | undefined = assets.find((asset: GithubReleaseAsset): boolean => {
+		return typeof asset.name === "string" && exactNames.has(asset.name);
+	});
+	if (exactAsset !== undefined) {
+		return exactAsset;
+	}
+
+	const namedAsset: GithubReleaseAsset | undefined = assets.find((asset: GithubReleaseAsset): boolean => {
+		if (typeof asset.name !== "string") {
+			return false;
+		}
+		const lowerName: string = asset.name.toLowerCase();
+		return lowerName.endsWith(".zip") && lowerName.includes("godot") && lowerName.includes("daedalus");
+	});
+	if (namedAsset !== undefined) {
+		return namedAsset;
+	}
+
+	return assets.find((asset: GithubReleaseAsset): boolean => typeof asset.name === "string" && asset.name.toLowerCase().endsWith(".zip")) ?? null;
+}
+
 export function validateFrontendManifest(manifest: FrontendManifest): void {
 	if (!manifest.version.match(/^\d+\.\d+\.\d+$/)) {
 		throw new ManagerError({ code: "manifest_invalid", message: "Frontend manifest version must be X.Y.Z." });
@@ -162,16 +237,55 @@ export function validateFrontendManifest(manifest: FrontendManifest): void {
 	}
 }
 
-async function downloadFrontendManifest(version: string): Promise<FrontendManifest> {
+async function resolveFrontendReleasePackage(version: string): Promise<FrontendReleasePackage> {
+	const normalizedVersion: string | null = normalizeFrontendVersion(version);
+	if (normalizedVersion === null) {
+		throw new ManagerError({ code: "invalid_arguments", message: "Frontend version must be X.Y.Z." });
+	}
+	const manifest: FrontendManifest | null = await downloadFrontendManifest(normalizedVersion);
+	if (manifest !== null) {
+		validateFrontendManifest(manifest);
+		return {
+			version: manifest.version,
+			tag: manifest.tag,
+			assetName: manifest.assetName,
+			assetUrl: getReleaseAssetUrl(manifest.tag, manifest.assetName),
+			sha256: manifest.sha256,
+			minGodotVersion: manifest.minGodotVersion
+		};
+	}
+
+	const tag: string = `v${normalizedVersion}`;
+	const release: GithubRelease | null = await fetchGithubRelease(`tags/${tag}`);
+	const asset: GithubReleaseAsset | null = selectFrontendZipAsset(release, normalizedVersion);
+	if (asset !== null && typeof asset.name === "string" && typeof asset.browser_download_url === "string") {
+		return {
+			version: normalizedVersion,
+			tag,
+			assetName: asset.name,
+			assetUrl: asset.browser_download_url,
+			sha256: null,
+			minGodotVersion: undefined
+		};
+	}
+
+	const fallbackAssetName: string = "godot_daedalus.zip";
+	return {
+		version: normalizedVersion,
+		tag,
+		assetName: fallbackAssetName,
+		assetUrl: getReleaseAssetUrl(tag, fallbackAssetName),
+		sha256: null,
+		minGodotVersion: undefined
+	};
+}
+
+async function downloadFrontendManifest(version: string): Promise<FrontendManifest | null> {
 	const tag: string = version.startsWith("v") ? version : `v${version}`;
 	const assetName: string = `godot-daedalus-plugin-${tag}.manifest.json`;
 	const manifest: FrontendManifest | null = await fetchJsonWithFallback<FrontendManifest>(getReleaseAssetUrl(tag, assetName));
 	if (manifest === null) {
-		throw new ManagerError({
-			code: "network_error",
-			message: `Could not download frontend manifest ${assetName}.`,
-			details: "GitHub release manifest request failed."
-		});
+		return null;
 	}
 	return manifest;
 }
@@ -182,6 +296,7 @@ function getReleaseAssetUrl(tag: string, assetName: string): string {
 
 async function downloadFile(url: string, destination: string): Promise<void> {
 	await mkdir(dirname(destination), { recursive: true });
+	const errors: string[] = [];
 	try {
 		const response: Response = await fetch(url, { headers: { "User-Agent": "godot-daedalus-manager" } });
 		if (!response.ok || response.body === null) {
@@ -190,15 +305,28 @@ async function downloadFile(url: string, destination: string): Promise<void> {
 		await pipeline(response.body, createWriteStream(destination));
 		return;
 	} catch (error: unknown) {
-		if (process.platform === "win32" && await downloadFileWithPowerShell(url, destination)) {
+		errors.push(`node fetch: ${error instanceof Error ? error.message : String(error)}`);
+	}
+
+	if (process.platform === "win32") {
+		const powershellError: string | null = await downloadFileWithPowerShell(url, destination);
+		if (powershellError === null) {
 			return;
 		}
-		throw new ManagerError({
-			code: "network_error",
-			message: `Could not download ${url}`,
-			details: error instanceof Error ? error.message : String(error)
-		});
+		errors.push(`PowerShell: ${powershellError}`);
+
+		const curlError: string | null = await downloadFileWithCurl(url, destination);
+		if (curlError === null) {
+			return;
+		}
+		errors.push(`curl.exe: ${curlError}`);
 	}
+
+	throw new ManagerError({
+		code: "network_error",
+		message: `Could not download ${url}`,
+		details: errors.join("\n")
+	});
 }
 
 async function fetchJsonWithFallback<T>(url: string): Promise<T | null> {
@@ -214,6 +342,126 @@ async function fetchJsonWithFallback<T>(url: string): Promise<T | null> {
 		}
 		return fetchJsonWithPowerShell<T>(url);
 	}
+}
+
+async function fetchGithubRelease(path: "latest" | `tags/${string}`): Promise<GithubRelease | null> {
+	return fetchJsonWithFallback<GithubRelease>(`https://api.github.com/repos/${FRONTEND_REPOSITORY}/releases/${path}`);
+}
+
+async function fetchLatestFrontendVersionFromRedirect(): Promise<string | null> {
+	const url: string = `https://github.com/${FRONTEND_REPOSITORY}/releases/latest`;
+	try {
+		const response: Response = await fetch(url, {
+			headers: { "User-Agent": "godot-daedalus-manager" },
+			redirect: "follow"
+		});
+		const version: string | null = getVersionFromGithubReleaseUrl(response.url);
+		if (version !== null) {
+			return version;
+		}
+	} catch {
+		// Windows 上部分用户环境会让 Node fetch 受代理或证书影响，继续尝试 PowerShell。
+	}
+	if (process.platform !== "win32") {
+		return null;
+	}
+	return fetchLatestFrontendVersionFromRedirectWithPowerShell(url);
+}
+
+async function fetchLatestFrontendVersionFromRedirectWithPowerShell(url: string): Promise<string | null> {
+	const command: string = [
+		"$ProgressPreference = 'SilentlyContinue';",
+		`$response = Invoke-WebRequest -Uri ${quotePowerShellString(url)} -Headers @{ 'User-Agent' = 'godot-daedalus-manager' } -MaximumRedirection 5 -TimeoutSec 30;`,
+		"$response.BaseResponse.ResponseUri.AbsoluteUri"
+	].join(" ");
+	const result = await runCommand("powershell.exe", [
+		"-NoProfile",
+		"-ExecutionPolicy",
+		"Bypass",
+		"-Command",
+		command
+	], { timeoutMs: 45000 });
+	if (result.exitCode !== 0) {
+		return null;
+	}
+	return getVersionFromGithubReleaseUrl(result.stdout.trim());
+}
+
+function getVersionFromGithubReleaseUrl(url: string): string | null {
+	const match: RegExpMatchArray | null = url.match(/\/releases\/tag\/([^/?#]+)/);
+	if (match === null || match[1] === undefined) {
+		return null;
+	}
+	return normalizeFrontendVersion(decodeURIComponent(match[1]));
+}
+
+function getGithubReleaseAssets(release: GithubRelease | null): GithubReleaseAsset[] {
+	if (release === null || !Array.isArray(release.assets)) {
+		return [];
+	}
+	return release.assets.filter((asset: unknown): asset is GithubReleaseAsset => {
+		return typeof asset === "object" && asset !== null;
+	});
+}
+
+async function readPluginCfgVersion(pluginCfgPath: string): Promise<string | null> {
+	const text: string = await readFile(pluginCfgPath, "utf8").catch((): string => "");
+	const match: RegExpMatchArray | null = text.match(/version="([^"]+)"/);
+	return match?.[1] ?? null;
+}
+
+async function ensureStagedFrontendAddonLayout(stagedDir: string): Promise<string> {
+	const expectedPluginDir: string = join(stagedDir, "addons", FRONTEND_ADDON_DIR_NAME);
+	if (await isFile(join(expectedPluginDir, "plugin.cfg"))) {
+		return expectedPluginDir;
+	}
+
+	const discoveredPluginDir: string | null = await findExtractedFrontendPluginDir(stagedDir);
+	if (discoveredPluginDir === null) {
+		throw new ManagerError({
+			code: "manifest_invalid",
+			message: "Frontend package does not contain godot_daedalus/plugin.cfg."
+		});
+	}
+
+	await rm(expectedPluginDir, { recursive: true, force: true });
+	await mkdir(dirname(expectedPluginDir), { recursive: true });
+	await rename(discoveredPluginDir, expectedPluginDir).catch(async (): Promise<void> => {
+		await copyDirectory(discoveredPluginDir, expectedPluginDir);
+		await rm(discoveredPluginDir, { recursive: true, force: true });
+	});
+	return expectedPluginDir;
+}
+
+async function findExtractedFrontendPluginDir(root: string, depth: number = 0): Promise<string | null> {
+	if (depth > 4) {
+		return null;
+	}
+	const entries = await readdir(root, { withFileTypes: true }).catch((): [] => []);
+	for (const entry of entries) {
+		if (!entry.isDirectory()) {
+			continue;
+		}
+		const entryPath: string = join(root, entry.name);
+		if (basename(entryPath) === FRONTEND_ADDON_DIR_NAME && await isFile(join(entryPath, "plugin.cfg"))) {
+			return entryPath;
+		}
+	}
+	for (const entry of entries) {
+		if (!entry.isDirectory()) {
+			continue;
+		}
+		const found: string | null = await findExtractedFrontendPluginDir(join(root, entry.name), depth + 1);
+		if (found !== null) {
+			return found;
+		}
+	}
+	return null;
+}
+
+async function isFile(filePath: string): Promise<boolean> {
+	const fileStats = await stat(filePath).catch((): null => null);
+	return fileStats !== null && fileStats.isFile();
 }
 
 async function fetchJsonWithPowerShell<T>(url: string): Promise<T | null> {
@@ -239,7 +487,7 @@ async function fetchJsonWithPowerShell<T>(url: string): Promise<T | null> {
 	}
 }
 
-async function downloadFileWithPowerShell(url: string, destination: string): Promise<boolean> {
+async function downloadFileWithPowerShell(url: string, destination: string): Promise<string | null> {
 	const command: string = [
 		"$ProgressPreference = 'SilentlyContinue';",
 		`Invoke-WebRequest -Uri ${quotePowerShellString(url)} -OutFile ${quotePowerShellString(destination)} -Headers @{ 'User-Agent' = 'godot-daedalus-manager' } -TimeoutSec 60`
@@ -251,11 +499,41 @@ async function downloadFileWithPowerShell(url: string, destination: string): Pro
 		"-Command",
 		command
 	], { timeoutMs: 90000 });
-	return result.exitCode === 0;
+	if (result.exitCode === 0) {
+		return null;
+	}
+	return formatCommandError(result.exitCode, result.stderr, result.stdout);
+}
+
+async function downloadFileWithCurl(url: string, destination: string): Promise<string | null> {
+	const result = await runCommand("curl.exe", [
+		"-L",
+		"--fail",
+		"--show-error",
+		"--silent",
+		"--connect-timeout",
+		"30",
+		"--max-time",
+		"90",
+		"-H",
+		"User-Agent: godot-daedalus-manager",
+		"-o",
+		destination,
+		url
+	], { timeoutMs: 100000 });
+	if (result.exitCode === 0) {
+		return null;
+	}
+	return formatCommandError(result.exitCode, result.stderr, result.stdout);
 }
 
 function quotePowerShellString(value: string): string {
 	return `'${value.replaceAll("'", "''")}'`;
+}
+
+function formatCommandError(exitCode: number, stderr: string, stdout: string): string {
+	const message: string = (stderr.trim() || stdout.trim() || "no output").slice(0, 2000);
+	return `exit ${exitCode}: ${message}`;
 }
 
 async function sha256File(filePath: string): Promise<string> {

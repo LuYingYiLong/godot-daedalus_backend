@@ -6,7 +6,13 @@ import test from "node:test";
 import { ManagerError } from "../src/manager/manager-error.js";
 import { assertInside } from "../src/manager/paths.js";
 import { isVersionNewer, parseSemver } from "../src/manager/semver.js";
-import { validateFrontendManifest } from "../src/manager/frontend.js";
+import {
+	getVersionFromGithubRelease,
+	normalizeFrontendVersion,
+	selectFrontendZipAsset,
+	validateFrontendManifest,
+	type GithubRelease
+} from "../src/manager/frontend.js";
 import { readJsonFile, writeJsonFile } from "../src/manager/json-file.js";
 import type { BackendCurrentFile } from "../src/manager/types.js";
 import { installBackend, rollbackBackend } from "../src/manager/backend.js";
@@ -53,6 +59,25 @@ test("frontend manifest validation rejects unsafe metadata", (): void => {
 			sha256: "a".repeat(64)
 		});
 	}, ManagerError);
+});
+
+test("frontend release parsing accepts semantic GitHub tags", (): void => {
+	assert.equal(normalizeFrontendVersion("v1.0.1"), "1.0.1");
+	assert.equal(normalizeFrontendVersion("1.0.1"), "1.0.1");
+	assert.equal(normalizeFrontendVersion("release-1.0.1"), null);
+	assert.equal(getVersionFromGithubRelease({ tag_name: "v1.0.1" }), "1.0.1");
+	assert.equal(getVersionFromGithubRelease({ tag_name: 101 }), null);
+});
+
+test("frontend release asset selection accepts legacy plugin zip names", (): void => {
+	const release: GithubRelease = {
+		tag_name: "v1.0.1",
+		assets: [
+			{ name: "source.zip", browser_download_url: "https://example.invalid/source.zip" },
+			{ name: "godot_daedalus.zip", browser_download_url: "https://example.invalid/godot_daedalus.zip" }
+		]
+	};
+	assert.equal(selectFrontendZipAsset(release, "1.0.1")?.name, "godot_daedalus.zip");
 });
 
 test("manager json file writes atomically readable current metadata", async (): Promise<void> => {
