@@ -122,6 +122,18 @@ const TOOL_MAP: Record<string, ToolMapping> = {
 		serverId: "terminal",
 		toolName: "run_write_preset"
 	},
+	"mcp_terminal_get_job_status": {
+		serverId: "terminal",
+		toolName: "get_terminal_job_status"
+	},
+	"mcp_terminal_get_job_tail": {
+		serverId: "terminal",
+		toolName: "get_terminal_job_tail"
+	},
+	"mcp_terminal_cancel_job": {
+		serverId: "terminal",
+		toolName: "cancel_terminal_job"
+	},
 	"mcp_terminal_get_capabilities": {
 		serverId: "terminal",
 		toolName: "get_terminal_capabilities"

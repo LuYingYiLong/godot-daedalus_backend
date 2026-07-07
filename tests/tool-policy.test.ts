@@ -10,9 +10,12 @@ const destructiveTool: string = "mcp_godot_delete_file";
 
 test("tool policy classifies representative risks", (): void => {
 	assert.equal(getToolPolicy(readTool)?.risk, "read");
+	assert.equal(getToolPolicy("mcp_terminal_get_job_status")?.risk, "read");
+	assert.equal(getToolPolicy("mcp_terminal_get_job_tail")?.risk, "read");
 	assert.equal(getToolPolicy(verifyTool)?.risk, "verify");
 	assert.equal(getToolPolicy(proposeTool)?.risk, "propose");
 	assert.equal(getToolPolicy(writeTool)?.risk, "write");
+	assert.equal(getToolPolicy("mcp_terminal_cancel_job")?.risk, "write");
 	assert.equal(getToolPolicy(destructiveTool)?.risk, "destructive");
 	assert.equal(getToolPolicy("mcp_custom_server_tool_12345678")?.risk, "write");
 });

@@ -11,6 +11,7 @@ const THINKING_EVENT_FLUSH_CHARS = 800;
 export function shouldPersistSessionEvent(eventName: ServerEvent["event"]): boolean {
 	return eventName.startsWith("agent.")
 		|| eventName.startsWith("tool.")
+		|| eventName.startsWith("terminal.")
 		|| eventName === "ai.delta"
 		|| eventName.startsWith("ai.thinking.")
 		|| eventName === "ai.status"

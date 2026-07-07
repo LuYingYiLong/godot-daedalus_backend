@@ -842,6 +842,23 @@ const TOOL_DEFINITIONS: ChatCompletionTool[] = [
 					resourcePath: {
 						type: "string",
 						description: "Godot 资源路径，仅 Godot 预设需要。可用 res://、项目相对路径或项目内绝对路径，例如 scripts/main.gd、scenes/main.tscn。检查脚本用 godot.check_only + .gd；验证场景用 godot.validate_scene + .tscn。"
+					},
+					executionMode: {
+						type: "string",
+						enum: ["wait", "job"],
+						description: "执行模式。wait 为默认同步等待；job 会启动长任务并立即返回 jobId，适合 C++ 全量编译或很慢的 Godot 检查。"
+					},
+					wakeAfterMs: {
+						type: "number",
+						description: "job 模式下请求 backend 在指定毫秒后唤醒 AI，并带上 terminal tail。"
+					},
+					timeoutMs: {
+						type: "number",
+						description: "命令超时毫秒。wait 默认 30000，job 默认 30 分钟。"
+					},
+					tailLines: {
+						type: "number",
+						description: "job 模式下返回和查询的 stdout/stderr tail 行数。"
 					}
 				},
 				required: ["presetName"]
@@ -876,9 +893,77 @@ const TOOL_DEFINITIONS: ChatCompletionTool[] = [
 					presetName: {
 						type: "string",
 						description: "写操作预设名称，如 'git.init'"
+					},
+					executionMode: {
+						type: "string",
+						enum: ["wait", "job"],
+						description: "执行模式。wait 为默认同步等待；job 会启动长任务并立即返回 jobId。"
+					},
+					wakeAfterMs: {
+						type: "number",
+						description: "job 模式下请求 backend 在指定毫秒后唤醒 AI，并带上 terminal tail。"
+					},
+					timeoutMs: {
+						type: "number",
+						description: "命令超时毫秒。"
+					},
+					tailLines: {
+						type: "number",
+						description: "job 模式下返回和查询的 stdout/stderr tail 行数。"
 					}
 				},
 				required: ["presetName"]
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_terminal_get_job_status",
+			description: "查询 terminal 长任务状态、退出码、耗时和最近 stdout/stderr tail。用于检查 executionMode=job 返回的 jobId。",
+			parameters: {
+				type: "object",
+				properties: {
+					jobId: {
+						type: "string",
+						description: "terminal job id"
+					}
+				},
+				required: ["jobId"]
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_terminal_get_job_tail",
+			description: "读取 terminal 长任务最近 stdout/stderr tail，不改变任务状态。",
+			parameters: {
+				type: "object",
+				properties: {
+					jobId: {
+						type: "string",
+						description: "terminal job id"
+					}
+				},
+				required: ["jobId"]
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_terminal_cancel_job",
+			description: "取消正在运行的 terminal 长任务。此操作需要用户确认。",
+			parameters: {
+				type: "object",
+				properties: {
+					jobId: {
+						type: "string",
+						description: "terminal job id"
+					}
+				},
+				required: ["jobId"]
 			}
 		}
 	},

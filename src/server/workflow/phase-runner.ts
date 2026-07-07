@@ -35,7 +35,7 @@ export async function runWorkflowPhase(
 ): Promise<WorkflowPhaseRunResult> {
 	const toolStats: WorkflowPhaseToolStats = createEmptyWorkflowPhaseToolStats();
 	let toolObservations: WorkflowToolObservation[] = [];
-	const forwardToolEvent: OnToolEvent = createAgentToolEventForwarder(socket, requestId, session, runId, stepRunId, persistRequestId);
+	const forwardToolEvent: OnToolEvent = createAgentToolEventForwarder(socket, requestId, session, runId, stepRunId, persistRequestId, mcpHost);
 	const onToolEvent: OnToolEvent = (event: ToolEvent): void => {
 		updateWorkflowPhaseToolStats(toolStats, event);
 		toolObservations = applyToolEventToWorkflowObservations(toolObservations, event);

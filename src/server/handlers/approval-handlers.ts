@@ -342,7 +342,8 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 				session,
 				continuationRunId,
 				continuationStepRunId,
-				pendingContinuation.requestId
+				pendingContinuation.requestId,
+				mcpHost
 			);
 			const agentResult: ProviderAgentResult = pendingContinuation.stream
 				? await continueProviderAgentStreaming(

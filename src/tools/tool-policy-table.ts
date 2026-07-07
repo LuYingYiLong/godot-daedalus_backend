@@ -56,6 +56,9 @@ export const TOOL_POLICIES: Record<string, ToolPolicy> = {
 	"mcp_terminal_get_capabilities": { risk: "read" },
 	"mcp_terminal_run_safe_preset": { risk: "verify" },
 	"mcp_terminal_run_write_preset": { risk: "write" },
+	"mcp_terminal_get_job_status": { risk: "read" },
+	"mcp_terminal_get_job_tail": { risk: "read" },
+	"mcp_terminal_cancel_job": { risk: "write" },
 	"mcp_terminal_run_godot_scene_script": { risk: "write" },
 };
 

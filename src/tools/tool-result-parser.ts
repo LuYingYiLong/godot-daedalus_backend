@@ -9,6 +9,9 @@ export type ParsedToolResultSummary = {
 	summary?: string | undefined;
 	failedChecks?: string[] | undefined;
 	artifactRefs?: string[] | undefined;
+	terminalJobId?: string | undefined;
+	terminalJobStatus?: string | undefined;
+	terminalJobWakeAfterMs?: number | undefined;
 };
 
 function parseJsonObject(text: string): Record<string, unknown> | null {
@@ -123,20 +126,38 @@ function parseDiagnosticsSummary(record: Record<string, unknown>, args: Record<s
 
 function parseTerminalSummary(record: Record<string, unknown>, args: Record<string, unknown>): ParsedToolResultSummary {
 	const presetName: string = String(record.preset ?? args.presetName ?? "terminal");
+	const status: string | undefined = getString(record.status);
+	const jobId: string | undefined = getString(record.jobId);
 	const ok: boolean | undefined = getBoolean(record.ok);
 	const exitCode: number | null | undefined = getNumberOrNull(record.exitCode);
 	const resourcePath: string | undefined = getString(record.resourcePath) ?? getString(args.resourcePath);
-	const failedChecks: string[] = ok === false
+	if (status === "running") {
+		return {
+			ok: undefined,
+			exitCode,
+			validationStatus: "unknown",
+			summary: `${presetName}${jobId === undefined ? "" : ` ${jobId}`} running`,
+			artifactRefs: collectArtifactRefs(args, record),
+			terminalJobId: jobId,
+			terminalJobStatus: status,
+			terminalJobWakeAfterMs: getNumberOrNull(record.wakeAfterMs) ?? undefined
+		};
+	}
+
+	const isFailedStatus: boolean = status === "failed" || status === "timed_out" || status === "spawn_error";
+	const failedChecks: string[] = ok === false || isFailedStatus
 		? [`${presetName}${resourcePath === undefined ? "" : ` ${resourcePath}`} failed: ${createFailureMessage(record, `exitCode=${String(exitCode)}`)}`]
 		: [];
 
 	return {
 		ok,
 		exitCode,
-		validationStatus: ok === false ? "failed" : ok === true ? "passed" : "unknown",
-		summary: `${presetName}${resourcePath === undefined ? "" : ` ${resourcePath}`} ${ok === false ? "failed" : ok === true ? "passed" : "finished"}`,
+		validationStatus: ok === false || isFailedStatus ? "failed" : ok === true || status === "completed" ? "passed" : "unknown",
+		summary: `${presetName}${resourcePath === undefined ? "" : ` ${resourcePath}`} ${ok === false || status === "failed" || status === "timed_out" ? "failed" : ok === true || status === "completed" ? "passed" : "finished"}`,
 		failedChecks: failedChecks.length > 0 ? failedChecks : undefined,
-		artifactRefs: collectArtifactRefs(args, record)
+		artifactRefs: collectArtifactRefs(args, record),
+		terminalJobId: jobId,
+		terminalJobStatus: status
 	};
 }
 

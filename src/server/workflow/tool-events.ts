@@ -1,10 +1,12 @@
 import WebSocket from "ws";
+import type { McpHost } from "../../mcp/mcp-host.js";
 import type { ClientSession } from "../client-session.js";
 import type { OnToolEvent, ToolEvent } from "../../tools/tool-dispatcher.js";
 import { parseToolResultSummary } from "../../tools/tool-result-parser.js";
 import { getToolPolicy } from "../../tools/tool-policy.js";
 import type { WorkflowPhase } from "../../workflow/types.js";
 import { sendSessionEvent } from "../session-events.js";
+import { scheduleTerminalJobWakeup } from "../terminal-job-wakeup.js";
 import type { WorkflowPhaseToolStats } from "./shared-types.js";
 
 export function createAgentToolEventForwarder(
@@ -13,7 +15,8 @@ export function createAgentToolEventForwarder(
 	session: ClientSession,
 	runId: string,
 	stepRunId: string,
-	persistRequestId: string = requestId
+	persistRequestId: string = requestId,
+	mcpHost?: McpHost | undefined
 ): OnToolEvent {
 	return (event: ToolEvent): void => {
 		if (event.type === "ai.delta") {
@@ -49,6 +52,32 @@ export function createAgentToolEventForwarder(
 			return;
 		}
 		if (event.type === "tool.result") {
+			if (
+				event.terminalJobStatus === "running"
+				&& event.terminalJobId !== undefined
+				&& event.terminalJobWakeAfterMs !== undefined
+			) {
+				sendSessionEvent(socket, requestId, session, "terminal.job.started", {
+					jobId: event.terminalJobId,
+					wakeAfterMs: event.terminalJobWakeAfterMs,
+					runId,
+					stepRunId,
+					toolName: event.toolName
+				}, persistRequestId);
+				if (mcpHost !== undefined) {
+					scheduleTerminalJobWakeup({
+						socket,
+						requestId,
+						persistRequestId,
+						session,
+						mcpHost,
+						jobId: event.terminalJobId,
+						wakeAfterMs: event.terminalJobWakeAfterMs,
+						runId,
+						stepRunId
+					});
+				}
+			}
 			sendSessionEvent(socket, requestId, session, "agent.tool.result", {
 				...event,
 				type: "agent.tool.result",

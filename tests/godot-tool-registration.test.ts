@@ -16,7 +16,7 @@ function uniqueMatches(source: string, pattern: RegExp): string[] {
 }
 
 test("Godot MCP registration manifest matches registered tools and resources", async (): Promise<void> => {
-	const serverPath: string = path.resolve(process.cwd(), "src/mcp/godot-mcp-server.ts");
+	const serverPath: string = path.resolve(process.cwd(), "src/mcp/godot/server.ts");
 	const source: string = await readFile(serverPath, "utf8");
 	const toolNames: string[] = uniqueMatches(source, /server\.registerTool\(\s*"([^"]+)"/g);
 	const resourceNames: string[] = uniqueMatches(source, /server\.registerResource\(\s*"([^"]+)"/g);
