@@ -5,6 +5,7 @@ import { appendAgentEvent, appendSessionEvent, appendWorkflowEvent, openSession,
 import { generateSessionTitle, shouldApplyGeneratedSessionTitle } from "./session-title.js";
 import type { ClientSession, ThinkingEventBuffer } from "./client-session.js";
 import { sendJson } from "./send-json.js";
+import { broadcastSessionEvent } from "./client-connections.js";
 
 const THINKING_EVENT_FLUSH_CHARS = 800;
 
@@ -201,6 +202,10 @@ export function sendSessionEvent(
 		event: eventName,
 		data
 	});
+
+	if (session.sessionId !== undefined) {
+		broadcastSessionEvent(socket, session.sessionId, requestId, eventName, data);
+	}
 
 	persistSessionEvent(session, eventName, data, persistRequestId);
 }

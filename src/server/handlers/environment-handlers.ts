@@ -5,6 +5,7 @@ import type { ClientSession } from "../client-session.js";
 import { sendJson } from "../send-json.js";
 import { createRuntimeWorkspace, upsertRuntimeWorkspace } from "../../workspace/registry.js";
 import type { WorkspaceConfig } from "../../workspace/types.js";
+import { updateClientConnection } from "../client-connections.js";
 
 export async function handleEnvironmentRequest(socket: WebSocket, request: ClientRequest, session: ClientSession, mcpHost: McpHost): Promise<void> {
 	switch (request.method) {
@@ -24,10 +25,14 @@ export async function handleEnvironmentRequest(socket: WebSocket, request: Clien
 			));
 
 			try {
-				await mcpHost.switchWorkspace(workspace);
+				await mcpHost.ensureWorkspace(workspace);
 				session.activeWorkspace = workspace;
 				session.godotProjectPath = workspace.rootPath;
 				session.godotExecutablePath = workspace.godotExecutablePath ?? session.godotExecutablePath;
+				updateClientConnection(socket, {
+					workspaceId: workspace.id,
+					workspaceRoot: workspace.rootPath
+				});
 			} catch (error: unknown) {
 				sendJson(socket, {
 					type: "response",
@@ -50,6 +55,7 @@ export async function handleEnvironmentRequest(socket: WebSocket, request: Clien
 				configured: true,
 				godotExecutablePath: session.godotExecutablePath ?? null,
 				godotProjectPath: session.godotProjectPath ?? null,
+				workspaceId: session.activeWorkspace?.id ?? null,
 				workspace: session.activeWorkspace ?? null
 			}
 		});

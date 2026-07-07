@@ -25,6 +25,10 @@ const handleCoreRequest: RequestHandler = createLazyHandler(async (): Promise<Re
 	return (await import("./handlers/core-handlers.js")).handleCoreRequest;
 });
 
+const handleClientRequest: RequestHandler = createLazyHandler(async (): Promise<RequestHandler> => {
+	return (await import("./handlers/client-handlers.js")).handleClientRequest;
+});
+
 const handleProviderRequest: RequestHandler = createLazyHandler(async (): Promise<RequestHandler> => {
 	return (await import("./handlers/provider-handlers.js")).handleProviderRequest;
 });
@@ -73,6 +77,8 @@ export const REQUEST_HANDLER_METHODS: readonly ClientRequest["method"][] = [
 	"ping",
 	"backend.health",
 	"command.list",
+	"client.hello",
+	"client.info",
 	"provider.configure",
 	"provider.config.get",
 	"provider.config.set",
@@ -88,6 +94,9 @@ export const REQUEST_HANDLER_METHODS: readonly ClientRequest["method"][] = [
 	"session.info",
 	"session.create",
 	"session.open",
+	"session.subscribe",
+	"session.unsubscribe",
+	"session.editor.bind",
 	"session.timeline",
 	"session.list",
 	"session.archive",
@@ -119,6 +128,7 @@ export const REQUEST_HANDLER_METHODS: readonly ClientRequest["method"][] = [
 	"approval.approve",
 	"approval.reject",
 	"environment.configure",
+	"editor.instances.list",
 	"editor.context.update",
 	"editor.tool.result",
 	"workspace.list",
@@ -130,6 +140,8 @@ export const REQUEST_HANDLERS: ReadonlyMap<ClientRequest["method"], RequestHandl
 	["ping", handleCoreRequest],
 	["backend.health", handleCoreRequest],
 	["command.list", handleCoreRequest],
+	["client.hello", handleClientRequest],
+	["client.info", handleClientRequest],
 	["prompt.list", handleCoreRequest],
 	["skill.list", handleCoreRequest],
 	["skill.activate", handleCoreRequest],
@@ -145,6 +157,9 @@ export const REQUEST_HANDLERS: ReadonlyMap<ClientRequest["method"], RequestHandl
 	["session.info", handleSessionRequest],
 	["session.create", handleSessionRequest],
 	["session.open", handleSessionRequest],
+	["session.subscribe", handleSessionRequest],
+	["session.unsubscribe", handleSessionRequest],
+	["session.editor.bind", handleSessionRequest],
 	["session.timeline", handleSessionRequest],
 	["session.list", handleSessionRequest],
 	["session.archive", handleSessionRequest],
@@ -176,6 +191,7 @@ export const REQUEST_HANDLERS: ReadonlyMap<ClientRequest["method"], RequestHandl
 	["approval.approve", handleApprovalRequest],
 	["approval.reject", handleApprovalRequest],
 	["environment.configure", handleEnvironmentRequest],
+	["editor.instances.list", handleEditorRequest],
 	["editor.context.update", handleEditorRequest],
 	["editor.tool.result", handleEditorRequest],
 	["workspace.list", handleWorkspaceRequest],

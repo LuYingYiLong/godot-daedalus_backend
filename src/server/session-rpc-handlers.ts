@@ -166,6 +166,7 @@ import { runWorkflowPhase, createWorkflowPhasePrompt } from "./workflow/phase-ru
 import { createWorkflowPendingContinuation, continueWorkflowExecution } from "./workflow/continuation.js";
 import { startWorkflowExecution } from "./workflow/executor.js";
 import { ensureProviderConfigured } from "./handlers/provider-handlers.js";
+import { getSessionSubscriberInfos, subscribeSocketToSession, unsubscribeSocketFromSession } from "./client-connections.js";
 
 function createSessionInfoResult(session: ClientSession, mcpHost: McpHost, historyTokensStored: number | null = null): Record<string, unknown> {
 	return {
@@ -185,8 +186,8 @@ function createSessionInfoResult(session: ClientSession, mcpHost: McpHost, histo
 		approvalMode: session.approvalGateway.getMode(),
 		pendingApprovals: session.approvalGateway.listPending().length,
 		pendingGuides: session.pendingGuides.length,
-		mcpServers: mcpHost.getConnectedServerIds(),
-		customMcpServerStatus: mcpHost.getCustomServerStatuses(),
+		mcpServers: mcpHost.getConnectedServerIds(session.activeWorkspace?.id),
+		customMcpServerStatus: mcpHost.getCustomServerStatusesForWorkspace(session.activeWorkspace?.id),
 		godotDiagnostics: mcpHost.getDiagnosticsBridge().getCachedStatus(),
 		godotExecutablePath: session.activeWorkspace?.godotExecutablePath ?? session.godotExecutablePath ?? null,
 		godotProjectPath: getSessionProjectPath(session) || null,
@@ -258,7 +259,7 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 				}
 
 				try {
-					await mcpHost.switchWorkspace(workspace);
+					await mcpHost.ensureWorkspace(workspace);
 				} catch (error: unknown) {
 					sendJson(socket, {
 						type: "response",
@@ -298,6 +299,7 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 			if (skillId) {
 				session.activeSkillId = skillId;
 			}
+			subscribeSocketToSession(socket, metadata.id);
 
 			sendJson(socket, {
 				type: "response",
@@ -323,7 +325,7 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 						console.warn(`[session] ${workspaceWarning}`);
 					} else {
 						try {
-							await mcpHost.switchWorkspace(workspace);
+							await mcpHost.ensureWorkspace(workspace);
 						} catch (error: unknown) {
 							workspaceWarning = error instanceof Error ? error.message : "Failed to switch MCP workspace";
 							console.warn(`[session] Failed to switch workspace for ${timeline.metadata.id}:`, workspaceWarning);
@@ -355,6 +357,7 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 				session.activeSkillId = timeline.metadata.activeSkillId && isSkillId(timeline.metadata.activeSkillId)
 					? timeline.metadata.activeSkillId
 					: undefined;
+				subscribeSocketToSession(socket, timeline.metadata.id);
 
 				sendJson(socket, {
 					type: "response",
@@ -379,6 +382,63 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 					}
 				});
 			}
+			break;
+		}
+
+		case "session.subscribe":
+			subscribeSocketToSession(socket, request.params.sessionId);
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: true,
+				result: {
+					subscribed: true,
+					sessionId: request.params.sessionId,
+					subscribers: getSessionSubscriberInfos(request.params.sessionId)
+				}
+			});
+			break;
+
+		case "session.unsubscribe":
+			unsubscribeSocketFromSession(socket, request.params.sessionId);
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: true,
+				result: {
+					unsubscribed: true,
+					sessionId: request.params.sessionId,
+					subscribers: getSessionSubscriberInfos(request.params.sessionId)
+				}
+			});
+			break;
+
+		case "session.editor.bind": {
+			const targetSessionId: string | undefined = request.params.sessionId ?? session.sessionId;
+			if (targetSessionId === undefined || targetSessionId !== session.sessionId) {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: {
+						code: "session_mismatch",
+						message: "Editor binding can only be changed for the active session on this connection."
+					}
+				});
+				break;
+			}
+
+			session.editorInstanceId = request.params.editorInstanceId;
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: true,
+				result: {
+					bound: true,
+					sessionId: targetSessionId,
+					editorInstanceId: session.editorInstanceId
+				}
+			});
 			break;
 		}
 

@@ -1,4 +1,5 @@
 import WebSocket from "ws";
+import { getCurrentMcpEditorInstanceId, getCurrentMcpWorkspaceId } from "../../request-context.js";
 
 export const GODOT_EDITOR_SERVER_ID: string = "godot_editor";
 
@@ -18,6 +19,26 @@ type PendingEditorToolCall = {
 	resolve: (result: unknown) => void;
 	reject: (error: Error) => void;
 	timeout: NodeJS.Timeout;
+	editorInstanceId: string;
+};
+
+type EditorConnection = {
+	socket: WebSocket;
+	workspaceId: string;
+	editorInstanceId: string;
+	clientName?: string | undefined;
+	context: JsonObject;
+	updatedAtMs: number;
+};
+
+export type GodotEditorInstanceSummary = {
+	workspaceId: string;
+	editorInstanceId: string;
+	online: boolean;
+	updatedAt: string | null;
+	ageMs: number | null;
+	activeScenePath: string | null;
+	clientName?: string | undefined;
 };
 
 function jsonTextResult(value: unknown): ToolTextResult {
@@ -46,37 +67,69 @@ function isSocketOpen(socket: WebSocket | undefined): socket is WebSocket {
 }
 
 export class GodotEditorBridge {
-	private socket?: WebSocket | undefined;
-	private context: JsonObject = {};
-	private updatedAtMs: number = 0;
+	private connectionsByInstanceId: Map<string, EditorConnection> = new Map();
 	private pendingToolCalls: Map<string, PendingEditorToolCall> = new Map();
 
-	attachSocket(socket: WebSocket): void {
-		this.socket = socket;
+	attachSocket(_socket: WebSocket): void {
+		// 连接不再自动成为 Godot editor。只有 editor.context.update 会注册 editor instance。
 	}
 
 	detachSocket(socket: WebSocket): void {
-		if (this.socket !== socket) {
+		const detachedEditorIds: Set<string> = new Set();
+		for (const [editorInstanceId, connection] of this.connectionsByInstanceId.entries()) {
+			if (connection.socket === socket) {
+				this.connectionsByInstanceId.delete(editorInstanceId);
+				detachedEditorIds.add(editorInstanceId);
+			}
+		}
+
+		if (detachedEditorIds.size === 0) {
 			return;
 		}
 
-		this.socket = undefined;
-		this.context = {};
-		this.updatedAtMs = 0;
-
 		for (const [callId, pending] of this.pendingToolCalls.entries()) {
+			if (!detachedEditorIds.has(pending.editorInstanceId)) {
+				continue;
+			}
 			clearTimeout(pending.timeout);
 			pending.reject(new Error(`editor_unavailable: editor disconnected before tool result (${callId})`));
+			this.pendingToolCalls.delete(callId);
 		}
-		this.pendingToolCalls.clear();
 	}
 
 	updateContext(context: JsonObject): void {
-		this.context = {
-			...context,
-			online: true
+		this.updateInstanceContext(undefined, undefined, undefined, context);
+	}
+
+	updateInstanceContext(
+		socket: WebSocket | undefined,
+		workspaceId: string | undefined,
+		editorInstanceId: string | undefined,
+		context: JsonObject,
+		clientName?: string | undefined
+	): GodotEditorInstanceSummary {
+		const resolvedWorkspaceId: string = workspaceId ?? getCurrentMcpWorkspaceId() ?? "workspace:legacy";
+		const resolvedEditorInstanceId: string = editorInstanceId ?? getCurrentMcpEditorInstanceId() ?? `legacy:${resolvedWorkspaceId}`;
+		const existing: EditorConnection | undefined = this.connectionsByInstanceId.get(resolvedEditorInstanceId);
+		if (socket === undefined && existing === undefined) {
+			throw new Error("editor_unavailable: editor context update has no socket");
+		}
+
+		const connection: EditorConnection = {
+			socket: socket ?? existing!.socket,
+			workspaceId: resolvedWorkspaceId,
+			editorInstanceId: resolvedEditorInstanceId,
+			clientName: clientName ?? existing?.clientName,
+			context: {
+				...context,
+				workspaceId: resolvedWorkspaceId,
+				editorInstanceId: resolvedEditorInstanceId,
+				online: true
+			},
+			updatedAtMs: Date.now()
 		};
-		this.updatedAtMs = Date.now();
+		this.connectionsByInstanceId.set(resolvedEditorInstanceId, connection);
+		return this.createInstanceSummary(connection);
 	}
 
 	handleToolResult(callId: string, ok: boolean, result: unknown, error: unknown): boolean {
@@ -100,17 +153,20 @@ export class GodotEditorBridge {
 		return true;
 	}
 
-	isOnline(): boolean {
-		return isSocketOpen(this.socket) && this.updatedAtMs > 0;
+	isOnline(workspaceId?: string | undefined, editorInstanceId?: string | undefined): boolean {
+		const connection: EditorConnection | null = this.selectConnection(workspaceId, editorInstanceId, false);
+		return connection !== null && this.isConnectionOnline(connection);
 	}
 
 	getActiveScenePath(): string | undefined {
-		const scenePath: unknown = this.context.activeScenePath;
+		const connection: EditorConnection | null = this.selectConnection(undefined, undefined, false);
+		const scenePath: unknown = connection?.context.activeScenePath;
 		return typeof scenePath === "string" && scenePath.trim().length > 0 ? scenePath : undefined;
 	}
 
 	async refreshFilesystem(changedPaths: string[]): Promise<unknown | null> {
-		if (!this.isOnline()) {
+		const connection: EditorConnection | null = this.selectConnection(undefined, undefined, false);
+		if (connection === null || !this.isConnectionOnline(connection)) {
 			return null;
 		}
 
@@ -118,6 +174,12 @@ export class GodotEditorBridge {
 			changedPaths,
 			scanSources: true
 		});
+	}
+
+	listInstances(workspaceId?: string | undefined): GodotEditorInstanceSummary[] {
+		return Array.from(this.connectionsByInstanceId.values())
+			.filter((connection: EditorConnection): boolean => workspaceId === undefined || connection.workspaceId === workspaceId)
+			.map((connection: EditorConnection): GodotEditorInstanceSummary => this.createInstanceSummary(connection));
 	}
 
 	listTools() {
@@ -234,23 +296,20 @@ export class GodotEditorBridge {
 		}
 
 		if (name === "get_selected_nodes") {
-			if (!this.isOnline()) {
+			const connection: EditorConnection | null = this.selectConnection(undefined, undefined, false);
+			if (connection === null || !this.isConnectionOnline(connection)) {
 				return createEditorUnavailableResult();
 			}
 
 			return jsonTextResult({
 				ok: true,
-				selectedNodes: this.context.selectedNodes ?? [],
-				context: this.createContextSnapshot()
+				selectedNodes: connection.context.selectedNodes ?? [],
+				context: this.createContextSnapshot(connection)
 			});
 		}
 
 		if (name !== "inspect_node" && name !== "apply_scene_patch") {
 			throw new Error(`Unknown godot_editor tool: ${name}`);
-		}
-
-		if (!this.isOnline()) {
-			return createEditorUnavailableResult();
 		}
 
 		const result: unknown = await this.requestEditorTool(name, args);
@@ -260,21 +319,71 @@ export class GodotEditorBridge {
 		});
 	}
 
-	private createContextSnapshot(): JsonObject {
-		const ageMs: number | null = this.updatedAtMs > 0 ? Date.now() - this.updatedAtMs : null;
-		const online: boolean = this.isOnline();
+	private createContextSnapshot(connection: EditorConnection | null = this.selectConnection(undefined, undefined, false)): JsonObject {
+		const ageMs: number | null = connection !== null && connection.updatedAtMs > 0 ? Date.now() - connection.updatedAtMs : null;
+		const online: boolean = connection !== null && this.isConnectionOnline(connection);
 		return {
 			online,
 			stale: ageMs === null || ageMs > EDITOR_CONTEXT_STALE_MS,
-			updatedAt: this.updatedAtMs > 0 ? new Date(this.updatedAtMs).toISOString() : null,
+			updatedAt: connection !== null && connection.updatedAtMs > 0 ? new Date(connection.updatedAtMs).toISOString() : null,
 			ageMs,
-			context: online ? this.context : {},
+			context: online && connection !== null ? connection.context : {},
+			instances: this.listInstances(getCurrentMcpWorkspaceId()),
 			error: online ? null : "editor_unavailable"
 		};
 	}
 
+	private createInstanceSummary(connection: EditorConnection): GodotEditorInstanceSummary {
+		const ageMs: number | null = connection.updatedAtMs > 0 ? Date.now() - connection.updatedAtMs : null;
+		const activeScenePath: unknown = connection.context.activeScenePath;
+		return {
+			workspaceId: connection.workspaceId,
+			editorInstanceId: connection.editorInstanceId,
+			online: this.isConnectionOnline(connection),
+			updatedAt: connection.updatedAtMs > 0 ? new Date(connection.updatedAtMs).toISOString() : null,
+			ageMs,
+			activeScenePath: typeof activeScenePath === "string" && activeScenePath.trim().length > 0 ? activeScenePath : null,
+			clientName: connection.clientName
+		};
+	}
+
+	private isConnectionOnline(connection: EditorConnection): boolean {
+		return isSocketOpen(connection.socket) && connection.updatedAtMs > 0;
+	}
+
+	private selectConnection(
+		workspaceId: string | undefined,
+		editorInstanceId: string | undefined,
+		throwOnAmbiguous: boolean
+	): EditorConnection | null {
+		const resolvedWorkspaceId: string | undefined = workspaceId ?? getCurrentMcpWorkspaceId();
+		const resolvedEditorInstanceId: string | undefined = editorInstanceId ?? getCurrentMcpEditorInstanceId();
+		if (resolvedEditorInstanceId !== undefined) {
+			return this.connectionsByInstanceId.get(resolvedEditorInstanceId) ?? null;
+		}
+
+		const candidates: EditorConnection[] = Array.from(this.connectionsByInstanceId.values())
+			.filter((connection: EditorConnection): boolean => resolvedWorkspaceId === undefined || connection.workspaceId === resolvedWorkspaceId)
+			.filter((connection: EditorConnection): boolean => this.isConnectionOnline(connection));
+		if (candidates.length === 0) {
+			return null;
+		}
+		if (candidates.length > 1 && throwOnAmbiguous) {
+			throw new Error("editor_target_required: multiple Godot editors are online for this workspace; bind session.editor.bind first.");
+		}
+
+		return candidates.sort((a: EditorConnection, b: EditorConnection): number => b.updatedAtMs - a.updatedAtMs)[0] ?? null;
+	}
+
 	private requestEditorTool(toolName: string, args: JsonObject): Promise<unknown> {
-		if (!isSocketOpen(this.socket)) {
+		let connection: EditorConnection | null;
+		try {
+			connection = this.selectConnection(undefined, undefined, true);
+		} catch (error: unknown) {
+			return Promise.reject(error instanceof Error ? error : new Error("editor_target_required"));
+		}
+
+		if (connection === null || !this.isConnectionOnline(connection)) {
 			return Promise.reject(new Error("editor_unavailable: Godot editor client is not connected"));
 		}
 
@@ -288,18 +397,21 @@ export class GodotEditorBridge {
 			this.pendingToolCalls.set(callId, {
 				resolve,
 				reject,
-				timeout
+				timeout,
+				editorInstanceId: connection.editorInstanceId
 			});
 
 			try {
-				this.socket?.send(JSON.stringify({
+				connection.socket.send(JSON.stringify({
 					type: "event",
 					id: callId,
 					event: "editor.tool.requested",
 					data: {
 						callId,
 						toolName,
-						args
+						args,
+						workspaceId: connection.workspaceId,
+						editorInstanceId: connection.editorInstanceId
 					}
 				}));
 			} catch (error: unknown) {

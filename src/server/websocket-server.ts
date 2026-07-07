@@ -16,6 +16,8 @@ import { waitForFullSessionLoad } from "./session-preview.js";
 import {
 	waitForSessionEventPersistence
 } from "./session-events.js";
+import { registerClientConnection, unregisterClientConnection } from "./client-connections.js";
+import { withMcpRequestContext } from "../mcp/request-context.js";
 
 function sendProtocolError(socket: WebSocket, code: string, message: string, requestId: string = ""): void {
 	sendJson(socket, {
@@ -136,7 +138,12 @@ function handleSocketMessage(
 		return;
 	}
 
-	dispatchRequest(socket, requestData, session, mcpHost).catch((error: unknown): void => {
+	withMcpRequestContext({
+		workspaceId: session.activeWorkspace?.id,
+		editorInstanceId: session.editorInstanceId
+	}, async (): Promise<void> => {
+		await dispatchRequest(socket, requestData, session, mcpHost);
+	}).catch((error: unknown): void => {
 		sendUnhandledRequestError(socket, requestData, error);
 	}).finally((): void => {
 		finishRequestExecution(requestData, session);
@@ -145,6 +152,7 @@ function handleSocketMessage(
 
 function handleSocketClose(socket: WebSocket, session: ClientSession, mcpHost: McpHost, remoteAddress: string): void {
 	detachEditorBridgeSocket(socket, mcpHost);
+	unregisterClientConnection(socket);
 	abortActiveRequests(session);
 	scheduleSessionSaveOnDisconnect(session);
 	console.log(`Client disconnected: ${remoteAddress}`);
@@ -165,6 +173,7 @@ function handleConnection(socket: WebSocket, request: Parameters<WebSocketServer
 	const remoteAddress: string = getRemoteAddress(request);
 	console.log(`Client connected: ${remoteAddress}`);
 
+	registerClientConnection(socket, session);
 	attachEditorBridgeSocket(socket, mcpHost);
 	attachSocketHandlers(socket, session, mcpHost, remoteAddress);
 }

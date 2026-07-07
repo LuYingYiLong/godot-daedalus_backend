@@ -209,10 +209,10 @@ function canCallMcpToolDirectly(toolName: string): boolean {
 	return allowedTools.has(toolName);
 }
 
-async function createMcpConfigListResult(mcpHost: McpHost): Promise<Record<string, unknown>> {
+async function createMcpConfigListResult(mcpHost: McpHost, workspaceId?: string | undefined): Promise<Record<string, unknown>> {
 	const summaries: CustomMcpServerSummary[] = await listCustomMcpServerSummaries();
 	const statusesById: Map<string, CustomMcpServerRuntimeStatus> = new Map(
-		mcpHost.getCustomServerStatuses().map((status: CustomMcpServerRuntimeStatus): [string, CustomMcpServerRuntimeStatus] => [status.id, status])
+		mcpHost.getCustomServerStatusesForWorkspace(workspaceId).map((status: CustomMcpServerRuntimeStatus): [string, CustomMcpServerRuntimeStatus] => [status.id, status])
 	);
 	const servers: Record<string, unknown>[] = summaries.map((summary: CustomMcpServerSummary): Record<string, unknown> => {
 		const runtimeStatus: CustomMcpServerRuntimeStatus | undefined = statusesById.get(summary.id);
@@ -228,7 +228,7 @@ async function createMcpConfigListResult(mcpHost: McpHost): Promise<Record<strin
 	return {
 		customMcpServers: servers,
 		mcpServers: servers,
-		connectedServerIds: mcpHost.getConnectedServerIds()
+		connectedServerIds: mcpHost.getConnectedServerIds(workspaceId)
 	};
 }
 
@@ -236,20 +236,22 @@ function refreshCustomMcpServersAndNotify(socket: WebSocket, mcpHost: McpHost): 
 	void (async (): Promise<void> => {
 		try {
 			await mcpHost.refreshCustomServersForActiveWorkspace();
+			const workspaceId: string | undefined = mcpHost.getActiveWorkspaceId();
 			sendJson(socket, {
 				type: "event",
 				id: "mcp-config",
 				event: "mcp.config.updated",
-				data: await createMcpConfigListResult(mcpHost)
+				data: await createMcpConfigListResult(mcpHost, workspaceId)
 			});
 		} catch (error: unknown) {
 			console.warn("Failed to refresh custom MCP servers:", error instanceof Error ? error.message : error);
+			const workspaceId: string | undefined = mcpHost.getActiveWorkspaceId();
 			sendJson(socket, {
 				type: "event",
 				id: "mcp-config",
 				event: "mcp.config.updated",
 				data: {
-					...await createMcpConfigListResult(mcpHost),
+					...await createMcpConfigListResult(mcpHost, workspaceId),
 					error: error instanceof Error ? error.message : "Failed to refresh custom MCP servers"
 				}
 			});
@@ -275,8 +277,8 @@ function createSessionInfoResult(session: ClientSession, mcpHost: McpHost, histo
 		approvalMode: session.approvalGateway.getMode(),
 		pendingApprovals: session.approvalGateway.listPending().length,
 		pendingGuides: session.pendingGuides.length,
-		mcpServers: mcpHost.getConnectedServerIds(),
-		customMcpServerStatus: mcpHost.getCustomServerStatuses(),
+		mcpServers: mcpHost.getConnectedServerIds(session.activeWorkspace?.id),
+		customMcpServerStatus: mcpHost.getCustomServerStatusesForWorkspace(session.activeWorkspace?.id),
 		godotDiagnostics: mcpHost.getDiagnosticsBridge().getCachedStatus(),
 		godotExecutablePath: session.activeWorkspace?.godotExecutablePath ?? session.godotExecutablePath ?? null,
 		godotProjectPath: getSessionProjectPath(session) || null,
@@ -310,7 +312,8 @@ export function createSafeMarkdownFence(content: string, language: string = "tex
 }
 
 export async function createMcpSystemContext(mcpHost: McpHost, session: ClientSession): Promise<string> {
-	const serverIds: string[] = mcpHost.getConnectedServerIds();
+	const workspaceId: string | undefined = session.activeWorkspace?.id;
+	const serverIds: string[] = mcpHost.getConnectedServerIds(workspaceId);
 	const sections: string[] = [];
 
 	// Godot environment section
@@ -350,7 +353,7 @@ export async function createMcpSystemContext(mcpHost: McpHost, session: ClientSe
 	for (const serverId of serverIds.filter((id: string): boolean => id === "godot")) {
 		for (const fileName of ["AGENTS.md", "CLAUDE.md"]) {
 			try {
-				const result = await mcpHost.callTool(serverId, "read_text_file", { relativePath: fileName });
+				const result = await mcpHost.callTool(serverId, "read_text_file", { relativePath: fileName }, workspaceId);
 				const firstContent = (result as { content: Array<{ text?: string }> }).content[0];
 				if (firstContent && firstContent.text) {
 					logProjectInstructionTrace(session, serverId, fileName, firstContent.text);
@@ -385,7 +388,7 @@ export async function createMcpSystemContext(mcpHost: McpHost, session: ClientSe
 				sections.push(`\n### MCP Server: ${serverId}`);
 
 				try {
-					const toolsResult = await mcpHost.listTools(serverId);
+					const toolsResult = await mcpHost.listTools(serverId, workspaceId);
 					const toolLines: string[] = toolsResult.tools.map((tool) => {
 						const description: string = tool.description ?? "";
 						return `- ${tool.name}${description.length > 0 ? `：${description}` : ""}`;
@@ -398,7 +401,7 @@ export async function createMcpSystemContext(mcpHost: McpHost, session: ClientSe
 				}
 
 				try {
-					const resourcesResult = await mcpHost.listResources(serverId);
+					const resourcesResult = await mcpHost.listResources(serverId, workspaceId);
 					const resourceLines: string[] = resourcesResult.resources.map((resource) => {
 						const name: string = resource.name ?? resource.uri;
 						return `- ${resource.uri}${name !== resource.uri ? `（${name}）` : ""}`;
@@ -412,7 +415,7 @@ export async function createMcpSystemContext(mcpHost: McpHost, session: ClientSe
 
 				if (serverId === "godot") {
 					try {
-						const projectResource = await mcpHost.readResource(serverId, "godot://project");
+						const projectResource = await mcpHost.readResource(serverId, "godot://project", workspaceId);
 						const projectContent = projectResource.contents[0];
 						if (projectContent !== undefined && "text" in projectContent) {
 							sections.push("当前 Godot 项目摘要：");
@@ -426,7 +429,7 @@ export async function createMcpSystemContext(mcpHost: McpHost, session: ClientSe
 
 				if (serverId === "godot_editor") {
 					try {
-						const editorResource = await mcpHost.readResource(serverId, "godot-editor://context");
+						const editorResource = await mcpHost.readResource(serverId, "godot-editor://context", workspaceId);
 						const editorContent = editorResource.contents[0];
 						if (editorContent !== undefined && "text" in editorContent) {
 							sections.push("当前 Godot 编辑器上下文：");

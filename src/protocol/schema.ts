@@ -128,6 +128,25 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 	z.object({
 		type: z.literal("request"),
 		id: z.string(),
+		method: z.literal("client.hello"),
+		params: z.object({
+			clientType: z.enum(["godot_plugin", "studio", "cli", "smoke"]).optional(),
+			clientName: z.string().min(1).max(120).optional(),
+			workspaceRoot: z.string().min(1).optional(),
+			workspaceId: z.string().min(1).optional(),
+			editorInstanceId: z.string().min(1).max(160).optional(),
+			capabilities: z.record(z.string().min(1), z.boolean()).optional(),
+		}).optional(),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("client.info"),
+		params: z.object({}).optional(),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
 		method: z.literal("provider.configure"),
 		params: z.object({
 			provider: providerIdSchema,
@@ -245,6 +264,31 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		params: z.object({
 			sessionId: z.string().min(1),
 			limit: z.number().int().positive().max(500).optional(),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("session.subscribe"),
+		params: z.object({
+			sessionId: z.string().min(1),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("session.unsubscribe"),
+		params: z.object({
+			sessionId: z.string().min(1),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("session.editor.bind"),
+		params: z.object({
+			sessionId: z.string().min(1).optional(),
+			editorInstanceId: z.string().min(1).max(160),
 		}),
 	}),
 	z.object({
@@ -500,6 +544,14 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		id: z.string(),
 		method: z.literal("editor.context.update"),
 		params: z.record(z.string(), z.unknown()),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("editor.instances.list"),
+		params: z.object({
+			workspaceId: z.string().min(1).optional(),
+		}).optional(),
 	}),
 	z.object({
 		type: z.literal("request"),

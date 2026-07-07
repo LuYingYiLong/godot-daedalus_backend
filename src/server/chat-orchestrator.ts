@@ -166,6 +166,7 @@ import { runWorkflowPhase, createWorkflowPhasePrompt } from "./workflow/phase-ru
 import { createWorkflowPendingContinuation, continueWorkflowExecution } from "./workflow/continuation.js";
 import { startWorkflowExecution } from "./workflow/executor.js";
 import { ensureProviderConfigured } from "./handlers/provider-handlers.js";
+import { beginSessionRun, finishSessionRun } from "./client-connections.js";
 
 function createSessionInfoResult(session: ClientSession, mcpHost: McpHost, historyTokensStored: number | null = null): Record<string, unknown> {
 	return {
@@ -185,8 +186,8 @@ function createSessionInfoResult(session: ClientSession, mcpHost: McpHost, histo
 		approvalMode: session.approvalGateway.getMode(),
 		pendingApprovals: session.approvalGateway.listPending().length,
 		pendingGuides: session.pendingGuides.length,
-		mcpServers: mcpHost.getConnectedServerIds(),
-		customMcpServerStatus: mcpHost.getCustomServerStatuses(),
+		mcpServers: mcpHost.getConnectedServerIds(session.activeWorkspace?.id),
+		customMcpServerStatus: mcpHost.getCustomServerStatusesForWorkspace(session.activeWorkspace?.id),
 		godotDiagnostics: mcpHost.getDiagnosticsBridge().getCachedStatus(),
 		godotExecutablePath: session.activeWorkspace?.godotExecutablePath ?? session.godotExecutablePath ?? null,
 		godotProjectPath: getSessionProjectPath(session) || null,
@@ -254,8 +255,29 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				break;
 			}
 
+			const sessionRun = beginSessionRun(session.sessionId, request.id);
+			if (session.activeRunRequestId !== undefined || !sessionRun.ok) {
+				const activeRequestId: string = session.activeRunRequestId ?? (sessionRun.ok ? request.id : sessionRun.activeRequestId);
+				sendSessionEvent(socket, request.id, session, "session.run.busy", {
+					sessionId: session.sessionId ?? null,
+					activeRequestId,
+					rejectedRequestId: request.id
+				});
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: {
+						code: "session_busy",
+						message: "This session already has an active AI run."
+					}
+				});
+				break;
+			}
+
 			const abortController: AbortController = new AbortController();
 			session.activeAbortControllers.set(request.id, abortController);
+			session.activeRunRequestId = request.id;
 
 			try {
 				const turnStartedAt: string = new Date().toISOString();
@@ -417,6 +439,10 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				});
 			} finally {
 				session.activeAbortControllers.delete(request.id);
+				if (session.activeRunRequestId === request.id) {
+					session.activeRunRequestId = undefined;
+				}
+				finishSessionRun(session.sessionId, request.id);
 			}
 			break;
 		}

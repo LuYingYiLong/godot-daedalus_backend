@@ -6,7 +6,8 @@ import { McpSession } from "./mcp-session.js";
 import type { McpServerConfig } from "./types.js";
 import { findWorkspace, getDefaultWorkspace } from "../workspace/registry.js";
 import type { WorkspaceConfig } from "../workspace/types.js";
-import { replaceDynamicMcpTools, type DynamicMcpToolSource } from "../tools/dynamic-mcp-tools.js";
+import { clearDynamicMcpToolsForWorkspace, replaceDynamicMcpTools, replaceDynamicMcpToolsForWorkspace, type DynamicMcpToolSource } from "../tools/dynamic-mcp-tools.js";
+import { getCurrentMcpWorkspaceId } from "./request-context.js";
 
 const CUSTOM_MCP_CONNECT_TIMEOUT_MS: number = 30_000;
 const CUSTOM_MCP_LIST_TOOLS_TIMEOUT_MS: number = 10_000;
@@ -26,6 +27,15 @@ export type CustomMcpServerRuntimeStatus = {
 	toolCount: number;
 	error?: string | undefined;
 };
+
+function customStatusKey(workspaceId: string, serverId: string): string {
+	return `${workspaceId}\u0000${serverId}`;
+}
+
+function customStatusServerId(key: string): string {
+	const separatorIndex: number = key.indexOf("\u0000");
+	return separatorIndex === -1 ? key : key.slice(separatorIndex + 1);
+}
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
 	let timeout: NodeJS.Timeout | undefined;
@@ -76,7 +86,7 @@ export class McpHost {
 		console.log(`MCP active workspace: ${workspace.id} -> ${workspace.rootPath}`);
 	}
 
-	private async ensureWorkspace(workspace: WorkspaceConfig): Promise<void> {
+	async ensureWorkspace(workspace: WorkspaceConfig): Promise<void> {
 		if (this.workspaceSessions.has(workspace.id)) {
 			return;
 		}
@@ -104,7 +114,7 @@ export class McpHost {
 				} catch (error: unknown) {
 					if (config.custom === true) {
 						await this.closeCustomSessionQuietly(session);
-						this.setCustomServerError(config.id, error);
+						this.setCustomServerError(workspace.id, config.id, error);
 						console.warn(`Custom MCP session failed: ${workspace.id}/${config.id}:`, error instanceof Error ? error.message : error);
 						continue;
 					}
@@ -122,6 +132,7 @@ export class McpHost {
 		}
 
 		this.workspaceSessions.set(workspace.id, sessions);
+		this.syncDynamicToolsForWorkspace(workspace.id);
 	}
 
 	private async connectSession(config: McpServerConfig, session: McpSession): Promise<void> {
@@ -165,15 +176,15 @@ export class McpHost {
 			this.workspaceCustomTools.set(workspaceId, workspaceTools);
 		}
 		workspaceTools.set(config.id, toolSources);
-		this.customServerStatuses.set(config.id, {
+		this.customServerStatuses.set(customStatusKey(workspaceId, config.id), {
 			id: config.id,
 			status: "connected",
 			toolCount: toolSources.length
 		});
 	}
 
-	private setCustomServerError(serverId: string, error: unknown): void {
-		this.customServerStatuses.set(serverId, {
+	private setCustomServerError(workspaceId: string, serverId: string, error: unknown): void {
+		this.customServerStatuses.set(customStatusKey(workspaceId, serverId), {
 			id: serverId,
 			status: "error",
 			toolCount: 0,
@@ -181,27 +192,39 @@ export class McpHost {
 		});
 	}
 
+	private syncDynamicToolsForWorkspace(workspaceId: string): void {
+		const workspaceTools: Map<string, DynamicMcpToolSource[]> | undefined = this.workspaceCustomTools.get(workspaceId);
+		replaceDynamicMcpToolsForWorkspace(workspaceId, workspaceTools === undefined ? [] : Array.from(workspaceTools.values()).flat());
+	}
+
 	private syncActiveDynamicTools(): void {
-		if (!this.activeWorkspaceId) {
+		const workspaceId: string | undefined = this.activeWorkspaceId;
+		if (!workspaceId) {
 			replaceDynamicMcpTools([]);
 			return;
 		}
 
-		const workspaceTools: Map<string, DynamicMcpToolSource[]> | undefined = this.workspaceCustomTools.get(this.activeWorkspaceId);
+		const workspaceTools: Map<string, DynamicMcpToolSource[]> | undefined = this.workspaceCustomTools.get(workspaceId);
 		if (workspaceTools === undefined) {
 			replaceDynamicMcpTools([]);
 			return;
 		}
 
 		replaceDynamicMcpTools(Array.from(workspaceTools.values()).flat());
+		this.syncDynamicToolsForWorkspace(workspaceId);
 	}
 
 	async refreshCustomServersForActiveWorkspace(): Promise<void> {
-		if (!this.activeWorkspaceId) {
+		const workspaceId: string | undefined = getCurrentMcpWorkspaceId() ?? this.activeWorkspaceId;
+		if (workspaceId === undefined) {
 			return;
 		}
 
-		const workspace: WorkspaceConfig | undefined = findWorkspace(this.activeWorkspaceId);
+		await this.refreshCustomServersForWorkspace(workspaceId);
+	}
+
+	async refreshCustomServersForWorkspace(workspaceId: string): Promise<void> {
+		const workspace: WorkspaceConfig | undefined = findWorkspace(workspaceId);
 		if (workspace === undefined) {
 			return;
 		}
@@ -224,9 +247,14 @@ export class McpHost {
 		this.workspaceCustomTools.set(workspace.id, new Map());
 		const customConfigs: McpServerConfig[] = await buildCustomMcpServerConfigs(workspace);
 		const enabledCustomIds: Set<string> = new Set(customConfigs.map((config: McpServerConfig): string => config.id));
-		for (const serverId of this.customServerStatuses.keys()) {
+		const workspaceStatusPrefix: string = `${workspace.id}\u0000`;
+		for (const statusKey of this.customServerStatuses.keys()) {
+			if (!statusKey.startsWith(workspaceStatusPrefix)) {
+				continue;
+			}
+			const serverId: string = customStatusServerId(statusKey);
 			if (!enabledCustomIds.has(serverId)) {
-				this.customServerStatuses.delete(serverId);
+				this.customServerStatuses.delete(statusKey);
 			}
 		}
 
@@ -239,22 +267,31 @@ export class McpHost {
 				console.log(`Custom MCP session connected: ${workspace.id}/${config.id}`);
 			} catch (error: unknown) {
 				await this.closeCustomSessionQuietly(session);
-				this.setCustomServerError(config.id, error);
+				this.setCustomServerError(workspace.id, config.id, error);
 				console.warn(`Custom MCP session failed: ${workspace.id}/${config.id}:`, error instanceof Error ? error.message : error);
 			}
 		}
 
-		this.syncActiveDynamicTools();
+		this.syncDynamicToolsForWorkspace(workspace.id);
+		if (this.activeWorkspaceId === workspace.id) {
+			this.syncActiveDynamicTools();
+		}
 	}
 
-	private getActiveSessions(): Map<string, McpSession> {
-		if (!this.activeWorkspaceId) {
+	private getWorkspaceId(workspaceId?: string | undefined): string {
+		const resolvedWorkspaceId: string | undefined = workspaceId ?? getCurrentMcpWorkspaceId() ?? this.activeWorkspaceId;
+		if (resolvedWorkspaceId === undefined) {
 			throw new Error("MCP workspace is not selected");
 		}
 
-		const sessions: Map<string, McpSession> | undefined = this.workspaceSessions.get(this.activeWorkspaceId);
+		return resolvedWorkspaceId;
+	}
+
+	private getActiveSessions(workspaceId?: string | undefined): Map<string, McpSession> {
+		const resolvedWorkspaceId: string = this.getWorkspaceId(workspaceId);
+		const sessions: Map<string, McpSession> | undefined = this.workspaceSessions.get(resolvedWorkspaceId);
 		if (!sessions) {
-			throw new Error(`MCP workspace is not connected: ${this.activeWorkspaceId}`);
+			throw new Error(`MCP workspace is not connected: ${resolvedWorkspaceId}`);
 		}
 
 		return sessions;
@@ -272,6 +309,7 @@ export class McpHost {
 
 		this.workspaceSessions.delete(workspaceId);
 		this.workspaceCustomTools.delete(workspaceId);
+		clearDynamicMcpToolsForWorkspace(workspaceId);
 
 		if (this.activeWorkspaceId === workspaceId) {
 			this.activeWorkspaceId = undefined;
@@ -281,7 +319,7 @@ export class McpHost {
 	}
 
 	getActiveWorkspaceId(): string | undefined {
-		return this.activeWorkspaceId;
+		return getCurrentMcpWorkspaceId() ?? this.activeWorkspaceId;
 	}
 
 	getEditorBridge(): GodotEditorBridge {
@@ -292,22 +330,24 @@ export class McpHost {
 		return this.diagnosticsBridge;
 	}
 
-	getSession(id: string): McpSession {
-		const session: McpSession | undefined = this.getActiveSessions().get(id);
+	getSession(id: string, workspaceId?: string | undefined): McpSession {
+		const resolvedWorkspaceId: string = this.getWorkspaceId(workspaceId);
+		const session: McpSession | undefined = this.getActiveSessions(resolvedWorkspaceId).get(id);
 
 		if (!session) {
-			throw new Error(`MCP session not found in active workspace: ${id}`);
+			throw new Error(`MCP session not found in workspace ${resolvedWorkspaceId}: ${id}`);
 		}
 
 		return session;
 	}
 
-	getConnectedServerIds(): string[] {
-		if (!this.activeWorkspaceId) {
+	getConnectedServerIds(workspaceId?: string | undefined): string[] {
+		const resolvedWorkspaceId: string | undefined = workspaceId ?? getCurrentMcpWorkspaceId() ?? this.activeWorkspaceId;
+		if (!resolvedWorkspaceId) {
 			return this.editorBridge.isOnline() ? [GODOT_EDITOR_SERVER_ID] : [];
 		}
 
-		const sessions: Map<string, McpSession> | undefined = this.workspaceSessions.get(this.activeWorkspaceId);
+		const sessions: Map<string, McpSession> | undefined = this.workspaceSessions.get(resolvedWorkspaceId);
 		if (!sessions) {
 			return this.editorBridge.isOnline() ? [GODOT_EDITOR_SERVER_ID] : [];
 		}
@@ -325,10 +365,22 @@ export class McpHost {
 	}
 
 	getCustomServerStatuses(): CustomMcpServerRuntimeStatus[] {
-		return Array.from(this.customServerStatuses.values());
+		return this.getCustomServerStatusesForWorkspace(undefined);
 	}
 
-	async listTools(serverId: string) {
+	getCustomServerStatusesForWorkspace(workspaceId?: string | undefined): CustomMcpServerRuntimeStatus[] {
+		const resolvedWorkspaceId: string | undefined = workspaceId ?? getCurrentMcpWorkspaceId() ?? this.activeWorkspaceId;
+		if (resolvedWorkspaceId === undefined) {
+			return Array.from(this.customServerStatuses.values());
+		}
+
+		const workspaceStatusPrefix: string = `${resolvedWorkspaceId}\u0000`;
+		return Array.from(this.customServerStatuses.entries())
+			.filter(([key]: [string, CustomMcpServerRuntimeStatus]): boolean => key.startsWith(workspaceStatusPrefix))
+			.map(([_key, status]: [string, CustomMcpServerRuntimeStatus]): CustomMcpServerRuntimeStatus => status);
+	}
+
+	async listTools(serverId: string, workspaceId?: string | undefined) {
 		if (serverId === GODOT_EDITOR_SERVER_ID) {
 			return this.editorBridge.listTools();
 		}
@@ -337,10 +389,10 @@ export class McpHost {
 			return this.diagnosticsBridge.listTools();
 		}
 
-		return this.getSession(serverId).listTools();
+		return this.getSession(serverId, workspaceId).listTools();
 	}
 
-	async callTool(serverId: string, name: string, args: Record<string, unknown>) {
+	async callTool(serverId: string, name: string, args: Record<string, unknown>, workspaceId?: string | undefined) {
 		if (serverId === GODOT_EDITOR_SERVER_ID) {
 			return this.editorBridge.callTool(name, args);
 		}
@@ -349,10 +401,10 @@ export class McpHost {
 			return this.diagnosticsBridge.callTool(name, args);
 		}
 
-		return this.getSession(serverId).callTool(name, args);
+		return this.getSession(serverId, workspaceId).callTool(name, args);
 	}
 
-	async listResources(serverId: string) {
+	async listResources(serverId: string, workspaceId?: string | undefined) {
 		if (serverId === GODOT_EDITOR_SERVER_ID) {
 			return this.editorBridge.listResources();
 		}
@@ -361,10 +413,10 @@ export class McpHost {
 			return this.diagnosticsBridge.listResources();
 		}
 
-		return this.getSession(serverId).listResources();
+		return this.getSession(serverId, workspaceId).listResources();
 	}
 
-	async readResource(serverId: string, uri: string) {
+	async readResource(serverId: string, uri: string, workspaceId?: string | undefined) {
 		if (serverId === GODOT_EDITOR_SERVER_ID) {
 			return this.editorBridge.readResource(uri);
 		}
@@ -373,7 +425,7 @@ export class McpHost {
 			return this.diagnosticsBridge.readResource(uri);
 		}
 
-		return this.getSession(serverId).readResource(uri);
+		return this.getSession(serverId, workspaceId).readResource(uri);
 	}
 
 	async closeAll(): Promise<void> {

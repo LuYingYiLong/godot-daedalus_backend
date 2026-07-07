@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
 import { CUSTOM_MCP_TOOL_PREFIX } from "./tool-sentinels.js";
 import type { ToolMapping } from "./tool-mapping.js";
+import { getCurrentMcpWorkspaceId } from "../mcp/request-context.js";
 
 const MAX_DYNAMIC_TOOLS_TOTAL: number = 96;
 const MAX_DYNAMIC_TOOLS_PER_SERVER: number = 32;
@@ -22,6 +23,68 @@ export type DynamicMcpToolMetadata = DynamicMcpToolSource & {
 const dynamicToolDefinitions: ChatCompletionTool[] = [];
 const dynamicToolMap: Map<string, ToolMapping> = new Map();
 const dynamicToolMetadata: Map<string, DynamicMcpToolMetadata> = new Map();
+const workspaceDynamicTools: Map<string, {
+	definitions: ChatCompletionTool[];
+	mapping: Map<string, ToolMapping>;
+	metadata: Map<string, DynamicMcpToolMetadata>;
+}> = new Map();
+
+function buildDynamicToolSet(sources: readonly DynamicMcpToolSource[]): {
+	definitions: ChatCompletionTool[];
+	mapping: Map<string, ToolMapping>;
+	metadata: Map<string, DynamicMcpToolMetadata>;
+} {
+	const definitions: ChatCompletionTool[] = [];
+	const mapping: Map<string, ToolMapping> = new Map();
+	const metadata: Map<string, DynamicMcpToolMetadata> = new Map();
+	const perServerCounts: Map<string, number> = new Map();
+	for (const source of sources) {
+		if (definitions.length >= MAX_DYNAMIC_TOOLS_TOTAL) {
+			break;
+		}
+
+		const nextServerCount: number = (perServerCounts.get(source.serverId) ?? 0) + 1;
+		if (nextServerCount > MAX_DYNAMIC_TOOLS_PER_SERVER) {
+			continue;
+		}
+		perServerCounts.set(source.serverId, nextServerCount);
+
+		const llmToolName: string = createDynamicToolName(source);
+		const definition: ChatCompletionTool = createDynamicToolDefinition(source, llmToolName);
+		definitions.push(definition);
+		mapping.set(llmToolName, {
+			serverId: source.serverId,
+			toolName: source.toolName
+		});
+		metadata.set(llmToolName, {
+			...source,
+			llmToolName
+		});
+	}
+
+	return { definitions, mapping, metadata };
+}
+
+function getActiveDynamicToolSet(): {
+	definitions: ChatCompletionTool[];
+	mapping: Map<string, ToolMapping>;
+	metadata: Map<string, DynamicMcpToolMetadata>;
+} {
+	const workspaceId: string | undefined = getCurrentMcpWorkspaceId();
+	if (workspaceId !== undefined) {
+		return workspaceDynamicTools.get(workspaceId) ?? {
+			definitions: [],
+			mapping: new Map(),
+			metadata: new Map()
+		};
+	}
+
+	return {
+		definitions: dynamicToolDefinitions,
+		mapping: dynamicToolMap,
+		metadata: dynamicToolMetadata
+	};
+}
 
 function slugifyToolPart(value: string, maxLength: number): string {
 	const slug: string = value
@@ -87,38 +150,29 @@ function createDynamicToolDefinition(source: DynamicMcpToolSource, llmToolName: 
 }
 
 export function replaceDynamicMcpTools(sources: readonly DynamicMcpToolSource[]): void {
+	const toolSet = buildDynamicToolSet(sources);
 	dynamicToolDefinitions.length = 0;
 	dynamicToolMap.clear();
 	dynamicToolMetadata.clear();
-
-	const perServerCounts: Map<string, number> = new Map();
-	for (const source of sources) {
-		if (dynamicToolDefinitions.length >= MAX_DYNAMIC_TOOLS_TOTAL) {
-			break;
-		}
-
-		const nextServerCount: number = (perServerCounts.get(source.serverId) ?? 0) + 1;
-		if (nextServerCount > MAX_DYNAMIC_TOOLS_PER_SERVER) {
-			continue;
-		}
-		perServerCounts.set(source.serverId, nextServerCount);
-
-		const llmToolName: string = createDynamicToolName(source);
-		const definition: ChatCompletionTool = createDynamicToolDefinition(source, llmToolName);
-		dynamicToolDefinitions.push(definition);
-		dynamicToolMap.set(llmToolName, {
-			serverId: source.serverId,
-			toolName: source.toolName
-		});
-		dynamicToolMetadata.set(llmToolName, {
-			...source,
-			llmToolName
-		});
+	dynamicToolDefinitions.push(...toolSet.definitions);
+	for (const [key, value] of toolSet.mapping) {
+		dynamicToolMap.set(key, value);
+	}
+	for (const [key, value] of toolSet.metadata) {
+		dynamicToolMetadata.set(key, value);
 	}
 }
 
+export function replaceDynamicMcpToolsForWorkspace(workspaceId: string, sources: readonly DynamicMcpToolSource[]): void {
+	workspaceDynamicTools.set(workspaceId, buildDynamicToolSet(sources));
+}
+
+export function clearDynamicMcpToolsForWorkspace(workspaceId: string): void {
+	workspaceDynamicTools.delete(workspaceId);
+}
+
 export function getDynamicMcpToolNames(): string[] {
-	return Array.from(dynamicToolMap.keys());
+	return Array.from(getActiveDynamicToolSet().mapping.keys());
 }
 
 export function isDynamicMcpToolName(toolName: string): boolean {
@@ -126,13 +180,13 @@ export function isDynamicMcpToolName(toolName: string): boolean {
 }
 
 export function getDynamicMcpToolMetadata(toolName: string): DynamicMcpToolMetadata | undefined {
-	return dynamicToolMetadata.get(toolName);
+	return getActiveDynamicToolSet().metadata.get(toolName);
 }
 
 export function getDynamicMcpToolDefinitions(): ChatCompletionTool[] {
-	return [...dynamicToolDefinitions];
+	return [...getActiveDynamicToolSet().definitions];
 }
 
 export function getDynamicMcpToolMapping(toolName: string): ToolMapping | undefined {
-	return dynamicToolMap.get(toolName);
+	return getActiveDynamicToolSet().mapping.get(toolName);
 }

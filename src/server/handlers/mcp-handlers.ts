@@ -29,10 +29,10 @@ function canCallMcpToolDirectly(toolName: string): boolean {
 	return allowedTools.has(toolName);
 }
 
-async function createMcpConfigListResult(mcpHost: McpHost): Promise<Record<string, unknown>> {
+async function createMcpConfigListResult(mcpHost: McpHost, workspaceId?: string | undefined): Promise<Record<string, unknown>> {
 	const summaries: CustomMcpServerSummary[] = await listCustomMcpServerSummaries();
 	const statusesById: Map<string, CustomMcpServerRuntimeStatus> = new Map(
-		mcpHost.getCustomServerStatuses().map((status: CustomMcpServerRuntimeStatus): [string, CustomMcpServerRuntimeStatus] => [status.id, status])
+		mcpHost.getCustomServerStatusesForWorkspace(workspaceId).map((status: CustomMcpServerRuntimeStatus): [string, CustomMcpServerRuntimeStatus] => [status.id, status])
 	);
 	const servers: Record<string, unknown>[] = summaries.map((summary: CustomMcpServerSummary): Record<string, unknown> => {
 		const runtimeStatus: CustomMcpServerRuntimeStatus | undefined = statusesById.get(summary.id);
@@ -48,19 +48,23 @@ async function createMcpConfigListResult(mcpHost: McpHost): Promise<Record<strin
 	return {
 		customMcpServers: servers,
 		mcpServers: servers,
-		connectedServerIds: mcpHost.getConnectedServerIds()
+		connectedServerIds: mcpHost.getConnectedServerIds(workspaceId)
 	};
 }
 
-function refreshCustomMcpServersAndNotify(socket: WebSocket, mcpHost: McpHost): void {
+function refreshCustomMcpServersAndNotify(socket: WebSocket, mcpHost: McpHost, workspaceId?: string | undefined): void {
 	void (async (): Promise<void> => {
 		try {
-			await mcpHost.refreshCustomServersForActiveWorkspace();
+			if (workspaceId !== undefined) {
+				await mcpHost.refreshCustomServersForWorkspace(workspaceId);
+			} else {
+				await mcpHost.refreshCustomServersForActiveWorkspace();
+			}
 			sendJson(socket, {
 				type: "event",
 				id: "mcp-config",
 				event: "mcp.config.updated",
-				data: await createMcpConfigListResult(mcpHost)
+				data: await createMcpConfigListResult(mcpHost, workspaceId)
 			});
 		} catch (error: unknown) {
 			console.warn("Failed to refresh custom MCP servers:", error instanceof Error ? error.message : error);
@@ -69,7 +73,7 @@ function refreshCustomMcpServersAndNotify(socket: WebSocket, mcpHost: McpHost): 
 				id: "mcp-config",
 				event: "mcp.config.updated",
 				data: {
-					...await createMcpConfigListResult(mcpHost),
+					...await createMcpConfigListResult(mcpHost, workspaceId),
 					error: error instanceof Error ? error.message : "Failed to refresh custom MCP servers"
 				}
 			});
@@ -78,13 +82,14 @@ function refreshCustomMcpServersAndNotify(socket: WebSocket, mcpHost: McpHost): 
 }
 
 
-export async function handleMcpRequest(socket: WebSocket, request: ClientRequest, _session: ClientSession, mcpHost: McpHost): Promise<void> {
+export async function handleMcpRequest(socket: WebSocket, request: ClientRequest, session: ClientSession, mcpHost: McpHost): Promise<void> {
+	const workspaceId: string | undefined = session.activeWorkspace?.id;
 	switch (request.method) {
 	case "mcp.listTools": {
 		const serverId: string = request.params?.serverId ?? "godot";
 
 		try {
-			const result = await mcpHost.listTools(serverId);
+			const result = await mcpHost.listTools(serverId, workspaceId);
 			sendJson(socket, {
 				type: "response",
 				id: request.id,
@@ -122,7 +127,7 @@ export async function handleMcpRequest(socket: WebSocket, request: ClientRequest
 				break;
 			}
 
-			const result = await mcpHost.callTool(serverId, request.params.name, request.params.args ?? {});
+			const result = await mcpHost.callTool(serverId, request.params.name, request.params.args ?? {}, workspaceId);
 			sendJson(socket, {
 				type: "response",
 				id: request.id,
@@ -147,7 +152,7 @@ export async function handleMcpRequest(socket: WebSocket, request: ClientRequest
 		const serverId: string = request.params?.serverId ?? "godot";
 
 		try {
-			const result = await mcpHost.listResources(serverId);
+			const result = await mcpHost.listResources(serverId, workspaceId);
 			sendJson(socket, {
 				type: "response",
 				id: request.id,
@@ -172,7 +177,7 @@ export async function handleMcpRequest(socket: WebSocket, request: ClientRequest
 		const serverId: string = request.params.serverId ?? "godot";
 
 		try {
-			const result = await mcpHost.readResource(serverId, request.params.uri);
+			const result = await mcpHost.readResource(serverId, request.params.uri, workspaceId);
 			sendJson(socket, {
 				type: "response",
 				id: request.id,
@@ -199,7 +204,7 @@ export async function handleMcpRequest(socket: WebSocket, request: ClientRequest
 				type: "response",
 				id: request.id,
 				ok: true,
-				result: await createMcpConfigListResult(mcpHost)
+				result: await createMcpConfigListResult(mcpHost, workspaceId)
 			});
 		} catch (error: unknown) {
 			sendJson(socket, {
@@ -224,10 +229,10 @@ export async function handleMcpRequest(socket: WebSocket, request: ClientRequest
 				ok: true,
 				result: {
 					added: true,
-					...await createMcpConfigListResult(mcpHost)
+					...await createMcpConfigListResult(mcpHost, workspaceId)
 				}
 			});
-			refreshCustomMcpServersAndNotify(socket, mcpHost);
+			refreshCustomMcpServersAndNotify(socket, mcpHost, workspaceId);
 		} catch (error: unknown) {
 			sendJson(socket, {
 				type: "response",
@@ -252,10 +257,10 @@ export async function handleMcpRequest(socket: WebSocket, request: ClientRequest
 				result: {
 					removed,
 					serverId: request.params.serverId,
-					...await createMcpConfigListResult(mcpHost)
+					...await createMcpConfigListResult(mcpHost, workspaceId)
 				}
 			});
-			refreshCustomMcpServersAndNotify(socket, mcpHost);
+			refreshCustomMcpServersAndNotify(socket, mcpHost, workspaceId);
 		} catch (error: unknown) {
 			sendJson(socket, {
 				type: "response",
@@ -281,10 +286,10 @@ export async function handleMcpRequest(socket: WebSocket, request: ClientRequest
 					updated,
 					serverId: request.params.serverId,
 					enabled: request.params.enabled,
-					...await createMcpConfigListResult(mcpHost)
+					...await createMcpConfigListResult(mcpHost, workspaceId)
 				}
 			});
-			refreshCustomMcpServersAndNotify(socket, mcpHost);
+			refreshCustomMcpServersAndNotify(socket, mcpHost, workspaceId);
 		} catch (error: unknown) {
 			sendJson(socket, {
 				type: "response",

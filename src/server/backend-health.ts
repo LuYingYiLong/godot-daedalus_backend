@@ -18,6 +18,10 @@ export type BackendHealthResult = {
 	pid: number;
 	mode: BackendRuntimeMode;
 	port: number;
+	multiClient: {
+		enabled: boolean;
+		protocolVersion: number;
+	};
 };
 
 let cachedPackageVersion: string | null = null;
@@ -54,6 +58,10 @@ export function createBackendHealthResult(): BackendHealthResult {
 		version: getBackendPackageVersion(),
 		pid: process.pid,
 		mode: getBackendRuntimeMode(),
-		port: getBackendPortFromEnv()
+		port: getBackendPortFromEnv(),
+		multiClient: {
+			enabled: true,
+			protocolVersion: 1
+		}
 	};
 }

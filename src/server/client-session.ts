@@ -7,6 +7,7 @@ import type { SkillId } from "../skills/registry.js";
 import { getDefaultModelProfile } from "../tokens/model-profiles.js";
 import type { WorkspaceConfig } from "../workspace/types.js";
 import type { WorkflowRunState } from "../workflow/types.js";
+import type { ClientCapabilities, ClientType } from "./client-connections.js";
 
 export type PendingGuide = {
 	id: string;
@@ -48,6 +49,10 @@ export type ClientSession = {
 	approvalGateway: ApprovalGateway;
 	activeSkillId?: SkillId | undefined;
 	activeWorkspace?: WorkspaceConfig | undefined;
+	connectionId?: string | undefined;
+	clientType?: ClientType | undefined;
+	clientCapabilities?: ClientCapabilities | undefined;
+	editorInstanceId?: string | undefined;
 	sessionId?: string | undefined;
 	sessionTitle?: string | undefined;
 	summaryMessage?: ChatMessage | undefined;
@@ -61,6 +66,7 @@ export type ClientSession = {
 	eventPersistQueue: Promise<void>;
 	pendingGuides: PendingGuide[];
 	fullSessionLoadPromise?: Promise<void> | undefined;
+	activeRunRequestId?: string | undefined;
 };
 
 export function createClientSession(defaultWorkspace: WorkspaceConfig | undefined): ClientSession {

@@ -5,6 +5,7 @@ import type { ClientSession } from "../client-session.js";
 import { sendJson } from "../send-json.js";
 import { findWorkspace, loadWorkspaces } from "../../workspace/registry.js";
 import type { WorkspaceConfig } from "../../workspace/types.js";
+import { updateClientConnection } from "../client-connections.js";
 
 export async function handleWorkspaceRequest(socket: WebSocket, request: ClientRequest, session: ClientSession, mcpHost: McpHost): Promise<void> {
 	switch (request.method) {
@@ -38,7 +39,7 @@ export async function handleWorkspaceRequest(socket: WebSocket, request: ClientR
 		}
 
 		try {
-			await mcpHost.switchWorkspace(workspace);
+			await mcpHost.ensureWorkspace(workspace);
 		} catch (error: unknown) {
 			console.error("Failed to switch MCP workspace:", error);
 			sendJson(socket, {
@@ -55,6 +56,10 @@ export async function handleWorkspaceRequest(socket: WebSocket, request: ClientR
 
 		session.activeWorkspace = workspace;
 		session.godotProjectPath = workspace.rootPath;
+		updateClientConnection(socket, {
+			workspaceId: workspace.id,
+			workspaceRoot: workspace.rootPath
+		});
 
 		if (workspace.godotExecutablePath) {
 			session.godotExecutablePath = workspace.godotExecutablePath;

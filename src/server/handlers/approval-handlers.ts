@@ -161,6 +161,8 @@ import { runWorkflowPhase, createWorkflowPhasePrompt } from "../workflow/phase-r
 import { createWorkflowPendingContinuation, continueWorkflowExecution } from "../workflow/continuation.js";
 import { startWorkflowExecution } from "../workflow/executor.js";
 import { ensureProviderConfigured } from "./provider-handlers.js";
+import { findSessionWithPendingApproval } from "../client-connections.js";
+import { withMcpRequestContext } from "../../mcp/request-context.js";
 
 function createSessionInfoResult(session: ClientSession, mcpHost: McpHost, historyTokensStored: number | null = null): Record<string, unknown> {
 	return {
@@ -180,8 +182,8 @@ function createSessionInfoResult(session: ClientSession, mcpHost: McpHost, histo
 		approvalMode: session.approvalGateway.getMode(),
 		pendingApprovals: session.approvalGateway.listPending().length,
 		pendingGuides: session.pendingGuides.length,
-		mcpServers: mcpHost.getConnectedServerIds(),
-		customMcpServerStatus: mcpHost.getCustomServerStatuses(),
+		mcpServers: mcpHost.getConnectedServerIds(session.activeWorkspace?.id),
+		customMcpServerStatus: mcpHost.getCustomServerStatusesForWorkspace(session.activeWorkspace?.id),
 		godotDiagnostics: mcpHost.getDiagnosticsBridge().getCachedStatus(),
 		godotExecutablePath: session.activeWorkspace?.godotExecutablePath ?? session.godotExecutablePath ?? null,
 		godotProjectPath: getSessionProjectPath(session) || null,
@@ -229,6 +231,18 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 		break;
 
 	case "approval.approve": {
+		const ownerSession: ClientSession | undefined = session.approvalGateway.getPending(request.params.approvalId) !== undefined
+			? session
+			: findSessionWithPendingApproval(request.params.approvalId);
+		if (ownerSession !== undefined && ownerSession !== session) {
+			await withMcpRequestContext({
+				workspaceId: ownerSession.activeWorkspace?.id,
+				editorInstanceId: ownerSession.editorInstanceId
+			}, async (): Promise<void> => {
+				await handleApprovalRequest(socket, request, ownerSession, mcpHost);
+			});
+			break;
+		}
 		const abortController: AbortController = new AbortController();
 		session.activeAbortControllers.set(request.id, abortController);
 		try {
@@ -437,6 +451,18 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 	}
 
 	case "approval.reject": {
+		const ownerSession: ClientSession | undefined = session.approvalGateway.getPending(request.params.approvalId) !== undefined
+			? session
+			: findSessionWithPendingApproval(request.params.approvalId);
+		if (ownerSession !== undefined && ownerSession !== session) {
+			await withMcpRequestContext({
+				workspaceId: ownerSession.activeWorkspace?.id,
+				editorInstanceId: ownerSession.editorInstanceId
+			}, async (): Promise<void> => {
+				await handleApprovalRequest(socket, request, ownerSession, mcpHost);
+			});
+			break;
+		}
 		try {
 			const hydrated = await loadHydratedPendingApprovalStates(session);
 			const pendingState: PendingApprovalState | undefined = findPendingApprovalState(hydrated.states, request.params.approvalId);
