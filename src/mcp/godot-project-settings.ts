@@ -27,8 +27,16 @@ export function makeProjectSettingFullKey(section: string, name: string): string
 
 export function splitProjectSettingKey(fullKey: string): { section: string; name: string } {
 	const normalizedKey: string = fullKey.trim();
-	const slashIndex: number = normalizedKey.lastIndexOf("/");
-	if (slashIndex <= 0 || slashIndex === normalizedKey.length - 1) {
+	const slashIndex: number = normalizedKey.indexOf("/");
+	if (
+		normalizedKey.length === 0
+		|| slashIndex <= 0
+		|| slashIndex === normalizedKey.length - 1
+		|| normalizedKey.includes("\n")
+		|| normalizedKey.includes("\r")
+		|| /[\[\]=]/.test(normalizedKey)
+		|| !/^[A-Za-z0-9_./-]+$/.test(normalizedKey)
+	) {
 		throw new Error(`Invalid project setting key: ${fullKey}`);
 	}
 
@@ -70,24 +78,25 @@ export function getExpressionBalance(text: string): number {
 }
 
 export function normalizeProjectSettingValueExpression(valueExpression: string): string {
-	const normalizedValue: string = normalizeConfigContent(valueExpression).trim();
+	const normalizedValue: string = normalizeConfigContent(valueExpression).trimEnd();
 	if (normalizedValue.length === 0) {
 		throw new Error("valueExpression must not be empty");
 	}
 	if (normalizedValue.length > MAX_PROJECT_SETTING_VALUE_CHARS) {
-		throw new Error(`valueExpression too large: ${normalizedValue.length} chars`);
+		throw new Error(`valueExpression too large: ${normalizedValue.length} chars (max ${MAX_PROJECT_SETTING_VALUE_CHARS})`);
 	}
 
 	const valueLines: string[] = normalizedValue.split("\n");
 	if (valueLines.length > MAX_PROJECT_SETTING_VALUE_LINES) {
-		throw new Error(`valueExpression has too many lines: ${valueLines.length}`);
+		throw new Error(`valueExpression has too many lines: ${valueLines.length} (max ${MAX_PROJECT_SETTING_VALUE_LINES})`);
 	}
-	for (const line of valueLines) {
-		if (/^\s*\[.+\]\s*$/.test(line)) {
+	for (let index: number = 1; index < valueLines.length; index += 1) {
+		if (/^\s*\[[^\]]+\]\s*$/.test(valueLines[index]!)) {
 			throw new Error("valueExpression must not contain project.godot section headers");
 		}
 	}
-	if (getExpressionBalance(normalizedValue) !== 0) {
+	const balance: number = valueLines.reduce((sum: number, line: string): number => sum + getExpressionBalance(line), 0);
+	if (balance !== 0) {
 		throw new Error("valueExpression has unbalanced braces, brackets, or parentheses");
 	}
 
@@ -150,14 +159,20 @@ export function findProjectSettingEntry(document: ProjectSettingsDocument, fullK
 function findProjectSettingInsertIndex(document: ProjectSettingsDocument, section: string): number {
 	const sectionLineIndex: number | undefined = document.sectionLineIndexes.get(section);
 	if (sectionLineIndex === undefined) {
-		return document.lines.length;
+		return -1;
 	}
 
-	let insertIndex: number = sectionLineIndex + 1;
-	for (const entry of document.entries) {
-		if (entry.section === section) {
-			insertIndex = Math.max(insertIndex, entry.lineEnd + 1);
+	let nextSectionIndex: number = document.lines.length;
+	for (let index: number = sectionLineIndex + 1; index < document.lines.length; index += 1) {
+		if (/^\s*\[[^\]]+\]\s*$/.test(document.lines[index]!)) {
+			nextSectionIndex = index;
+			break;
 		}
+	}
+
+	let insertIndex: number = nextSectionIndex;
+	while (insertIndex > sectionLineIndex + 1 && document.lines[insertIndex - 1]!.trim().length === 0) {
+		insertIndex -= 1;
 	}
 
 	return insertIndex;
@@ -165,69 +180,132 @@ function findProjectSettingInsertIndex(document: ProjectSettingsDocument, sectio
 
 function createProjectSettingAssignmentLines(name: string, valueExpression: string): string[] {
 	const valueLines: string[] = valueExpression.split("\n");
-	return valueLines.map((line: string, index: number): string => index === 0 ? `${name}=${line}` : line);
+	return [`${name}=${valueLines[0] ?? ""}`, ...valueLines.slice(1)];
 }
 
 function finalizeProjectConfigContent(lines: string[]): string {
-	return `${lines.join("\n").replace(/\n+$/g, "")}\n`;
+	return `${lines.join("\n").replace(/\n*$/g, "")}\n`;
 }
 
-export function applyProjectSettingSetToContent(content: string, fullKey: string, valueExpression: string): string {
+export type ProjectSettingSetResult = {
+	content: string;
+	action: "add" | "update";
+	oldValueExpression: string | null;
+	lineStart: number | null;
+	lineEnd: number | null;
+};
+
+export type ProjectSettingUnsetResult = {
+	content: string;
+	action: "remove" | "noop";
+	oldValueExpression: string | null;
+	lineStart: number | null;
+	lineEnd: number | null;
+};
+
+function toProjectSettingsDocument(contentOrDocument: string | ProjectSettingsDocument): ProjectSettingsDocument {
+	return typeof contentOrDocument === "string" ? parseProjectSettings(contentOrDocument) : contentOrDocument;
+}
+
+export function applyProjectSettingSetToContent(contentOrDocument: string | ProjectSettingsDocument, fullKey: string, valueExpression: string): ProjectSettingSetResult {
 	const { section, name } = splitProjectSettingKey(fullKey);
 	const normalizedValue: string = normalizeProjectSettingValueExpression(valueExpression);
-	const document: ProjectSettingsDocument = parseProjectSettings(content);
+	const document: ProjectSettingsDocument = toProjectSettingsDocument(contentOrDocument);
 	const entry: ProjectSettingEntry | undefined = findProjectSettingEntry(document, fullKey);
 	const lines: string[] = [...document.lines];
 
 	if (entry !== undefined) {
-		const existingAssignmentLines: string[] = createProjectSettingAssignmentLines(entry.name, normalizedValue);
-		lines.splice(entry.lineStart, entry.lineEnd - entry.lineStart + 1, ...existingAssignmentLines);
-		return finalizeProjectConfigContent(lines);
+		const assignmentLines: string[] = createProjectSettingAssignmentLines(entry.name, normalizedValue);
+		lines.splice(entry.lineStart, entry.lineEnd - entry.lineStart + 1, ...assignmentLines);
+		return {
+			content: finalizeProjectConfigContent(lines),
+			action: "update",
+			oldValueExpression: entry.valueExpression,
+			lineStart: entry.lineStart + 1,
+			lineEnd: entry.lineEnd + 1
+		};
 	}
 
 	const assignmentLines: string[] = createProjectSettingAssignmentLines(name, normalizedValue);
-	if (!document.sectionLineIndexes.has(section)) {
-		if (lines.length > 0 && lines[lines.length - 1] !== "") {
-			lines.push("");
-		}
-		lines.push(`[${section}]`);
-		lines.push(...assignmentLines);
-		return finalizeProjectConfigContent(lines);
+	const sectionInsertIndex: number = findProjectSettingInsertIndex(document, section);
+	if (sectionInsertIndex >= 0) {
+		lines.splice(sectionInsertIndex, 0, ...assignmentLines);
+		return {
+			content: finalizeProjectConfigContent(lines),
+			action: "add",
+			oldValueExpression: null,
+			lineStart: sectionInsertIndex + 1,
+			lineEnd: sectionInsertIndex + assignmentLines.length
+		};
 	}
 
-	lines.splice(findProjectSettingInsertIndex(document, section), 0, ...assignmentLines);
-	return finalizeProjectConfigContent(lines);
+	let insertIndex: number = lines.length;
+	if (insertIndex > 0 && lines[insertIndex - 1] === "") {
+		insertIndex -= 1;
+	}
+
+	const insertedLines: string[] = [];
+	if (insertIndex > 0 && lines[insertIndex - 1]!.trim().length > 0) {
+		insertedLines.push("");
+	}
+	insertedLines.push(`[${section}]`, "", ...assignmentLines);
+	lines.splice(insertIndex, 0, ...insertedLines);
+
+	return {
+		content: finalizeProjectConfigContent(lines),
+		action: "add",
+		oldValueExpression: null,
+		lineStart: insertIndex + insertedLines.length - assignmentLines.length + 1,
+		lineEnd: insertIndex + insertedLines.length
+	};
 }
 
-export function applyProjectSettingUnsetToContent(content: string, fullKey: string): string {
-	const document: ProjectSettingsDocument = parseProjectSettings(content);
+export function applyProjectSettingUnsetToContent(contentOrDocument: string | ProjectSettingsDocument, fullKey: string): ProjectSettingUnsetResult {
+	splitProjectSettingKey(fullKey);
+	const document: ProjectSettingsDocument = toProjectSettingsDocument(contentOrDocument);
 	const entry: ProjectSettingEntry | undefined = findProjectSettingEntry(document, fullKey);
 	if (entry === undefined) {
-		return finalizeProjectConfigContent(document.lines);
+		return {
+			content: document.content,
+			action: "noop",
+			oldValueExpression: null,
+			lineStart: null,
+			lineEnd: null
+		};
 	}
 
 	const lines: string[] = [...document.lines];
 	lines.splice(entry.lineStart, entry.lineEnd - entry.lineStart + 1);
-	return finalizeProjectConfigContent(lines);
+	return {
+		content: finalizeProjectConfigContent(lines),
+		action: "remove",
+		oldValueExpression: entry.valueExpression,
+		lineStart: entry.lineStart + 1,
+		lineEnd: entry.lineEnd + 1
+	};
 }
 
 export function proposeProjectSettingSet(content: string, fullKey: string, valueExpression: string): Record<string, unknown> {
-	const nextContent: string = applyProjectSettingSetToContent(content, fullKey, valueExpression);
-	const document: ProjectSettingsDocument = parseProjectSettings(nextContent);
+	const result: ProjectSettingSetResult = applyProjectSettingSetToContent(content, fullKey, valueExpression);
+	const document: ProjectSettingsDocument = parseProjectSettings(result.content);
 	return {
 		valid: true,
 		key: fullKey,
+		action: result.action,
+		oldValueExpression: result.oldValueExpression,
 		entry: findProjectSettingEntry(document, fullKey) ?? null,
-		size: nextContent.length
+		size: result.content.length
 	};
 }
 
 export function proposeProjectSettingUnset(content: string, fullKey: string): Record<string, unknown> {
-	const nextContent: string = applyProjectSettingUnsetToContent(content, fullKey);
+	const result: ProjectSettingUnsetResult = applyProjectSettingUnsetToContent(content, fullKey);
 	return {
 		valid: true,
 		key: fullKey,
-		removed: findProjectSettingEntry(parseProjectSettings(content), fullKey) !== undefined,
-		size: nextContent.length
+		action: result.action,
+		removed: result.action === "remove",
+		oldValueExpression: result.oldValueExpression,
+		size: result.content.length
 	};
 }

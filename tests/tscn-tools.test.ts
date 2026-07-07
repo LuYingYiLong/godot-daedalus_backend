@@ -42,7 +42,8 @@ test("scene generation and node insertion preserve node structure", (): void => 
 test("script attachment rejects missing and already-scripted nodes", (): void => {
 	const withButton: string = addNodeToSceneTscn(baseScene, ".", "Button", "StartButton", {});
 	const scripted: string = attachScriptToSceneTscn(withButton, "StartButton", "res://scripts/start_button.gd");
-	assert.match(scripted, /script = ExtResource\("res:\/\/scripts\/start_button\.gd"\)/);
+	assert.match(scripted, /\[ext_resource type="Script" path="res:\/\/scripts\/start_button\.gd" id="1_script"\]/);
+	assert.match(scripted, /script = ExtResource\("1_script"\)/);
 	assert.throws(() => attachScriptToSceneTscn(scripted, "StartButton", "res://scripts/other.gd"), /already has a script/);
 	assert.throws(() => attachScriptToSceneTscn(withButton, "Missing", "res://scripts/missing.gd"), /Node not found/);
 });
