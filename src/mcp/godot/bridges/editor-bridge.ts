@@ -104,6 +104,11 @@ export class GodotEditorBridge {
 		return isSocketOpen(this.socket) && this.updatedAtMs > 0;
 	}
 
+	getActiveScenePath(): string | undefined {
+		const scenePath: unknown = this.context.activeScenePath;
+		return typeof scenePath === "string" && scenePath.trim().length > 0 ? scenePath : undefined;
+	}
+
 	async refreshFilesystem(changedPaths: string[]): Promise<unknown | null> {
 		if (!this.isOnline()) {
 			return null;

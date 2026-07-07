@@ -450,6 +450,15 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 	z.object({
 		type: z.literal("request"),
 		id: z.string(),
+		method: z.literal("fileEdit.batch.get"),
+		params: z.object({
+			sessionId: z.string().min(1),
+			batchId: z.string().min(1),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
 		method: z.literal("approval.list"),
 		params: z.object({}).optional(),
 	}),

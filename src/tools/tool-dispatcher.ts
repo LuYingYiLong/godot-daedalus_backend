@@ -4,13 +4,14 @@ import { type ApprovalGateway, type PendingApproval } from "./approval-gateway.j
 import { describeToolEvent, type ToolEventDisplay } from "./tool-event-describer.js";
 import { executeLlmToolWithIdempotency } from "./tool-idempotency.js";
 import { parseToolResultSummary, type ParsedToolResultSummary } from "./tool-result-parser.js";
+import type { FileEditBatchDraft } from "./file-edit-snapshots.js";
 
 export type ToolEvent =
 	| { type: "ai.delta"; text: string }
 	| { type: "ai.thinking.delta"; text: string }
 	| { type: "ai.thinking.done" }
 	| ({ type: "tool.call"; step: number; toolCallId: string; toolName: string; args: Record<string, unknown> } & ToolEventDisplay)
-	| ({ type: "tool.result"; step: number; toolCallId: string; toolName: string; resultChars: number; truncated: boolean; cached?: boolean } & ParsedToolResultSummary)
+	| ({ type: "tool.result"; step: number; toolCallId: string; toolName: string; resultChars: number; truncated: boolean; cached?: boolean; fileEditDraft?: FileEditBatchDraft | undefined } & ParsedToolResultSummary)
 	| { type: "tool.error"; step: number; toolCallId: string; toolName: string; message: string }
 	| ({ type: "tool.approval_required"; step: number; toolCallId: string; toolName: string; approvalId: string; reason: string; args: Record<string, unknown> } & ToolEventDisplay);
 
@@ -108,6 +109,7 @@ async function executeSingleToolCall(
 				resultChars: result.rawContentLength,
 				truncated: result.truncated,
 				cached: result.reused,
+				fileEditDraft: result.fileEditDraft,
 				...parsedSummary
 			});
 		}

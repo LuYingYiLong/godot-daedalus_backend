@@ -8,6 +8,7 @@ import type { WorkflowPhase } from "../../workflow/types.js";
 import { sendSessionEvent } from "../session-events.js";
 import { scheduleTerminalJobWakeup } from "../terminal-job-wakeup.js";
 import type { WorkflowPhaseToolStats } from "./shared-types.js";
+import { persistFileEditBatch } from "../file-edit-batches.js";
 
 export function createAgentToolEventForwarder(
 	socket: WebSocket,
@@ -52,6 +53,14 @@ export function createAgentToolEventForwarder(
 			return;
 		}
 		if (event.type === "tool.result") {
+			const { fileEditDraft, ...publicEvent } = event;
+			const fileEditBatch = persistFileEditBatch(
+				session.sessionId,
+				persistRequestId,
+				event.toolCallId,
+				event.toolName,
+				fileEditDraft
+			);
 			if (
 				event.terminalJobStatus === "running"
 				&& event.terminalJobId !== undefined
@@ -79,10 +88,11 @@ export function createAgentToolEventForwarder(
 				}
 			}
 			sendSessionEvent(socket, requestId, session, "agent.tool.result", {
-				...event,
+				...publicEvent,
 				type: "agent.tool.result",
 				runId,
-				stepRunId
+				stepRunId,
+				...(fileEditBatch === undefined ? {} : { fileEditBatch })
 			}, persistRequestId);
 			return;
 		}

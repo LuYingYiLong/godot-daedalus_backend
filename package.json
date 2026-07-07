@@ -14,6 +14,7 @@
     "docs/",
     "src/",
     "scripts/beta-smoke.ps1",
+    "scripts/llm-inline-diff-smoke.ts",
     "scripts/deepseek-tokenizer-server.py",
     "README.md"
   ],
@@ -28,6 +29,8 @@
     "check": "npm test && npm run pack:check",
     "pack:check": "npm pack --dry-run",
     "smoke:beta": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/beta-smoke.ps1",
+    "smoke:llm": "tsx scripts/llm-inline-diff-smoke.ts",
+    "dev:llm": "tsx scripts/llm-inline-diff-smoke.ts use_llm",
     "prepublishOnly": "npm test",
     "prepare": "husky",
     "commitlint": "commitlint --from=HEAD~10"

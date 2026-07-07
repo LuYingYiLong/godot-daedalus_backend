@@ -1,6 +1,7 @@
 import type { McpHost } from "../mcp/mcp-host.js";
 import { evaluateToolCall, type ApprovalDecision, type ApprovalMode } from "./tool-policy.js";
 import { executeLlmToolWithIdempotency, getLlmToolExecutionIdentity } from "./tool-idempotency.js";
+import type { FileEditBatchDraft } from "./file-edit-snapshots.js";
 
 export type PendingApproval = {
 	approvalId: string;
@@ -14,7 +15,7 @@ export type PendingApproval = {
 };
 
 export type ApprovalResult =
-	| { status: "executed"; content: string; cached?: boolean | undefined }
+	| { status: "executed"; content: string; cached?: boolean | undefined; fileEditDraft?: FileEditBatchDraft | undefined }
 	| { status: "pending"; approval: PendingApproval }
 	| { status: "denied"; reason: string };
 
@@ -103,7 +104,7 @@ export class ApprovalGateway {
 		return pending;
 	}
 
-	async approve(approvalId: string, mcpHost: McpHost): Promise<{ content: string; cached?: boolean | undefined }> {
+	async approve(approvalId: string, mcpHost: McpHost): Promise<{ content: string; cached?: boolean | undefined; fileEditDraft?: FileEditBatchDraft | undefined }> {
 		const pending: PendingApproval | undefined = this.pendingApprovals.get(approvalId);
 
 		if (!pending) {
@@ -112,7 +113,7 @@ export class ApprovalGateway {
 
 		const result = await executeLlmToolWithIdempotency(mcpHost, pending.llmToolName, pending.args);
 		this.pendingApprovals.delete(approvalId);
-		return { content: result.content, cached: result.reused };
+		return { content: result.content, cached: result.reused, fileEditDraft: result.fileEditDraft };
 	}
 
 	reject(approvalId: string): PendingApproval {

@@ -137,6 +137,8 @@ Useful scripts:
 - `npm run ping`: run the local ping client.
 - `npm run pack:check`: inspect the npm package contents without publishing.
 - `npm run smoke:beta`: start the backend and run the Windows/Godot public Beta smoke checks.
+- `npm run smoke:llm -- use_llm model_id=deepseek-v4-pro`: start a temporary backend, run one real provider Agent write against a timestamped smoke file, auto-approve only that smoke write, and verify the persisted inline diff batch.
+- `npm run dev:llm -- model_id=deepseek-v4-pro`: development shortcut for the same real LLM inline diff smoke.
 
 Public Beta release readiness is tracked in [`docs/beta-release-checklist.md`](docs/beta-release-checklist.md). The checklist covers Windows CI, Godot headless checks, real provider manual validation, frontend package rules, rollback, and security regression checks.
 
@@ -146,6 +148,8 @@ The npm package uses the `files` whitelist in `package.json`. Runtime users rece
 
 - `bin/`
 - `src/`
+- `scripts/beta-smoke.ps1`
+- `scripts/llm-inline-diff-smoke.ts`
 - `scripts/deepseek-tokenizer-server.py`
 - `README.md`
 - `package.json`
@@ -158,6 +162,8 @@ Before publishing:
 npm test
 npm run check
 npm run smoke:beta
+# Optional paid/network validation before a public Beta:
+npm run smoke:llm -- use_llm provider=deepseek model_id=deepseek-v4-pro
 npm publish --dry-run
 npm publish
 ```

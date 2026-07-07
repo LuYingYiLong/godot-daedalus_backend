@@ -6,6 +6,7 @@ import type { McpHost } from "../mcp/mcp-host.js";
 import { MAX_TOOL_RESULT_CHARS } from "./llm-tool-budget.js";
 import { resolveToolMapping } from "./tool-mapping.js";
 import { getToolPolicy } from "./tool-policy.js";
+import { captureFileEditBatchDraft, type FileEditBatchDraft } from "./file-edit-snapshots.js";
 
 const TOOL_EXECUTION_DEDUP_TTL_MS: number = 30 * 60 * 1000;
 const MAX_COMPLETED_TOOL_EXECUTIONS: number = 500;
@@ -34,6 +35,7 @@ export type IdempotentToolExecutionResult = {
 	truncated: boolean;
 	reused: boolean;
 	fingerprint?: string | undefined;
+	fileEditDraft?: FileEditBatchDraft | undefined;
 };
 
 type ToolExecutionIdentity = {
@@ -309,7 +311,12 @@ export async function executeLlmToolWithIdempotency(
 	const identity: ToolExecutionIdentity | undefined = getLlmToolExecutionIdentity(llmToolName, args, getMcpExecutionScope(mcpHost));
 	if (identity === undefined) {
 		const mapping = resolveToolMapping(llmToolName);
-		const result: IdempotentToolExecutionResult = await executeMappedTool(mcpHost, mapping.serverId, mapping.toolName, args);
+		const result: IdempotentToolExecutionResult = await captureFileEditBatchDraft(
+			mcpHost,
+			llmToolName,
+			args,
+			(): Promise<IdempotentToolExecutionResult> => executeMappedTool(mcpHost, mapping.serverId, mapping.toolName, args)
+		);
 		refreshEditorFilesystemAfterGodotMutation(mcpHost, llmToolName, args);
 		return result;
 	}
@@ -337,12 +344,17 @@ export async function executeLlmToolWithIdempotency(
 	}
 
 	const executionPromise: Promise<IdempotentToolExecutionResult> = (async (): Promise<IdempotentToolExecutionResult> => {
-		const result: IdempotentToolExecutionResult = await executeMappedTool(
+		const result: IdempotentToolExecutionResult = await captureFileEditBatchDraft(
 			mcpHost,
-			identity.serverId,
-			identity.toolName,
+			llmToolName,
 			args,
-			identity.fingerprint
+			(): Promise<IdempotentToolExecutionResult> => executeMappedTool(
+				mcpHost,
+				identity.serverId,
+				identity.toolName,
+				args,
+				identity.fingerprint
+			)
 		);
 		refreshEditorFilesystemAfterGodotMutation(mcpHost, llmToolName, args);
 		const createdAt: string = new Date().toISOString();

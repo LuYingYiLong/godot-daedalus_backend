@@ -155,6 +155,7 @@ import {
 	sendContinuedAgentResult
 } from "../approval-continuation.js";
 import { createAgentToolEventForwarder, createEmptyWorkflowPhaseToolStats, updateWorkflowPhaseToolStats, shouldRequireWorkflowWriteTool, didWorkflowWritePhaseExecute, isWorkflowProposalPhase, createWorkflowWriteGuardRetryMessage } from "../workflow/tool-events.js";
+import { persistFileEditBatch } from "../file-edit-batches.js";
 import { sendWorkflowEvent, mapWorkflowEventToAgentEvent, convertWorkflowSnapshotToAgentSnapshot, sendWorkflowTodoSnapshot } from "../workflow/events.js";
 import { runWorkflowPhase, createWorkflowPhasePrompt } from "../workflow/phase-runner.js";
 import { createWorkflowPendingContinuation, continueWorkflowExecution } from "../workflow/continuation.js";
@@ -294,6 +295,7 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 				});
 			}
 
+			const { fileEditDraft: _fileEditDraft, ...publicApprovalResult } = result;
 			sendJson(socket, {
 				type: "response",
 				id: request.id,
@@ -301,19 +303,27 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 				result: {
 					approved: true,
 					approvalId: request.params.approvalId,
-					result,
+					result: publicApprovalResult,
 					continued: pendingContinuation !== undefined
 				}
 			});
 			const continuationRunId: string = pendingContinuation?.workflowState?.plan.id ?? pendingContinuation?.requestId ?? request.id;
 			const continuationStepRunId: string = pendingContinuation?.workflowState?.activePhaseRunId ?? pendingContinuation?.requestId ?? request.id;
+			const resultPersistRequestId: string = pendingContinuation?.requestId ?? request.id;
+			const fileEditBatch = persistFileEditBatch(
+				session.sessionId,
+				resultPersistRequestId,
+				pending.toolCallId,
+				pending.llmToolName,
+				result.fileEditDraft
+			);
 			sendSessionEvent(socket, request.id, session, "agent.tool.approved", {
 				type: "agent.tool.approved",
 				runId: continuationRunId,
 				stepRunId: continuationStepRunId,
 				approvalId: request.params.approvalId,
 				toolName: pending.llmToolName
-			}, pendingContinuation?.requestId ?? request.id);
+			}, resultPersistRequestId);
 			sendSessionEvent(socket, request.id, session, "agent.tool.result", {
 				type: "agent.tool.result",
 				runId: continuationRunId,
@@ -324,8 +334,9 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 				resultChars: result.content.length,
 				truncated: false,
 				cached: result.cached === true,
-				...approvedToolObservation.parsedResult
-			}, pendingContinuation?.requestId ?? request.id);
+				...approvedToolObservation.parsedResult,
+				...(fileEditBatch === undefined ? {} : { fileEditBatch })
+			}, resultPersistRequestId);
 
 			if (pendingContinuation === undefined) {
 				session.messages.push({

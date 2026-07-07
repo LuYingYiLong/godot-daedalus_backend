@@ -20,6 +20,19 @@ $env:GODOT_PROJECT_PATH = "D:\GodotProjects\example"
 $env:GODOT_DAEDALUS_PLUGIN_DIR = "D:\GodotProjects\example\addons\godot_daedalus"
 ```
 
+真实 provider 写文件和 inline diff 快照可用单独 smoke 覆盖。它会真实调用 LLM、真实写入一个带时间戳的 `scripts/daedalus_inline_diff_smoke_*.gd` 文件，并且只自动批准该 smoke 文件相关写入：
+
+```powershell
+$env:DAEDALUS_DEEPSEEK_API_KEY = "<your key>" # 可选；已在 keytar 配好时不用传
+npm run smoke:llm -- use_llm provider=deepseek model_id=deepseek-v4-pro project=D:\GodotProjects\example
+```
+
+开发时也可以用快捷入口：
+
+```powershell
+npm run dev:llm -- model_id=deepseek-v4-pro
+```
+
 ## 手动验收
 
 - 从干净 `%APPDATA%\.godot_daedalus` 启动 Godot，启用 `GodotDaedalus` 插件。
@@ -29,6 +42,7 @@ $env:GODOT_DAEDALUS_PLUGIN_DIR = "D:\GodotProjects\example\addons\godot_daedalus
 - 在 Agent 模式执行一次只读项目查询，确认工具结果可读。
 - 触发一次写操作审批，分别验证 Approve 和 Reject；Reject 不得写入项目。
 - 对测试场景执行一次场景修改或脚本写入，随后运行 Godot check-only 或 LSP diagnostics。
+- 对 `smoke:llm` 生成的测试文件打开会话，确认 assistant 消息底部出现 inline diff；点击 Undo 后文件恢复，并确认 Godot Undo/Redo 栈表现正常。
 - 重启 Godot 和 backend，确认 session、pending approval、provider 状态不会异常丢失。
 - Stage 一个前端插件更新包，验证 apply-wait 在 Godot 关闭后成功应用；再验证 frontend rollback。
 - 模拟 backend 端口被非 Daedalus 服务占用，确认插件/manager 展示可读错误和建议。
