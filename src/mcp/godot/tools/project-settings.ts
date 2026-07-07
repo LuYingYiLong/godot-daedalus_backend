@@ -1,8 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as fs from "node:fs/promises";
 import { z } from "zod";
-import { applyProjectSettingSetToContent, applyProjectSettingUnsetToContent, findProjectSettingEntry, normalizeProjectSettingValueExpression, parseProjectSettings, type ProjectSettingEntry, type ProjectSettingsDocument } from "../godot-project-settings.js";
-import { asJsonTextResult, getProjectConfigPath, readProjectSettingsDocument } from "./context.js";
+import { applyProjectSettingSetToContent, applyProjectSettingUnsetToContent, findProjectSettingEntry, normalizeProjectSettingValueExpression, parseProjectSettings, type ProjectSettingEntry, type ProjectSettingsDocument } from "./project-settings-document.js";
+import { asJsonTextResult, getProjectConfigPath, readProjectSettingsDocument } from "../context.js";
 
 const MAX_PROJECT_SETTINGS_RESULT: number = 500;
 

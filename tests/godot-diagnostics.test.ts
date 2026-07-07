@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { ContentLengthMessageParser, encodeContentLengthMessage } from "../src/mcp/content-length-protocol.js";
-import { GodotDiagnosticsBridge } from "../src/mcp/godot-diagnostics-bridge.js";
+import { GodotDiagnosticsBridge } from "../src/mcp/godot/bridges/diagnostics-bridge.js";
 import type { WorkspaceConfig } from "../src/workspace/types.js";
 
 type FakeLspServer = {

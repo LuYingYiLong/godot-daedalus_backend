@@ -3,7 +3,7 @@ import type { Dirent } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { z } from "zod";
-import { asJsonTextResult, getGodotUserDataDir, getProjectNameForUserData, isPathInsideRoot, parseProjectSettingBoolean, parseProjectSettingInteger, parseProjectSettingString, readProjectConfig, redactOnePath, redactSensitivePaths, resolveGodotPath, type ResolvedGodotPath } from "./context.js";
+import { asJsonTextResult, getGodotUserDataDir, getProjectNameForUserData, isPathInsideRoot, parseProjectSettingBoolean, parseProjectSettingInteger, parseProjectSettingString, readProjectConfig, redactOnePath, redactSensitivePaths, resolveGodotPath, type ResolvedGodotPath } from "../context.js";
 
 const MAX_PROJECT_LOG_BYTES: number = 256 * 1024;
 const DEFAULT_PROJECT_LOG_LINES: number = 200;

@@ -1,7 +1,7 @@
 import { buildMcpServerConfigs } from "./mcp-config.js";
 import { buildCustomMcpServerConfigs } from "./custom-mcp-config-store.js";
-import { GODOT_DIAGNOSTICS_SERVER_ID, GodotDiagnosticsBridge } from "./godot-diagnostics-bridge.js";
-import { GODOT_EDITOR_SERVER_ID, GodotEditorBridge } from "./godot-editor-bridge.js";
+import { GODOT_DIAGNOSTICS_SERVER_ID, GodotDiagnosticsBridge } from "./godot/bridges/diagnostics-bridge.js";
+import { GODOT_EDITOR_SERVER_ID, GodotEditorBridge } from "./godot/bridges/editor-bridge.js";
 import { McpSession } from "./mcp-session.js";
 import type { McpServerConfig } from "./types.js";
 import { findWorkspace, getDefaultWorkspace } from "../workspace/registry.js";

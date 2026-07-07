@@ -9,7 +9,7 @@ import {
 	proposeProjectSettingSet,
 	proposeProjectSettingUnset,
 	splitProjectSettingKey
-} from "../src/mcp/godot-project-settings.js";
+} from "../src/mcp/godot/tools/project-settings-document.js";
 
 const projectConfig: string = [
 	"[application]",

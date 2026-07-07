@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { GODOT_MCP_RESOURCE_NAMES, GODOT_MCP_TOOL_NAMES } from "../src/mcp/godot-tool-registration.js";
+import { GODOT_MCP_RESOURCE_NAMES, GODOT_MCP_TOOL_NAMES } from "../src/mcp/godot/tools/tool-registration.js";
 
 type FakeMcpServer = {
 	toolNames: string[];

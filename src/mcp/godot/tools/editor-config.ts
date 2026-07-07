@@ -3,8 +3,8 @@ import type { Dirent } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { z } from "zod";
-import { findProjectSettingEntry, parseProjectSettings, type ProjectSettingEntry, type ProjectSettingsDocument } from "../godot-project-settings.js";
-import { asJsonTextResult, getGodotConfigDir, getProjectEditorDir, isCurrentProjectPath, isPathInsideRoot, normalizeDisplayPath, parseProjectFeatureVersion, parseProjectSettingBoolean, parseProjectSettingString, projectRoot, readProjectConfig, redactOnePath, redactSensitivePaths, resolveProjectPath } from "./context.js";
+import { findProjectSettingEntry, parseProjectSettings, type ProjectSettingEntry, type ProjectSettingsDocument } from "./project-settings-document.js";
+import { asJsonTextResult, getGodotConfigDir, getProjectEditorDir, isCurrentProjectPath, isPathInsideRoot, normalizeDisplayPath, parseProjectFeatureVersion, parseProjectSettingBoolean, parseProjectSettingString, projectRoot, readProjectConfig, redactOnePath, redactSensitivePaths, resolveProjectPath } from "../context.js";
 
 const MAX_EDITOR_CONFIG_FILE_BYTES: number = 256 * 1024;
 const MAX_EDITOR_CONFIG_FILES: number = 500;

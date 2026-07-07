@@ -2,8 +2,8 @@ import * as fs from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { ContentLengthMessageParser, encodeContentLengthMessage } from "./content-length-protocol.js";
-import type { WorkspaceConfig } from "../workspace/types.js";
+import { ContentLengthMessageParser, encodeContentLengthMessage } from "../../content-length-protocol.js";
+import type { WorkspaceConfig } from "../../../workspace/types.js";
 
 export const GODOT_DIAGNOSTICS_SERVER_ID: string = "godot_diagnostics";
 

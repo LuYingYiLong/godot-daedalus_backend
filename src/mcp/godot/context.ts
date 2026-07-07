@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { parseProjectSettings, type ProjectSettingsDocument } from "../godot-project-settings.js";
-import { WRITABLE_EXTENSIONS } from "../godot-paths.js";
+import { parseProjectSettings, type ProjectSettingsDocument } from "./tools/project-settings-document.js";
+import { WRITABLE_EXTENSIONS } from "./tools/paths.js";
 
 export type ProjectSummary = {
 	path: string;

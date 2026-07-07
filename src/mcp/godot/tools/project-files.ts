@@ -3,8 +3,8 @@ import type { Dirent } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { z } from "zod";
-import { validateTscnContent } from "../tscn-tools.js";
-import { asJsonTextResult, asTextResult, assertWritablePath, parseProjectFeatureVersion, parseProjectSettingString, projectRoot, readProjectConfig, resolveProjectPath, toProjectRelativePath, type ProjectSummary } from "./context.js";
+import { validateTscnContent } from "./tscn-tools.js";
+import { asJsonTextResult, asTextResult, assertWritablePath, parseProjectFeatureVersion, parseProjectSettingString, projectRoot, readProjectConfig, resolveProjectPath, toProjectRelativePath, type ProjectSummary } from "../context.js";
 
 const MAX_TEXT_FILE_BYTES: number = 512 * 1024;
 const MAX_NEW_FILE_BYTES: number = 64 * 1024;

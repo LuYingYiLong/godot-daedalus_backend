@@ -18,8 +18,8 @@ import {
 	type ScenePatchOperation,
 	type TscnData,
 	type TscnExtResource
-} from "../tscn-tools.js";
-import { asJsonTextResult, resolveGodotResourceProjectPath, resolveProjectPath } from "./context.js";
+} from "./tscn-tools.js";
+import { asJsonTextResult, resolveGodotResourceProjectPath, resolveProjectPath } from "../context.js";
 import { createTextFile, validateNewTextFile } from "./project-files.js";
 
 async function collectSceneScriptContents(data: TscnData): Promise<Record<string, string>> {
