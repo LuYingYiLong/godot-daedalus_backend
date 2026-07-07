@@ -18,6 +18,7 @@ import {
 } from "./session-events.js";
 import { registerClientConnection, unregisterClientConnection } from "./client-connections.js";
 import { withMcpRequestContext } from "../mcp/request-context.js";
+import { logger } from "../logger.js";
 
 function sendProtocolError(socket: WebSocket, code: string, message: string, requestId: string = ""): void {
 	sendJson(socket, {
@@ -37,12 +38,21 @@ function parseClientRequest(socket: WebSocket, data: WebSocket.RawData, isBinary
 	try {
 		parsedMessage = parseMessage(data, isBinary);
 	} catch (error: unknown) {
+		logger.warn("rpc", "parse_failed", {
+			code: "parse_error",
+			message: error instanceof Error ? error.message : "Invalid message",
+			isBinary
+		});
 		sendProtocolError(socket, "parse_error", error instanceof Error ? error.message : "Invalid message");
 		return null;
 	}
 
 	const validationResult = clientRequestSchema.safeParse(parsedMessage);
 	if (!validationResult.success) {
+		logger.warn("rpc", "invalid_request", {
+			code: "invalid_request",
+			issues: validationResult.error.issues
+		});
 		sendProtocolError(socket, "invalid_request", validationResult.error.message);
 		return null;
 	}
@@ -51,7 +61,10 @@ function parseClientRequest(socket: WebSocket, data: WebSocket.RawData, isBinary
 }
 
 function sendUnhandledRequestError(socket: WebSocket, request: ClientRequest, error: unknown): void {
-	console.error("Unhandled request error:", error);
+	logger.error("rpc", "unhandled_request_error", error, {
+		requestId: request.id,
+		method: request.method
+	});
 	sendProtocolError(
 		socket,
 		"internal_error",
@@ -103,12 +116,14 @@ async function saveSessionOnDisconnect(session: ClientSession): Promise<void> {
 
 function scheduleSessionSaveOnDisconnect(session: ClientSession): void {
 	void saveSessionOnDisconnect(session).catch((error: unknown): void => {
-		console.error("Failed to auto-save session on disconnect:", error);
+		logger.error("session", "disconnect_save_failed", error, {
+			sessionId: session.sessionId
+		});
 	});
 }
 
 function handleSocketError(error: Error): void {
-	console.error("WebSocket error:", error);
+	logger.error("websocket", "socket_error", error);
 }
 
 function handleServerHeaders(headers: string[]): void {
@@ -116,11 +131,13 @@ function handleServerHeaders(headers: string[]): void {
 }
 
 function handleServerListening(port: number): void {
-	console.log(`WebSocket server listening on ws://localhost:${port}`);
+	logger.info("websocket", "listening", {
+		port
+	}, `WebSocket server listening on ws://localhost:${port}`);
 }
 
 function handleServerError(error: Error): void {
-	console.error("WebSocket server error:", error);
+	logger.error("websocket", "server_error", error);
 }
 
 function handleSocketMessage(
@@ -135,17 +152,44 @@ function handleSocketMessage(
 		return;
 	}
 	if (!beginRequestExecution(socket, requestData, session)) {
+		logger.debug("rpc", "duplicate_request_ignored", {
+			requestId: requestData.id,
+			method: requestData.method,
+			sessionId: session.sessionId,
+			workspaceId: session.activeWorkspace?.id
+		});
 		return;
 	}
 
+	const startedAtMs: number = Date.now();
+	logger.debug("rpc", "request_started", {
+		requestId: requestData.id,
+		method: requestData.method,
+		sessionId: session.sessionId,
+		workspaceId: session.activeWorkspace?.id,
+		editorInstanceId: session.editorInstanceId,
+		clientType: session.clientType
+	});
+	let failed: boolean = false;
 	withMcpRequestContext({
 		workspaceId: session.activeWorkspace?.id,
 		editorInstanceId: session.editorInstanceId
 	}, async (): Promise<void> => {
 		await dispatchRequest(socket, requestData, session, mcpHost);
 	}).catch((error: unknown): void => {
+		failed = true;
 		sendUnhandledRequestError(socket, requestData, error);
 	}).finally((): void => {
+		logger.info("rpc", "request_finished", {
+			requestId: requestData.id,
+			method: requestData.method,
+			sessionId: session.sessionId,
+			workspaceId: session.activeWorkspace?.id,
+			editorInstanceId: session.editorInstanceId,
+			clientType: session.clientType,
+			durationMs: Date.now() - startedAtMs,
+			failed
+		});
 		finishRequestExecution(requestData, session);
 	});
 }
@@ -155,7 +199,12 @@ function handleSocketClose(socket: WebSocket, session: ClientSession, mcpHost: M
 	unregisterClientConnection(socket);
 	abortActiveRequests(session);
 	scheduleSessionSaveOnDisconnect(session);
-	console.log(`Client disconnected: ${remoteAddress}`);
+	logger.info("websocket", "client_disconnected", {
+		remoteAddress,
+		sessionId: session.sessionId,
+		workspaceId: session.activeWorkspace?.id,
+		clientType: session.clientType
+	});
 }
 
 function attachSocketHandlers(socket: WebSocket, session: ClientSession, mcpHost: McpHost, remoteAddress: string): void {
@@ -171,7 +220,9 @@ function attachSocketHandlers(socket: WebSocket, session: ClientSession, mcpHost
 function handleConnection(socket: WebSocket, request: Parameters<WebSocketServer["emit"]>[1], mcpHost: McpHost): void {
 	const session: ClientSession = createSessionForConnection();
 	const remoteAddress: string = getRemoteAddress(request);
-	console.log(`Client connected: ${remoteAddress}`);
+	logger.info("websocket", "client_connected", {
+		remoteAddress
+	});
 
 	registerClientConnection(socket, session);
 	attachEditorBridgeSocket(socket, mcpHost);

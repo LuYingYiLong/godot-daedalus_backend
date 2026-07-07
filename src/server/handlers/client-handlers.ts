@@ -9,6 +9,7 @@ import {
 	type ClientCapabilities,
 	type ClientType
 } from "../client-connections.js";
+import { logger } from "../../logger.js";
 
 function readClientType(value: unknown): ClientType {
 	return value === "godot_plugin" || value === "studio" || value === "cli" || value === "smoke"
@@ -42,6 +43,16 @@ export async function handleClientRequest(socket: WebSocket, request: ClientRequ
 				workspaceRoot: params.workspaceRoot,
 				editorInstanceId: params.editorInstanceId,
 				capabilities: readCapabilities(params.capabilities)
+			});
+			logger.info("client", "hello", {
+				connectionId: info.connectionId,
+				clientType: info.clientType,
+				clientName: info.clientName,
+				workspaceId: info.workspaceId,
+				workspaceRoot: info.workspaceRoot,
+				editorInstanceId: info.editorInstanceId,
+				capabilities: info.capabilities,
+				sessionId: session.sessionId
 			});
 			sendJson(socket, {
 				type: "response",

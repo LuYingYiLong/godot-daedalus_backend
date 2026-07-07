@@ -167,6 +167,7 @@ import { createWorkflowPendingContinuation, continueWorkflowExecution } from "./
 import { startWorkflowExecution } from "./workflow/executor.js";
 import { ensureProviderConfigured } from "./handlers/provider-handlers.js";
 import { beginSessionRun, finishSessionRun } from "./client-connections.js";
+import { logger } from "../logger.js";
 
 function createSessionInfoResult(session: ClientSession, mcpHost: McpHost, historyTokensStored: number | null = null): Record<string, unknown> {
 	return {
@@ -243,6 +244,12 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 			const apiKey: string | undefined = await ensureProviderConfigured(session);
 
 			if (!apiKey) {
+				logger.warn("ai", "provider_not_configured", {
+					requestId: request.id,
+					sessionId: session.sessionId,
+					workspaceId: session.activeWorkspace?.id,
+					provider: session.activeProvider
+				});
 				sendJson(socket, {
 					type: "response",
 					id: request.id,
@@ -258,6 +265,12 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 			const sessionRun = beginSessionRun(session.sessionId, request.id);
 			if (session.activeRunRequestId !== undefined || !sessionRun.ok) {
 				const activeRequestId: string = session.activeRunRequestId ?? (sessionRun.ok ? request.id : sessionRun.activeRequestId);
+				logger.warn("ai", "session_busy", {
+					requestId: request.id,
+					sessionId: session.sessionId,
+					workspaceId: session.activeWorkspace?.id,
+					activeRequestId
+				});
 				sendSessionEvent(socket, request.id, session, "session.run.busy", {
 					sessionId: session.sessionId ?? null,
 					activeRequestId,
@@ -278,10 +291,24 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 			const abortController: AbortController = new AbortController();
 			session.activeAbortControllers.set(request.id, abortController);
 			session.activeRunRequestId = request.id;
+			const runStartedAtMs: number = Date.now();
 
 			try {
 				const turnStartedAt: string = new Date().toISOString();
 				const options: ProviderChatOptions = createProviderChatOptions(session, apiKey);
+				logger.info("ai", "chat_started", {
+					requestId: request.id,
+					sessionId: session.sessionId,
+					workspaceId: session.activeWorkspace?.id,
+					editorInstanceId: session.editorInstanceId,
+					provider: options.provider,
+					model: resolveChatModel(options),
+					mode: params.mode,
+					messageChars: params.message.length,
+					additionalContextCount: params.additionalContext?.length ?? 0,
+					hasImages: hasImageAttachments(params),
+					retryFromRequestId: params.retryFromRequestId
+				});
 				const requestHasImages: boolean = hasImageAttachments(params);
 				if (requestHasImages) {
 					getImageAttachments(params.additionalContext);
@@ -388,6 +415,14 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				if (workflowPlan === null) {
 					workflowPlan = createSingleAnswerPlan(params, allowedToolNames);
 				}
+				logger.info("ai", "workflow_planned", {
+					requestId: request.id,
+					sessionId: session.sessionId,
+					workflowPhaseCount: workflowPlan.phases.length,
+					historyMessages: history.length,
+					historyBudgetTokens,
+					allowedToolCount: allowedToolNames?.length ?? null
+				});
 
 				await startWorkflowExecution(
 					socket,
@@ -404,13 +439,31 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 					guidePromptSection,
 					abortController.signal
 				);
+				logger.info("ai", "chat_finished", {
+					requestId: request.id,
+					sessionId: session.sessionId,
+					workspaceId: session.activeWorkspace?.id,
+					durationMs: Date.now() - runStartedAtMs
+				});
 				break;
 			} catch (error: unknown) {
 				if (isCancellationError(error, abortController.signal)) {
+					logger.warn("ai", "chat_cancelled", {
+						requestId: request.id,
+						sessionId: session.sessionId,
+						workspaceId: session.activeWorkspace?.id,
+						durationMs: Date.now() - runStartedAtMs
+					});
 					sendAgentCancelled(socket, request.id, session);
 					break;
 				}
 				if (error instanceof ProviderImageInputError) {
+					logger.warn("ai", "image_input_rejected", {
+						requestId: request.id,
+						sessionId: session.sessionId,
+						code: error.code,
+						message: error.message
+					});
 					sendJson(socket, {
 						type: "response",
 						id: request.id,
@@ -423,6 +476,13 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 					break;
 				}
 				const providerError = classifyProviderError(error);
+				logger.error("ai", "chat_failed", error, {
+					requestId: request.id,
+					sessionId: session.sessionId,
+					workspaceId: session.activeWorkspace?.id,
+					code: providerError.code,
+					durationMs: Date.now() - runStartedAtMs
+				});
 				sendSessionEvent(socket, request.id, session, "agent.run.error", {
 					runId: request.id,
 					code: providerError.code,

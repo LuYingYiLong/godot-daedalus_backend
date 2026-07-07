@@ -7,6 +7,7 @@ import {
 } from "../session/session-store.js";
 import type { ClientSession } from "./client-session.js";
 import { hydratePendingGuides } from "./pending-guides.js";
+import { logger } from "../logger.js";
 
 const DEFAULT_SESSION_OPEN_MESSAGE_LIMIT: number = 80;
 const MAX_SESSION_OPEN_MESSAGE_LIMIT: number = 500;
@@ -140,7 +141,9 @@ export function startFullSessionLoad(session: ClientSession, sessionId: string):
 			session.messages = stored.messages.map(toChatMessage);
 			session.pendingGuides = hydratePendingGuides(stored.events);
 		} catch (error: unknown) {
-			console.error(`[session] Failed to load complete history for ${sessionId}:`, error);
+			logger.error("session", "full_history_load_failed", error, {
+				sessionId
+			});
 		}
 	})();
 

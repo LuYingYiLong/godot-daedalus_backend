@@ -8,6 +8,7 @@ import { getDefaultModelProfile, resolveModelProfile } from "../../tokens/model-
 import { getProviderDefaultModel } from "../../providers/provider-registry.js";
 import { clearProviderConfig, getProviderConfigStatus, loadProviderConfigWithSecret, saveProviderConfig, type ProviderConfigWithSecret } from "../../providers/provider-config-store.js";
 import { listProviderModels } from "../../providers/provider-models.js";
+import { logger } from "../../logger.js";
 
 export function applyProviderConfigToSession(session: ClientSession, config: ProviderConfigWithSecret): void {
 	session.activeProvider = config.provider;
@@ -45,6 +46,13 @@ export async function handleProviderRequest(socket: WebSocket, request: ClientRe
 		session.providerModel = request.params.model;
 		session.providerBaseUrl = request.params.baseUrl;
 		session.modelProfile = resolveModelProfile(request.params.provider, request.params.model ?? getProviderDefaultModel(request.params.provider));
+		logger.info("provider", "configured_runtime", {
+			provider: request.params.provider,
+			model: session.providerModel ?? session.modelProfile.model,
+			hasApiKey: request.params.apiKey.length > 0,
+			hasBaseUrl: request.params.baseUrl !== undefined,
+			sessionId: session.sessionId
+		});
 
 		sendJson(socket, {
 			type: "response",
@@ -92,6 +100,13 @@ export async function handleProviderRequest(socket: WebSocket, request: ClientRe
 			if (config !== null && config.apiKey !== undefined) {
 				applyProviderConfigToSession(session, config);
 			}
+			logger.info("provider", "config_saved", {
+				provider: request.params.provider,
+				model: request.params.model,
+				hasApiKey: request.params.apiKey !== undefined,
+				hasBaseUrl: request.params.baseUrl !== undefined,
+				sessionId: session.sessionId
+			});
 
 			sendJson(socket, {
 				type: "response",
@@ -100,6 +115,10 @@ export async function handleProviderRequest(socket: WebSocket, request: ClientRe
 				result: await getProviderConfigStatus()
 			});
 		} catch (error: unknown) {
+			logger.error("provider", "config_save_failed", error, {
+				provider: request.params.provider,
+				sessionId: session.sessionId
+			});
 			sendJson(socket, {
 				type: "response",
 				id: request.id,
@@ -124,6 +143,11 @@ export async function handleProviderRequest(socket: WebSocket, request: ClientRe
 				session.providerBaseUrl = undefined;
 				session.modelProfile = getDefaultModelProfile(status.activeProvider);
 			}
+			logger.info("provider", "config_cleared", {
+				provider: providerToClear ?? "all",
+				clearedActiveProvider,
+				sessionId: session.sessionId
+			});
 
 			sendJson(socket, {
 				type: "response",
@@ -132,6 +156,10 @@ export async function handleProviderRequest(socket: WebSocket, request: ClientRe
 				result: status
 			});
 		} catch (error: unknown) {
+			logger.error("provider", "config_clear_failed", error, {
+				provider: request.params?.provider,
+				sessionId: session.sessionId
+			});
 			sendJson(socket, {
 				type: "response",
 				id: request.id,
@@ -146,6 +174,7 @@ export async function handleProviderRequest(socket: WebSocket, request: ClientRe
 
 	case "provider.models.list": {
 		const provider: ProviderId = request.params?.provider ?? session.activeProvider;
+		const startedAtMs: number = Date.now();
 		try {
 			const config: ProviderConfigWithSecret | null = await loadProviderConfigWithSecret(provider);
 			const apiKey: string | undefined = provider === session.activeProvider
@@ -160,6 +189,16 @@ export async function handleProviderRequest(socket: WebSocket, request: ClientRe
 				baseUrl,
 				request.params?.refresh === true
 			);
+			logger.info("provider", "models_listed", {
+				provider,
+				refresh: request.params?.refresh === true,
+				hasApiKey: apiKey !== undefined,
+				hasBaseUrl: baseUrl !== undefined,
+				modelCount: result.models.length,
+				stale: result.stale,
+				durationMs: Date.now() - startedAtMs,
+				sessionId: session.sessionId
+			});
 			sendJson(socket, {
 				type: "response",
 				id: request.id,
@@ -167,6 +206,12 @@ export async function handleProviderRequest(socket: WebSocket, request: ClientRe
 				result
 			});
 		} catch (error: unknown) {
+			logger.error("provider", "models_list_failed", error, {
+				provider,
+				refresh: request.params?.refresh === true,
+				durationMs: Date.now() - startedAtMs,
+				sessionId: session.sessionId
+			});
 			sendJson(socket, {
 				type: "response",
 				id: request.id,

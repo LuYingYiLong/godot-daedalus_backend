@@ -8,6 +8,7 @@ import { findWorkspace, getDefaultWorkspace } from "../workspace/registry.js";
 import type { WorkspaceConfig } from "../workspace/types.js";
 import { clearDynamicMcpToolsForWorkspace, replaceDynamicMcpTools, replaceDynamicMcpToolsForWorkspace, type DynamicMcpToolSource } from "../tools/dynamic-mcp-tools.js";
 import { getCurrentMcpWorkspaceId } from "./request-context.js";
+import { logger } from "../logger.js";
 
 const CUSTOM_MCP_CONNECT_TIMEOUT_MS: number = 30_000;
 const CUSTOM_MCP_LIST_TOOLS_TIMEOUT_MS: number = 10_000;
@@ -65,13 +66,13 @@ export class McpHost {
 
 	async connectAll(): Promise<void> {
 		if (process.env.MCP_AUTO_CONNECT !== "1") {
-			console.log("MCP host is using lazy workspace startup");
+			logger.info("mcp", "lazy_workspace_startup");
 			return;
 		}
 
 		const workspace: WorkspaceConfig | undefined = getDefaultWorkspace();
 		if (!workspace) {
-			console.log("MCP host has no default workspace to connect");
+			logger.warn("mcp", "default_workspace_missing");
 			return;
 		}
 
@@ -83,7 +84,10 @@ export class McpHost {
 		this.activeWorkspaceId = workspace.id;
 		this.diagnosticsBridge.setWorkspace(workspace);
 		this.syncActiveDynamicTools();
-		console.log(`MCP active workspace: ${workspace.id} -> ${workspace.rootPath}`);
+		logger.info("mcp", "active_workspace_selected", {
+			workspaceId: workspace.id,
+			rootPath: workspace.rootPath
+		});
 	}
 
 	async ensureWorkspace(workspace: WorkspaceConfig): Promise<void> {
@@ -110,12 +114,22 @@ export class McpHost {
 						await this.cacheCustomServerTools(workspace.id, config, session);
 					}
 					sessions.set(config.id, session);
-					console.log(`MCP session connected: ${workspace.id}/${config.id}`);
+					logger.info("mcp", "session_connected", {
+						workspaceId: workspace.id,
+						serverId: config.id,
+						serverName: config.name,
+						custom: config.custom === true
+					});
 				} catch (error: unknown) {
 					if (config.custom === true) {
 						await this.closeCustomSessionQuietly(session);
 						this.setCustomServerError(workspace.id, config.id, error);
-						console.warn(`Custom MCP session failed: ${workspace.id}/${config.id}:`, error instanceof Error ? error.message : error);
+						logger.warn("mcp", "custom_session_failed", {
+							workspaceId: workspace.id,
+							serverId: config.id,
+							serverName: config.name,
+							error: error instanceof Error ? error.message : error
+						});
 						continue;
 					}
 
@@ -179,6 +193,12 @@ export class McpHost {
 		this.customServerStatuses.set(customStatusKey(workspaceId, config.id), {
 			id: config.id,
 			status: "connected",
+			toolCount: toolSources.length
+		});
+		logger.info("mcp", "custom_tools_cached", {
+			workspaceId,
+			serverId: config.id,
+			serverName: config.name,
 			toolCount: toolSources.length
 		});
 	}
@@ -264,11 +284,20 @@ export class McpHost {
 				await this.connectSession(config, session);
 				await this.cacheCustomServerTools(workspace.id, config, session);
 				sessions.set(config.id, session);
-				console.log(`Custom MCP session connected: ${workspace.id}/${config.id}`);
+				logger.info("mcp", "custom_session_connected", {
+					workspaceId: workspace.id,
+					serverId: config.id,
+					serverName: config.name
+				});
 			} catch (error: unknown) {
 				await this.closeCustomSessionQuietly(session);
 				this.setCustomServerError(workspace.id, config.id, error);
-				console.warn(`Custom MCP session failed: ${workspace.id}/${config.id}:`, error instanceof Error ? error.message : error);
+				logger.warn("mcp", "custom_session_failed", {
+					workspaceId: workspace.id,
+					serverId: config.id,
+					serverName: config.name,
+					error: error instanceof Error ? error.message : error
+				});
 			}
 		}
 

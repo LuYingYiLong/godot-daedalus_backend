@@ -25,6 +25,7 @@ import { ApprovalGateway } from "../tools/approval-gateway.js";
 import { containsDsmlToolCalls } from "./deepseek-dsml-tools.js";
 import { containsLooseToolCalls, isKnownLooseToolTagName, isPotentialLooseToolTagName, normalizeKnownToolName } from "./deepseek-loose-tools.js";
 import type { ApprovedToolResult, ChatCompletionsAgentContinuation, ProviderAgentResult } from "./agent-types.js";
+import { createToolResultLimitFallback, createToolResultLimitReason, fitToolResultContent } from "./tool-result-budget.js";
 
 const FINALIZE_AFTER_TOOL_LIMIT_PROMPT: string =
 	"工具调用阶段已经达到后端限制。请停止请求更多工具，基于目前已经获得的工具结果直接回答用户。"
@@ -46,10 +47,6 @@ type ToolCallAccumulator = {
 	name: string;
 	argumentsText: string;
 };
-
-function estimateTextChars(text: string): number {
-	return text.length;
-}
 
 function extractTextContent(content: ChatCompletionMessageParam["content"]): string {
 	if (typeof content === "string") {
@@ -522,11 +519,11 @@ async function createFinalAnswer(
 	const text: string | null | undefined = completion.choices[0]?.message.content;
 
 	if (!text) {
-		throw new Error("LLM returned empty final response after tool limit");
+		return createToolResultLimitFallback(reason);
 	}
 
 	if (containsKnownToolSyntax(text)) {
-		throw new Error(`protocol_violation: ${reason}`);
+		return createToolResultLimitFallback(reason);
 	}
 
 	return text;
@@ -663,19 +660,28 @@ async function runAgentLoop(
 			throw error;
 		}
 
+		let toolResultLimitReason: string | null = null;
 		for (const result of toolResults) {
 			const contentText: string = extractTextContent(result.content);
-			totalToolResultChars += estimateTextChars(contentText);
-			messages.push(result);
+			const budgetedResult = fitToolResultContent(contentText, totalToolResultChars);
+			totalToolResultChars += budgetedResult.chars;
+			messages.push({
+				...result,
+				content: budgetedResult.content
+			});
+			if (budgetedResult.limitReached) {
+				toolResultLimitReason = budgetedResult.reason ?? createToolResultLimitReason(totalToolResultChars);
+			}
 		}
 
-		if (totalToolResultChars >= MAX_TOTAL_TOOL_RESULT_CHARS) {
+		if (toolResultLimitReason !== null || totalToolResultChars >= MAX_TOTAL_TOOL_RESULT_CHARS) {
+			const reason: string = toolResultLimitReason ?? createToolResultLimitReason(totalToolResultChars);
 			const finalText: string = await createFinalAnswer(
 				client,
 				params,
 				options,
 				messages,
-				`工具结果总量达到 ${totalToolResultChars} 字符，上限为 ${MAX_TOTAL_TOOL_RESULT_CHARS} 字符`,
+				reason,
 				abortSignal
 			);
 			if (streamAssistant) {
@@ -775,26 +781,27 @@ export async function continueDeepSeekAgent(
 		? getToolDefinitionsForNames(allowedToolNames)
 		: getToolDefinitions();
 	const messages: ChatCompletionMessageParam[] = [...continuation.messages];
+	const budgetedResult = fitToolResultContent(approvedToolResult.content, continuation.totalToolResultChars);
 	const toolMessage: ChatCompletionToolMessageParam = {
 		role: "tool",
 		tool_call_id: approvedToolResult.toolCallId,
-		content: approvedToolResult.content
+		content: budgetedResult.content
 	};
-	const totalToolResultChars: number = continuation.totalToolResultChars + estimateTextChars(approvedToolResult.content);
+	const totalToolResultChars: number = continuation.totalToolResultChars + budgetedResult.chars;
 
 	messages.push(toolMessage);
 
-	if (totalToolResultChars >= MAX_TOTAL_TOOL_RESULT_CHARS) {
+	if (budgetedResult.limitReached || totalToolResultChars >= MAX_TOTAL_TOOL_RESULT_CHARS) {
 		return {
 			status: "completed",
 			text: await createFinalAnswer(
-			client,
-			params,
-			options,
-			messages,
-			`工具结果总量达到 ${totalToolResultChars} 字符，上限为 ${MAX_TOTAL_TOOL_RESULT_CHARS} 字符`,
-			abortSignal
-		)
+				client,
+				params,
+				options,
+				messages,
+				budgetedResult.reason ?? createToolResultLimitReason(totalToolResultChars),
+				abortSignal
+			)
 		};
 	}
 
@@ -836,22 +843,23 @@ export async function continueDeepSeekAgentStreaming(
 		? getToolDefinitionsForNames(allowedToolNames)
 		: getToolDefinitions();
 	const messages: ChatCompletionMessageParam[] = [...continuation.messages];
+	const budgetedResult = fitToolResultContent(approvedToolResult.content, continuation.totalToolResultChars);
 	const toolMessage: ChatCompletionToolMessageParam = {
 		role: "tool",
 		tool_call_id: approvedToolResult.toolCallId,
-		content: approvedToolResult.content
+		content: budgetedResult.content
 	};
-	const totalToolResultChars: number = continuation.totalToolResultChars + estimateTextChars(approvedToolResult.content);
+	const totalToolResultChars: number = continuation.totalToolResultChars + budgetedResult.chars;
 
 	messages.push(toolMessage);
 
-	if (totalToolResultChars >= MAX_TOTAL_TOOL_RESULT_CHARS) {
+	if (budgetedResult.limitReached || totalToolResultChars >= MAX_TOTAL_TOOL_RESULT_CHARS) {
 		const finalText: string = await createFinalAnswer(
 			client,
 			params,
 			options,
 			messages,
-			`工具结果总量达到 ${totalToolResultChars} 字符，上限为 ${MAX_TOTAL_TOOL_RESULT_CHARS} 字符`,
+			budgetedResult.reason ?? createToolResultLimitReason(totalToolResultChars),
 			abortSignal
 		);
 		onEvent?.({ type: "ai.delta", text: finalText });

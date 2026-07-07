@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getBackendPortFromEnv, getBackendRuntimeMode, type BackendRuntimeMode } from "./backend-runtime.js";
+import { getCurrentBackendLogPath } from "../logger.js";
 
 const BACKEND_HEALTH_NAME: string = "godot-daedalus-backend";
 const PACKAGE_ROOT: string = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -22,6 +23,7 @@ export type BackendHealthResult = {
 		enabled: boolean;
 		protocolVersion: number;
 	};
+	logPath: string | null;
 };
 
 let cachedPackageVersion: string | null = null;
@@ -62,6 +64,7 @@ export function createBackendHealthResult(): BackendHealthResult {
 		multiClient: {
 			enabled: true,
 			protocolVersion: 1
-		}
+		},
+		logPath: getCurrentBackendLogPath()
 	};
 }

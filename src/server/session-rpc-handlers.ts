@@ -167,6 +167,7 @@ import { createWorkflowPendingContinuation, continueWorkflowExecution } from "./
 import { startWorkflowExecution } from "./workflow/executor.js";
 import { ensureProviderConfigured } from "./handlers/provider-handlers.js";
 import { getSessionSubscriberInfos, subscribeSocketToSession, unsubscribeSocketFromSession } from "./client-connections.js";
+import { logger } from "../logger.js";
 
 function createSessionInfoResult(session: ClientSession, mcpHost: McpHost, historyTokensStored: number | null = null): Record<string, unknown> {
 	return {
@@ -322,13 +323,19 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 
 					if (!workspace) {
 						workspaceWarning = `Session workspace not found: ${timeline.metadata.workspaceId}`;
-						console.warn(`[session] ${workspaceWarning}`);
+						logger.warn("session", "workspace_not_found_on_open", {
+							sessionId: timeline.metadata.id,
+							workspaceId: timeline.metadata.workspaceId
+						});
 					} else {
 						try {
 							await mcpHost.ensureWorkspace(workspace);
 						} catch (error: unknown) {
 							workspaceWarning = error instanceof Error ? error.message : "Failed to switch MCP workspace";
-							console.warn(`[session] Failed to switch workspace for ${timeline.metadata.id}:`, workspaceWarning);
+							logger.error("session", "workspace_switch_failed_on_open", error, {
+								sessionId: timeline.metadata.id,
+								workspaceId: timeline.metadata.workspaceId
+							});
 							workspace = undefined;
 						}
 					}

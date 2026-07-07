@@ -19,6 +19,7 @@ test("backend health reports the package version", async (): Promise<void> => {
 	assert.equal(typeof health.pid, "number");
 	assert.ok(health.mode === "development" || health.mode === "runtime");
 	assert.equal(typeof health.port, "number");
+	assert.ok(typeof health.logPath === "string" || health.logPath === null);
 	assert.equal(getDefaultBackendPort("runtime"), PUBLISHED_BACKEND_PORT);
 	assert.equal(getDefaultBackendPort("development"), DEVELOPMENT_BACKEND_PORT);
 });

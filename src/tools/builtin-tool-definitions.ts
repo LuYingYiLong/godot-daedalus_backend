@@ -886,13 +886,17 @@ const TOOL_DEFINITIONS: ChatCompletionTool[] = [
 		type: "function",
 		function: {
 			name: "mcp_terminal_run_write_preset",
-			description: "执行写操作（write 风险）终端预设命令，需要通过审批系统批准。可用的写预设：git.init。此工具调用后不会立即执行，需要用户在 Godot 客户端批准。",
+			description: "执行终端预设命令，需要通过审批系统批准。主要用于 write 风险预设（如 git.init），也兼容更低风险的 read/verify 预设（如 git.status、backend.typecheck、godot.check_only、godot.validate_scene），避免审批后的流程因为工具包装器选择错误而中断。",
 			parameters: {
 				type: "object",
 				properties: {
 					presetName: {
 						type: "string",
-						description: "写操作预设名称，如 'git.init'"
+						description: "预设名称，如 'git.init'、'backend.typecheck'、'git.status'、'git.diff'、'godot.check_only'、'godot.validate_scene'"
+					},
+					resourcePath: {
+						type: "string",
+						description: "Godot 资源路径，仅 Godot 预设需要。可用 res://、项目相对路径或项目内绝对路径，例如 scripts/main.gd、scenes/main.tscn。"
 					},
 					executionMode: {
 						type: "string",

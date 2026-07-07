@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { getDefaultWorkspaceConfigPath } from "../app-paths.js";
 import type { WorkspaceConfig } from "./types.js";
+import { logger } from "../logger.js";
 
 let configuredWorkspaceCache: WorkspaceConfig[] | null = null;
 const runtimeWorkspaces: Map<string, WorkspaceConfig> = new Map();
@@ -15,7 +16,9 @@ function loadConfiguredWorkspaces(): WorkspaceConfig[] {
 	const path: string = getDefaultWorkspaceConfigPath();
 
 	if (!existsSync(path)) {
-		console.warn(`[workspace] Config file not found: ${path}`);
+		logger.info("workspace", "config_missing", {
+			path
+		});
 		configuredWorkspaceCache = [];
 		return configuredWorkspaceCache;
 	}

@@ -11,6 +11,7 @@ import {
 	type CustomMcpServerSummary
 } from "../../mcp/custom-mcp-config-store.js";
 import { createProviderStatusEvent } from "../../providers/provider-error.js";
+import { logger } from "../../logger.js";
 
 function canCallMcpToolDirectly(toolName: string): boolean {
 	const allowedTools: Set<string> = new Set([
@@ -67,7 +68,9 @@ function refreshCustomMcpServersAndNotify(socket: WebSocket, mcpHost: McpHost, w
 				data: await createMcpConfigListResult(mcpHost, workspaceId)
 			});
 		} catch (error: unknown) {
-			console.warn("Failed to refresh custom MCP servers:", error instanceof Error ? error.message : error);
+			logger.error("mcp_config", "refresh_failed", error, {
+				workspaceId
+			});
 			sendJson(socket, {
 				type: "event",
 				id: "mcp-config",

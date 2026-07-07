@@ -20,6 +20,7 @@ import {
 	resolveWorkingDirectory
 } from "./presets.js";
 import type { CommandPreset, PresetRunInput, TerminalCommandResult, TerminalJobRecord } from "./types.js";
+import { logger } from "../../logger.js";
 
 function asJsonTextResult(value: unknown): { content: Array<{ type: "text"; text: string }> } {
 	return {
@@ -108,8 +109,15 @@ function createJobStartedResult(record: TerminalJobRecord): Record<string, unkno
 
 async function runPreset(input: PresetRunInput, allowedRisks: readonly string[]): Promise<Record<string, unknown>> {
 	const preset: CommandPreset = findPreset(input.presetName);
+	const startedAtMs: number = Date.now();
 
 	if (!allowedRisks.includes(preset.risk)) {
+		logger.warn("terminal", "preset_risk_rejected", {
+			preset: input.presetName,
+			risk: preset.risk,
+			allowedRisks,
+			executionMode: input.executionMode ?? "wait"
+		});
 		return {
 			preset: input.presetName,
 			ok: false,
@@ -119,6 +127,10 @@ async function runPreset(input: PresetRunInput, allowedRisks: readonly string[])
 	}
 
 	if (preset.requiresGodotProject && GODOT_PROJECT.length === 0) {
+		logger.warn("terminal", "godot_project_missing", {
+			preset: input.presetName,
+			godotExecutablePath: GODOT_EXECUTABLE
+		});
 		return JSON.parse(createMissingGodotProjectResult(input.presetName).content[0]!.text) as Record<string, unknown>;
 	}
 
@@ -126,6 +138,11 @@ async function runPreset(input: PresetRunInput, allowedRisks: readonly string[])
 	try {
 		cwd = resolveWorkingDirectory(input.workingDirectory, preset);
 	} catch (error: unknown) {
+		logger.warn("terminal", "working_directory_rejected", {
+			preset: input.presetName,
+			workingDirectory: input.workingDirectory,
+			error: error instanceof Error ? error.message : "Invalid working directory"
+		});
 		return {
 			preset: input.presetName,
 			ok: false,
@@ -137,6 +154,11 @@ async function runPreset(input: PresetRunInput, allowedRisks: readonly string[])
 	try {
 		command = createGodotResourceCommand(preset, input.resourcePath);
 	} catch (error: unknown) {
+		logger.warn("terminal", "preset_arguments_invalid", {
+			preset: input.presetName,
+			resourcePath: input.resourcePath,
+			error: error instanceof Error ? error.message : "Invalid preset arguments"
+		});
 		return {
 			preset: input.presetName,
 			ok: false,
@@ -160,17 +182,49 @@ async function runPreset(input: PresetRunInput, allowedRisks: readonly string[])
 			godotProjectPath: preset.requiresGodotProject ? GODOT_PROJECT || null : undefined,
 			godotExecutablePath: preset.requiresGodotProject ? GODOT_EXECUTABLE : undefined
 		});
+		logger.info("terminal", "job_started", {
+			preset: input.presetName,
+			risk: preset.risk,
+			jobId: record.jobId,
+			pid: record.pid,
+			cwd,
+			resourcePath: input.resourcePath,
+			timeoutMs: record.timeoutAt,
+			wakeAfterMs,
+			durationMs: Date.now() - startedAtMs
+		});
 		return createJobStartedResult(record);
 	}
 
+	logger.info("terminal", "preset_started", {
+		preset: input.presetName,
+		risk: preset.risk,
+		cwd,
+		resourcePath: input.resourcePath,
+		timeoutMs: normalizeTimeoutMs(input.timeoutMs, preset, COMMAND_TIMEOUT_MS)
+	});
+	const timeoutMs: number = normalizeTimeoutMs(input.timeoutMs, preset, COMMAND_TIMEOUT_MS);
 	const result: TerminalCommandResult = await runCommandWait({
 		preset,
 		command,
 		cwd,
-		timeoutMs: normalizeTimeoutMs(input.timeoutMs, preset, COMMAND_TIMEOUT_MS),
+		timeoutMs,
 		resourcePath: input.resourcePath ?? null,
 		godotProjectPath: preset.requiresGodotProject ? GODOT_PROJECT || null : undefined,
 		godotExecutablePath: preset.requiresGodotProject ? GODOT_EXECUTABLE : undefined
+	});
+	logger.info("terminal", "preset_finished", {
+		preset: input.presetName,
+		risk: preset.risk,
+		cwd,
+		resourcePath: input.resourcePath,
+		ok: result.ok,
+		exitCode: result.exitCode,
+		durationMs: result.durationMs,
+		totalDurationMs: Date.now() - startedAtMs,
+		stdoutChars: result.stdout.length,
+		stderrChars: result.stderr.length,
+		truncated: result.truncated
 	});
 	return result as unknown as Record<string, unknown>;
 }
@@ -222,10 +276,10 @@ export function registerTerminalTools(server: McpServer): void {
 		"run_write_preset",
 		{
 			title: "Run Write Command Preset",
-			description: "执行写操作预设命令（write 风险），需要通过审批系统批准。默认同步等待；executionMode=job 时启动长任务并返回 jobId。",
-			inputSchema: presetRunSchema.omit({ resourcePath: true })
+			description: "执行写操作预设命令（write 风险），需要通过审批系统批准。也允许执行更低风险的 read/verify 预设，避免审批后的流程因为工具包装器选择错误而中断。默认同步等待；executionMode=job 时启动长任务并返回 jobId。",
+			inputSchema: presetRunSchema
 		},
-		async (input: PresetRunInput) => asJsonTextResult(await runPreset(input, ["write"]))
+		async (input: PresetRunInput) => asJsonTextResult(await runPreset(input, ["read", "verify", "write"]))
 	);
 
 	server.registerTool(

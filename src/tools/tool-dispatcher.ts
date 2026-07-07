@@ -5,6 +5,7 @@ import { describeToolEvent, type ToolEventDisplay } from "./tool-event-describer
 import { executeLlmToolWithIdempotency } from "./tool-idempotency.js";
 import { parseToolResultSummary, type ParsedToolResultSummary } from "./tool-result-parser.js";
 import type { FileEditBatchDraft } from "./file-edit-snapshots.js";
+import { logger } from "../logger.js";
 
 export type ToolEvent =
 	| { type: "ai.delta"; text: string }
@@ -50,6 +51,11 @@ async function executeSingleToolCall(
 		argsParsed = JSON.parse(toolCall.function.arguments) as Record<string, unknown>;
 	} catch {
 		const message: string = `Invalid JSON arguments: ${toolCall.function.arguments}`;
+		logger.warn("tool", "arguments_invalid", {
+			toolCallId: toolCall.id,
+			toolName: functionName,
+			step
+		});
 		onEvent?.({ type: "tool.error", step, toolCallId: toolCall.id, toolName: functionName, message });
 		return {
 			role: "tool",
@@ -59,8 +65,22 @@ async function executeSingleToolCall(
 	}
 
 	const decision = await gateway.evaluate(functionName, argsParsed, toolCall.id);
+	logger.debug("tool", "policy_evaluated", {
+		toolCallId: toolCall.id,
+		toolName: functionName,
+		step,
+		action: decision.action,
+		reason: "reason" in decision ? decision.reason : undefined,
+		args: argsParsed
+	});
 
 	if (decision.action === "deny") {
+		logger.warn("tool", "denied", {
+			toolCallId: toolCall.id,
+			toolName: functionName,
+			step,
+			reason: decision.reason
+		});
 		onEvent?.({ type: "tool.error", step, toolCallId: toolCall.id, toolName: functionName, message: decision.reason });
 		return {
 			role: "tool",
@@ -71,6 +91,15 @@ async function executeSingleToolCall(
 
 	if (decision.action === "request_approval") {
 		const pending = gateway.requestApproval(functionName, argsParsed, toolCall.id, decision.reason, mcpHost.getActiveWorkspaceId());
+		logger.info("tool", "approval_required", {
+			toolCallId: toolCall.id,
+			toolName: functionName,
+			step,
+			approvalId: pending.approvalId,
+			workspaceId: mcpHost.getActiveWorkspaceId(),
+			reason: decision.reason,
+			args: argsParsed
+		});
 		onEvent?.({
 			type: "tool.approval_required",
 			step,
@@ -96,9 +125,31 @@ async function executeSingleToolCall(
 		});
 	}
 
+	const startedAtMs: number = Date.now();
+	logger.info("tool", "call_started", {
+		toolCallId: toolCall.id,
+		toolName: functionName,
+		step,
+		workspaceId: mcpHost.getActiveWorkspaceId(),
+		args: argsParsed
+	});
 	try {
 		const result = await executeLlmToolWithIdempotency(mcpHost, functionName, argsParsed);
 		const parsedSummary: ParsedToolResultSummary = parseToolResultSummary(functionName, argsParsed, result.content);
+		logger.info("tool", "call_finished", {
+			toolCallId: toolCall.id,
+			toolName: functionName,
+			step,
+			workspaceId: mcpHost.getActiveWorkspaceId(),
+			durationMs: Date.now() - startedAtMs,
+			resultChars: result.rawContentLength,
+			truncated: result.truncated,
+			cached: result.reused,
+			validationStatus: parsedSummary.validationStatus,
+			terminalJobId: parsedSummary.terminalJobId,
+			terminalJobStatus: parsedSummary.terminalJobStatus,
+			hasFileEditDraft: result.fileEditDraft !== undefined
+		});
 
 		if (onEvent) {
 			onEvent({
@@ -121,6 +172,13 @@ async function executeSingleToolCall(
 		};
 	} catch (error: unknown) {
 		const message: string = error instanceof Error ? error.message : "MCP tool call failed";
+		logger.error("tool", "call_failed", error, {
+			toolCallId: toolCall.id,
+			toolName: functionName,
+			step,
+			workspaceId: mcpHost.getActiveWorkspaceId(),
+			durationMs: Date.now() - startedAtMs
+		});
 
 		if (onEvent) {
 			onEvent({ type: "tool.error", step, toolCallId: toolCall.id, toolName: functionName, message });

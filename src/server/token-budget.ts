@@ -15,6 +15,7 @@ import { getProviderDisplayName } from "../providers/provider-registry.js";
 import type { ProviderChatOptions } from "../providers/deepseek-client.js";
 import type { ClientSession } from "./client-session.js";
 import { cloneAdditionalContextItems } from "./additional-context.js";
+import { logger } from "../logger.js";
 
 const tokenCounterPromise: Promise<TokenCounter> = createTokenCounter();
 let sessionCompressorPromptCache: string | undefined;
@@ -59,7 +60,11 @@ export async function estimateTextTokensForProvider(options: ProviderChatOptions
 		}
 	} catch (error: unknown) {
 		const message: string = error instanceof Error ? error.message : String(error);
-		console.warn(`[token-counter] ${getProviderDisplayName(options.provider)} token estimate failed, using local counter: ${message}`);
+		logger.warn("token_counter", "provider_text_estimate_failed", {
+			provider: options.provider,
+			providerName: getProviderDisplayName(options.provider),
+			message
+		});
 	}
 
 	return estimateTextTokens(text);
@@ -77,7 +82,11 @@ export async function estimateCurrentMessageTokensForProvider(options: ProviderC
 		}
 	} catch (error: unknown) {
 		const message: string = error instanceof Error ? error.message : String(error);
-		console.warn(`[token-counter] ${getProviderDisplayName(options.provider)} multimodal token estimate failed, using local counter: ${message}`);
+		logger.warn("token_counter", "provider_multimodal_estimate_failed", {
+			provider: options.provider,
+			providerName: getProviderDisplayName(options.provider),
+			message
+		});
 	}
 
 	const imageTokens: number = getImageAttachments(params.additionalContext)

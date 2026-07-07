@@ -24,6 +24,7 @@ import {
 	createOpenAIResponsesClient,
 	resolveOpenAIResponsesModel
 } from "./openai-responses-client.js";
+import { createToolResultLimitFallback, createToolResultLimitReason, fitToolResultContent } from "./tool-result-budget.js";
 
 const FINALIZE_AFTER_TOOL_LIMIT_PROMPT: string =
 	"工具调用阶段已经达到后端限制。请停止请求更多工具，基于目前已经获得的工具结果直接回答用户。"
@@ -35,9 +36,11 @@ type ResponsesAssistantMessage = {
 	outputItems: ResponseOutputItem[];
 };
 
-function estimateTextChars(text: string): number {
-	return text.length;
-}
+type AppendToolResultItemsResult = {
+	addedChars: number;
+	limitReached: boolean;
+	reason: string | null;
+};
 
 function convertToolDefinition(tool: ChatCompletionTool): FunctionTool | null {
 	if (tool.type !== "function") {
@@ -105,18 +108,33 @@ function appendResponseOutputItems(inputItems: ResponseInputItem[], outputItems:
 	}
 }
 
-function appendToolResultItems(inputItems: ResponseInputItem[], toolResults: Awaited<ReturnType<typeof dispatchToolCalls>>): number {
-	let totalChars = 0;
+function appendToolResultItems(
+	inputItems: ResponseInputItem[],
+	toolResults: Awaited<ReturnType<typeof dispatchToolCalls>>,
+	currentTotalChars: number
+): AppendToolResultItemsResult {
+	let addedChars: number = 0;
+	let limitReached: boolean = false;
+	let reason: string | null = null;
 	for (const result of toolResults) {
 		const content: string = typeof result.content === "string" ? result.content : JSON.stringify(result.content);
-		totalChars += estimateTextChars(content);
+		const budgetedResult = fitToolResultContent(content, currentTotalChars + addedChars);
+		addedChars += budgetedResult.chars;
 		inputItems.push({
 			type: "function_call_output",
 			call_id: result.tool_call_id,
-			output: content
+			output: budgetedResult.content
 		} as ResponseInputItem);
+		if (budgetedResult.limitReached) {
+			limitReached = true;
+			reason = budgetedResult.reason ?? createToolResultLimitReason(currentTotalChars + addedChars);
+		}
 	}
-	return totalChars;
+	return {
+		addedChars,
+		limitReached,
+		reason
+	};
 }
 
 function createRequestBody(
@@ -210,7 +228,7 @@ async function createFinalAnswer(
 		{ signal: abortSignal }
 	);
 	if (response.output_text.length === 0) {
-		throw new Error("LLM returned empty final response after tool limit");
+		return createToolResultLimitFallback(reason);
 	}
 	return response.output_text;
 }
@@ -266,7 +284,23 @@ async function runResponsesAgentLoop(
 
 		try {
 			const toolResults = await dispatchToolCalls(mcpHost, toolCalls, step, gateway, onEvent);
-			totalToolResultChars += appendToolResultItems(inputItems, toolResults);
+			const appendResult: AppendToolResultItemsResult = appendToolResultItems(inputItems, toolResults, totalToolResultChars);
+			totalToolResultChars += appendResult.addedChars;
+			if (appendResult.limitReached || totalToolResultChars >= MAX_TOTAL_TOOL_RESULT_CHARS) {
+				const reason: string = appendResult.reason ?? createToolResultLimitReason(totalToolResultChars);
+				const finalText: string = await createFinalAnswer(
+					params,
+					options,
+					instructions,
+					inputItems,
+					reason,
+					abortSignal
+				);
+				if (streamAssistant) {
+					onEvent?.({ type: "ai.delta", text: finalText });
+				}
+				return { status: "completed", text: finalText };
+			}
 		} catch (error: unknown) {
 			if (error instanceof ToolApprovalRequiredError) {
 				const continuationInputItems: ResponseInputItem[] = [...inputItems];
@@ -294,7 +328,7 @@ async function runResponsesAgentLoop(
 				options,
 				instructions,
 				inputItems,
-				`工具结果总量达到 ${totalToolResultChars} 字符，上限为 ${MAX_TOTAL_TOOL_RESULT_CHARS} 字符`,
+				createToolResultLimitReason(totalToolResultChars),
 				abortSignal
 			);
 			if (streamAssistant) {
@@ -405,14 +439,15 @@ export async function continueOpenAIResponsesAgent(
 		? getToolDefinitionsForNames(allowedToolNames)
 		: getToolDefinitions();
 	const inputItems: ResponseInputItem[] = [...continuation.inputItems];
-	const totalToolResultChars: number = continuation.totalToolResultChars + estimateTextChars(approvedToolResult.content);
+	const budgetedResult = fitToolResultContent(approvedToolResult.content, continuation.totalToolResultChars);
+	const totalToolResultChars: number = continuation.totalToolResultChars + budgetedResult.chars;
 	inputItems.push({
 		type: "function_call_output",
 		call_id: approvedToolResult.toolCallId,
-		output: approvedToolResult.content
+		output: budgetedResult.content
 	} as ResponseInputItem);
 
-	if (totalToolResultChars >= MAX_TOTAL_TOOL_RESULT_CHARS) {
+	if (budgetedResult.limitReached || totalToolResultChars >= MAX_TOTAL_TOOL_RESULT_CHARS) {
 		return {
 			status: "completed",
 			text: await createFinalAnswer(
@@ -420,7 +455,7 @@ export async function continueOpenAIResponsesAgent(
 				options,
 				continuation.instructions,
 				inputItems,
-				`工具结果总量达到 ${totalToolResultChars} 字符，上限为 ${MAX_TOTAL_TOOL_RESULT_CHARS} 字符`,
+				budgetedResult.reason ?? createToolResultLimitReason(totalToolResultChars),
 				abortSignal
 			)
 		};
@@ -462,20 +497,21 @@ export async function continueOpenAIResponsesAgentStreaming(
 		? getToolDefinitionsForNames(allowedToolNames)
 		: getToolDefinitions();
 	const inputItems: ResponseInputItem[] = [...continuation.inputItems];
-	const totalToolResultChars: number = continuation.totalToolResultChars + estimateTextChars(approvedToolResult.content);
+	const budgetedResult = fitToolResultContent(approvedToolResult.content, continuation.totalToolResultChars);
+	const totalToolResultChars: number = continuation.totalToolResultChars + budgetedResult.chars;
 	inputItems.push({
 		type: "function_call_output",
 		call_id: approvedToolResult.toolCallId,
-		output: approvedToolResult.content
+		output: budgetedResult.content
 	} as ResponseInputItem);
 
-	if (totalToolResultChars >= MAX_TOTAL_TOOL_RESULT_CHARS) {
+	if (budgetedResult.limitReached || totalToolResultChars >= MAX_TOTAL_TOOL_RESULT_CHARS) {
 		const finalText: string = await createFinalAnswer(
 			params,
 			options,
 			continuation.instructions,
 			inputItems,
-			`工具结果总量达到 ${totalToolResultChars} 字符，上限为 ${MAX_TOTAL_TOOL_RESULT_CHARS} 字符`,
+			budgetedResult.reason ?? createToolResultLimitReason(totalToolResultChars),
 			abortSignal
 		);
 		onEvent?.({ type: "ai.delta", text: finalText });

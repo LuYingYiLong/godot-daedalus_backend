@@ -7,6 +7,7 @@ import { MAX_TOOL_RESULT_CHARS } from "./llm-tool-budget.js";
 import { resolveToolMapping } from "./tool-mapping.js";
 import { getToolPolicy } from "./tool-policy.js";
 import { captureFileEditBatchDraft, type FileEditBatchDraft } from "./file-edit-snapshots.js";
+import { logger } from "../logger.js";
 
 const TOOL_EXECUTION_DEDUP_TTL_MS: number = 30 * 60 * 1000;
 const MAX_COMPLETED_TOOL_EXECUTIONS: number = 500;
@@ -279,8 +280,11 @@ function refreshEditorFilesystemAfterGodotMutation(
 
 	const changedPaths: string[] = collectGodotRefreshPaths(args);
 	void mcpHost.getEditorBridge().refreshFilesystem(changedPaths).catch((error: unknown): void => {
-		const message: string = error instanceof Error ? error.message : String(error);
-		console.warn(`[godot_editor] resource filesystem refresh failed after ${llmToolName}: ${message}`);
+		logger.warn("godot_editor", "filesystem_refresh_failed", {
+			llmToolName,
+			changedPaths,
+			error: error instanceof Error ? error.message : String(error)
+		});
 	});
 }
 

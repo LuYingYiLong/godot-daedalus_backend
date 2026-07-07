@@ -20,6 +20,7 @@ import type { WorkflowPhaseRunResult, WorkflowPhaseToolStats } from "./shared-ty
 import { createEmptyWorkflowPhaseToolStats, createWorkflowWriteGuardRetryMessage, didWorkflowWritePhaseExecute, shouldRequireWorkflowWriteTool } from "./tool-events.js";
 import { sendWorkflowEvent, sendWorkflowTodoSnapshot } from "./events.js";
 import { createWorkflowPhasePrompt, runWorkflowPhase } from "./phase-runner.js";
+import { logger } from "../../logger.js";
 
 export function createWorkflowPendingContinuation(
 	phaseParams: AiChatParams,
@@ -439,7 +440,12 @@ export async function continueWorkflowExecution(
 					sendWorkflowTodoSnapshot(socket, requestId, session, plan, persistRequestId, phaseOutputs);
 				}
 			} catch (error: unknown) {
-				console.warn("[workflow] LLM plan revision failed, continuing current plan:", error);
+				logger.error("workflow", "plan_revision_failed", error, {
+					requestId,
+					sessionId: session.sessionId,
+					workflowId: state.plan.id,
+					phaseIndex: index
+				}, "Continuing current workflow plan");
 			}
 		}
 	}

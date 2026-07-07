@@ -6,6 +6,7 @@ import { generateSessionTitle, shouldApplyGeneratedSessionTitle } from "./sessio
 import type { ClientSession, ThinkingEventBuffer } from "./client-session.js";
 import { sendJson } from "./send-json.js";
 import { broadcastSessionEvent } from "./client-connections.js";
+import { logger } from "../logger.js";
 
 const THINKING_EVENT_FLUSH_CHARS = 800;
 
@@ -53,7 +54,9 @@ export function getAgentRunIdFromEventData(data: unknown): string | null {
 export function enqueueSessionEventWrite(session: ClientSession, operation: () => Promise<void>): void {
 	const nextWrite: Promise<void> = session.eventPersistQueue.then(operation, operation);
 	session.eventPersistQueue = nextWrite.catch((error: unknown): void => {
-		console.error("Failed to persist session event:", error);
+		logger.error("session", "event_persist_failed", error, {
+			sessionId: session.sessionId
+		});
 	});
 }
 
@@ -233,7 +236,7 @@ export function maybeScheduleSessionTitleGeneration(
 ): void {
 	const sessionId: string | undefined = session.sessionId;
 	if (!wasFirstTurn || sessionId === undefined || params.retryFromRequestId !== undefined) {
-		console.log("[session-title] skipped:", {
+		logger.debug("session_title", "skipped", {
 			requestId,
 			sessionId: sessionId ?? null,
 			wasFirstTurn,
@@ -243,7 +246,7 @@ export function maybeScheduleSessionTitleGeneration(
 	}
 
 	const originalTitle: string | undefined = session.sessionTitle;
-	console.log("[session-title] scheduled:", {
+	logger.info("session_title", "scheduled", {
 		requestId,
 		sessionId,
 		originalTitle: originalTitle ?? ""
@@ -252,7 +255,7 @@ export function maybeScheduleSessionTitleGeneration(
 	void (async (): Promise<void> => {
 		const storedBefore = await openSession(sessionId);
 		if (!shouldApplyGeneratedSessionTitle(originalTitle, storedBefore.metadata.title)) {
-			console.log("[session-title] skipped because title changed before generation:", {
+			logger.info("session_title", "skipped_title_changed_before", {
 				sessionId,
 				originalTitle: originalTitle ?? "",
 				currentTitle: storedBefore.metadata.title
@@ -262,7 +265,7 @@ export function maybeScheduleSessionTitleGeneration(
 
 		const generatedTitle: string = await generateSessionTitle(params.message, options);
 		if (generatedTitle.length === 0) {
-			console.log("[session-title] skipped because generated title is empty:", {
+			logger.info("session_title", "skipped_empty_title", {
 				sessionId,
 				currentTitle: storedBefore.metadata.title
 			});
@@ -274,7 +277,7 @@ export function maybeScheduleSessionTitleGeneration(
 				title: storedBefore.metadata.title,
 				metadata: storedBefore.metadata
 			});
-			console.log("[session-title] title already current, metadata synchronized:", {
+			logger.info("session_title", "already_current", {
 				sessionId,
 				title: storedBefore.metadata.title
 			});
@@ -283,7 +286,7 @@ export function maybeScheduleSessionTitleGeneration(
 
 		const storedAfter = await openSession(sessionId);
 		if (!shouldApplyGeneratedSessionTitle(originalTitle, storedAfter.metadata.title)) {
-			console.log("[session-title] skipped because title changed after generation:", {
+			logger.info("session_title", "skipped_title_changed_after", {
 				sessionId,
 				originalTitle: originalTitle ?? "",
 				currentTitle: storedAfter.metadata.title,
@@ -301,12 +304,15 @@ export function maybeScheduleSessionTitleGeneration(
 			title: metadata.title,
 			metadata
 		});
-		console.log("[session-title] renamed:", {
+		logger.info("session_title", "renamed", {
 			sessionId,
 			from: storedAfter.metadata.title,
 			to: metadata.title
 		});
 	})().catch((error: unknown): void => {
-		console.warn("[session-title] Failed to generate session title:", error);
+		logger.error("session_title", "failed", error, {
+			sessionId,
+			requestId
+		});
 	});
 }

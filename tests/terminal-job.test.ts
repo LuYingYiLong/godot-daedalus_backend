@@ -3,10 +3,35 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { registerTerminalTools } from "../src/mcp/terminal/registration.js";
+import { COMMAND_PRESETS } from "../src/mcp/terminal/presets.js";
 import { startCommandJob, runCommandWait } from "../src/mcp/terminal/process-runner.js";
 import { terminalJobStore } from "../src/mcp/terminal/job-store.js";
 import type { CommandPreset, TerminalJobRecord } from "../src/mcp/terminal/types.js";
 import { parseToolResultSummary } from "../src/tools/tool-result-parser.js";
+
+type ToolHandler = (args: Record<string, unknown>) => Promise<{ content: Array<{ text: string }> }>;
+
+type FakeMcpServer = {
+	tools: Map<string, ToolHandler>;
+	registerTool(name: string, _config: unknown, handler: ToolHandler): void;
+};
+
+function createFakeTerminalServer(): FakeMcpServer {
+	return {
+		tools: new Map(),
+		registerTool(name: string, _config: unknown, handler: ToolHandler): void {
+			this.tools.set(name, handler);
+		}
+	};
+}
+
+async function callTerminalTool(server: FakeMcpServer, name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
+	const handler: ToolHandler | undefined = server.tools.get(name);
+	assert.notEqual(handler, undefined);
+	const result = await handler!(args);
+	return JSON.parse(result.content[0]!.text) as Record<string, unknown>;
+}
 
 function nodePreset(command: string): { preset: CommandPreset; command: string[] } {
 	return {
@@ -116,4 +141,33 @@ test("terminal job result parser exposes running job wakeup metadata", (): void 
 	assert.equal(summary.terminalJobId, "terminal-job-test");
 	assert.equal(summary.terminalJobStatus, "running");
 	assert.equal(summary.terminalJobWakeAfterMs, 1000);
+});
+
+test("terminal preset wrappers accept only their risk boundary", async (): Promise<void> => {
+	const server: FakeMcpServer = createFakeTerminalServer();
+	registerTerminalTools(server as never);
+	const outsideRoot: string = await mkdtemp(join(tmpdir(), "terminal-risk-outside-"));
+
+	try {
+		for (const preset of COMMAND_PRESETS) {
+			const args: Record<string, unknown> = {
+				presetName: preset.name,
+				resourcePath: "res://scripts/game.gd",
+				workingDirectory: outsideRoot
+			};
+			const safeResult: Record<string, unknown> = await callTerminalTool(server, "run_safe_preset", args);
+			if (preset.risk === "write") {
+				assert.equal(safeResult.ok, false);
+				assert.equal(safeResult.requiredRisk, "write");
+			} else {
+				assert.notEqual(safeResult.error, `Preset '${preset.name}' has risk '${preset.risk}', not allowed by this tool.`);
+			}
+
+			const writeResult: Record<string, unknown> = await callTerminalTool(server, "run_write_preset", args);
+			assert.equal(writeResult.preset, preset.name);
+			assert.notEqual(writeResult.error, `Preset '${preset.name}' has risk '${preset.risk}', not allowed by this tool.`);
+		}
+	} finally {
+		await rm(outsideRoot, { recursive: true, force: true });
+	}
 });

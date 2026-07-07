@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { getSessionDir } from "../session/session-store.js";
 import type { FileEditBatchDraft, FileEditSnapshot } from "../tools/file-edit-snapshots.js";
+import { logger } from "../logger.js";
 
 export type FileEditSummaryItem = {
 	path: string;
@@ -99,7 +100,12 @@ function enqueueBatchWrite(sessionId: string, batch: PersistedFileEditBatch): vo
 	});
 
 	batchWriteQueue.catch((error: unknown): void => {
-		console.error("Failed to persist file edit batch:", error);
+		logger.error("file_edit", "batch_persist_failed", error, {
+			sessionId,
+			batchId: batch.batchId,
+			workspaceId: batch.workspaceId,
+			editedFileCount: batch.edits.length
+		});
 	});
 }
 

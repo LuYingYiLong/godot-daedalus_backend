@@ -165,6 +165,7 @@ import { sendWorkflowEvent, mapWorkflowEventToAgentEvent, convertWorkflowSnapsho
 import { runWorkflowPhase, createWorkflowPhasePrompt } from "./workflow/phase-runner.js";
 import { createWorkflowPendingContinuation, continueWorkflowExecution } from "./workflow/continuation.js";
 import { startWorkflowExecution } from "./workflow/executor.js";
+import { logger } from "../logger.js";
 
 function applyProviderConfigToSession(session: ClientSession, config: ProviderConfigWithSecret): void {
 	session.activeProvider = config.provider;
@@ -244,7 +245,9 @@ function refreshCustomMcpServersAndNotify(socket: WebSocket, mcpHost: McpHost): 
 				data: await createMcpConfigListResult(mcpHost, workspaceId)
 			});
 		} catch (error: unknown) {
-			console.warn("Failed to refresh custom MCP servers:", error instanceof Error ? error.message : error);
+			logger.error("mcp_config", "refresh_failed", error, {
+				workspaceId: mcpHost.getActiveWorkspaceId()
+			});
 			const workspaceId: string | undefined = mcpHost.getActiveWorkspaceId();
 			sendJson(socket, {
 				type: "event",
