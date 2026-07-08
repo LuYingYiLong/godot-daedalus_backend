@@ -1,5 +1,7 @@
 import { chatWithDeepSeek, type ProviderChatOptions } from "../providers/deepseek-client.js";
+import { parseJsonObjectFromLlm } from "../providers/llm-json.js";
 import type { ChatMessage } from "../protocol/types.js";
+import { logger } from "../logger.js";
 import type { ClientSession } from "./client-session.js";
 import { clipTextByChars } from "./additional-context.js";
 
@@ -13,16 +15,7 @@ export type NextStepHint = {
 };
 
 export function parseJsonObjectLoose(text: string): unknown {
-	try {
-		return JSON.parse(text) as unknown;
-	} catch {
-		const startIndex: number = text.indexOf("{");
-		const endIndex: number = text.lastIndexOf("}");
-		if (startIndex >= 0 && endIndex > startIndex) {
-			return JSON.parse(text.slice(startIndex, endIndex + 1)) as unknown;
-		}
-		throw new Error("LLM did not return valid JSON");
-	}
+	return parseJsonObjectFromLlm(text, "LLM did not return valid JSON");
 }
 
 export function normalizeNextStepHints(raw: unknown, maxHints: number): NextStepHint[] {
@@ -106,7 +99,15 @@ export async function createNextStepHints(
 		createNextStepHintPrompt(trigger, anchorRequestId),
 		abortSignal
 	);
-	return normalizeNextStepHints(parseJsonObjectLoose(text), clippedMaxHints);
+	try {
+		return normalizeNextStepHints(parseJsonObjectLoose(text), clippedMaxHints);
+	} catch (error: unknown) {
+		logger.warn("ai", "next_step_hints_parse_failed", {
+			error: error instanceof Error ? error.message : String(error),
+			responseChars: text.length
+		});
+		return [];
+	}
 }
 
 export { DEFAULT_NEXT_STEP_HINT_COUNT, MAX_NEXT_STEP_HINT_COUNT };

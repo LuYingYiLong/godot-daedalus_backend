@@ -8,11 +8,14 @@ export type ParsedToolResultSummary = {
 	validationStatus?: ToolValidationStatus | undefined;
 	summary?: string | undefined;
 	failedChecks?: string[] | undefined;
+	environmentIssue?: boolean | undefined;
 	artifactRefs?: string[] | undefined;
 	terminalJobId?: string | undefined;
 	terminalJobStatus?: string | undefined;
 	terminalJobWakeAfterMs?: number | undefined;
 };
+
+const DIAGNOSTICS_ENVIRONMENT_ERROR_PATTERN: RegExp = /\b(godot_diagnostics_unavailable|lsp_unavailable|dap_unavailable|no active workspace|ECONNREFUSED|ETIMEDOUT|timeout|not available|not running)\b/iu;
 
 function parseJsonObject(text: string): Record<string, unknown> | null {
 	try {
@@ -41,6 +44,50 @@ function getNumberOrNull(value: unknown): number | null | undefined {
 
 function getBoolean(value: unknown): boolean | undefined {
 	return typeof value === "boolean" ? value : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function getErrorCode(record: Record<string, unknown>): string | undefined {
+	const error: unknown = record.error;
+	if (isRecord(error)) {
+		return getString(error.code);
+	}
+
+	return undefined;
+}
+
+function getErrorMessage(record: Record<string, unknown>): string | undefined {
+	const error: unknown = record.error;
+	if (typeof error === "string" && error.length > 0) {
+		return error;
+	}
+
+	if (isRecord(error)) {
+		return getString(error.message) ?? getString(error.code);
+	}
+
+	return undefined;
+}
+
+function isDiagnosticsTool(toolName: string): boolean {
+	return toolName.startsWith("mcp_godot_lsp_") || toolName.startsWith("mcp_godot_dap_");
+}
+
+function isDiagnosticsEnvironmentIssue(toolName: string, record: Record<string, unknown>): boolean {
+	if (!isDiagnosticsTool(toolName)) {
+		return false;
+	}
+
+	const text: string = [
+		getErrorCode(record),
+		getErrorMessage(record),
+		getString(record.summary),
+		getString(record.lastError)
+	].filter((value: string | undefined): value is string => value !== undefined).join("\n");
+	return DIAGNOSTICS_ENVIRONMENT_ERROR_PATTERN.test(text);
 }
 
 function clipSummary(text: string, maxChars: number = 360): string {
@@ -76,7 +123,7 @@ function collectArtifactRefs(args: Record<string, unknown>, record: Record<strin
 }
 
 function createFailureMessage(record: Record<string, unknown>, fallback: string): string {
-	const errorText: string | undefined = getString(record.error);
+	const errorText: string | undefined = getErrorMessage(record);
 	if (errorText !== undefined) {
 		return errorText;
 	}
@@ -109,17 +156,25 @@ function parseDiagnosticsSummary(record: Record<string, unknown>, args: Record<s
 		return `${resourcePath}:${line}:${column} ${String(diagnostic.message ?? "LSP diagnostic error")}`;
 	});
 	const ok: boolean | undefined = getBoolean(record.ok);
+	const failureMessage: string | undefined = ok === false ? createFailureMessage(record, "LSP diagnostics failed") : undefined;
+	const environmentIssue: boolean = isDiagnosticsEnvironmentIssue("mcp_godot_lsp_get_file_diagnostics", record);
 	const diagnosticsCount: number = diagnosticsList.length;
 	const diagnosticsErrorCount: number = errorDiagnostics.length;
 	const validationOk: boolean | undefined = diagnosticsErrorCount > 0 ? false : ok;
+	const failedChecksWithToolFailure: string[] = failedChecks.length > 0
+		? failedChecks
+		: failureMessage === undefined ? [] : [failureMessage];
 
 	return {
 		ok: validationOk,
 		diagnosticsCount,
 		diagnosticsErrorCount,
 		validationStatus: diagnosticsErrorCount > 0 ? "failed" : ok === false ? "failed" : "passed",
-		summary: `${String(record.resourcePath ?? args.resourcePath ?? "script")} LSP diagnostics: ${diagnosticsCount} total, ${diagnosticsErrorCount} errors`,
-		failedChecks,
+		summary: failureMessage === undefined
+			? `${String(record.resourcePath ?? args.resourcePath ?? "script")} LSP diagnostics: ${diagnosticsCount} total, ${diagnosticsErrorCount} errors`
+			: `${String(record.resourcePath ?? args.resourcePath ?? "script")} LSP diagnostics unavailable: ${failureMessage}`,
+		failedChecks: failedChecksWithToolFailure,
+		environmentIssue: environmentIssue || undefined,
 		artifactRefs: collectArtifactRefs(args, record)
 	};
 }
@@ -173,12 +228,14 @@ function parseGenericJsonSummary(toolName: string, record: Record<string, unknow
 	if (ok === false && failedChecks.length === 0) {
 		failedChecks.push(createFailureMessage(record, `${toolName} returned ok=false`));
 	}
+	const environmentIssue: boolean = isDiagnosticsEnvironmentIssue(toolName, record);
 
 	return {
 		ok,
 		validationStatus: ok === false ? "failed" : ok === true ? "passed" : "unknown",
-		summary: getString(record.summary) ?? `${toolName}${ok === undefined ? "" : ok ? " passed" : " failed"}`,
+		summary: getString(record.summary) ?? `${toolName}${ok === undefined ? "" : ok ? " passed" : ` failed: ${createFailureMessage(record, "ok=false")}`}`,
 		failedChecks: failedChecks.length > 0 ? failedChecks : undefined,
+		environmentIssue: environmentIssue || undefined,
 		artifactRefs: collectArtifactRefs(args, record)
 	};
 }

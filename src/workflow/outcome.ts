@@ -10,6 +10,7 @@ import type {
 
 const SUMMARY_TOOL_INTENT_PATTERN: RegExp = /(准备|将要|接下来|现在|马上|先).{0,20}(调用|使用|读取|运行|查询)|\b(I will|I'll|I am going to|I'm going to)\b/iu;
 const TOOL_REFERENCE_PATTERN: RegExp = /\b(mcp_[a-z0-9_]+|read_text_file|inspect_scene_tree|replace_text_in_file|query_docs|resolve_library_id|godot\.[a-z0-9_.-]+)\b/iu;
+const DIAGNOSTICS_ENVIRONMENT_ERROR_PATTERN: RegExp = /\b(godot_diagnostics_unavailable|lsp_unavailable|dap_unavailable|no active workspace|ECONNREFUSED|ETIMEDOUT|timeout|not available|not running)\b/iu;
 
 export function createWorkflowPhaseRunId(phaseId: string): string {
 	return `phase-run-${phaseId}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -34,7 +35,7 @@ function summarizeArgs(args: Record<string, unknown>): Record<string, unknown> {
 
 function parsedResultFromToolEvent(event: Extract<ToolEvent, { type: "tool.result" }>): Record<string, unknown> {
 	const parsedResult: Record<string, unknown> = {};
-	for (const key of ["ok", "exitCode", "diagnosticsCount", "diagnosticsErrorCount", "validationStatus", "summary", "failedChecks", "artifactRefs"]) {
+	for (const key of ["ok", "exitCode", "diagnosticsCount", "diagnosticsErrorCount", "validationStatus", "summary", "failedChecks", "environmentIssue", "artifactRefs"]) {
 		const value: unknown = event[key as keyof typeof event];
 		if (value !== undefined) {
 			parsedResult[key] = value;
@@ -145,6 +146,38 @@ function isVerificationObservation(observation: WorkflowToolObservation): boolea
 		|| observation.toolName === "mcp_godot_validate_scene_script_references";
 }
 
+function isSuccessfulVerificationObservation(observation: WorkflowToolObservation): boolean {
+	return observation.status === "succeeded" && isVerificationObservation(observation);
+}
+
+function isDiagnosticsObservation(observation: WorkflowToolObservation): boolean {
+	return observation.toolName.startsWith("mcp_godot_lsp_") || observation.toolName.startsWith("mcp_godot_dap_");
+}
+
+function isEnvironmentIssueObservation(observation: WorkflowToolObservation): boolean {
+	if (observation.parsedResult?.environmentIssue === true) {
+		return true;
+	}
+	if (!isDiagnosticsObservation(observation)) {
+		return false;
+	}
+
+	const text: string = [
+		observation.error,
+		observation.parsedResult?.summary,
+		observation.parsedResult?.failedChecks
+	].map((value: unknown): string => Array.isArray(value) ? value.join("\n") : String(value ?? "")).join("\n");
+	return DIAGNOSTICS_ENVIRONMENT_ERROR_PATTERN.test(text);
+}
+
+function hasEnvironmentIssueObservation(observations: WorkflowToolObservation[]): boolean {
+	return observations.some(isEnvironmentIssueObservation);
+}
+
+function hasSuccessfulVerificationObservation(observations: WorkflowToolObservation[]): boolean {
+	return observations.some(isSuccessfulVerificationObservation);
+}
+
 function collectFailedChecks(phase: WorkflowPhase, observations: WorkflowToolObservation[], agentResultText: string): WorkflowFailedCheck[] {
 	const failedChecks: WorkflowFailedCheck[] = [];
 	for (const observation of observations) {
@@ -159,6 +192,9 @@ function collectFailedChecks(phase: WorkflowPhase, observations: WorkflowToolObs
 		}
 
 		if (observation.error !== undefined) {
+			if (isEnvironmentIssueObservation(observation)) {
+				continue;
+			}
 			failedChecks.push({
 				code: "tool_error",
 				message: observation.error,
@@ -169,6 +205,9 @@ function collectFailedChecks(phase: WorkflowPhase, observations: WorkflowToolObs
 
 		const parsedResult: Record<string, unknown> | undefined = observation.parsedResult;
 		if (parsedResult === undefined) {
+			continue;
+		}
+		if (isEnvironmentIssueObservation(observation)) {
 			continue;
 		}
 
@@ -264,7 +303,7 @@ function createOutcomeStatus(
 		if (failedChecks.length > 0) {
 			return "needs_fix";
 		}
-		if (!observations.some(isVerificationObservation)) {
+		if (!hasSuccessfulVerificationObservation(observations)) {
 			return "blocked";
 		}
 	}
@@ -292,7 +331,11 @@ export function createWorkflowPhaseOutcome(
 		? failedChecks.map((check: WorkflowFailedCheck): string => check.message)
 		: collectSummaries(observations);
 	const blockedReason: string | undefined = status === "blocked"
-		? (phase.toolGroup === "verify" ? "验证阶段没有运行任何可判定的验证工具。" : summaries[0])
+		? (phase.toolGroup === "verify"
+			? hasEnvironmentIssueObservation(observations)
+				? "验证环境不可用，且没有其它成功的可判定验证结果。"
+				: "验证阶段没有运行任何可判定的验证工具。"
+			: summaries[0])
 		: undefined;
 	const trimmedAgentText: string = agentResultText.trim();
 	const summary: string = blockedReason
@@ -309,7 +352,10 @@ export function createWorkflowPhaseOutcome(
 		summary,
 		evidence: summaries,
 		failedChecks: status === "blocked" && failedChecks.length === 0
-			? [{ code: "verify_tool_missing", message: blockedReason ?? "验证阶段缺少验证工具结果。" }]
+			? [{
+				code: hasEnvironmentIssueObservation(observations) ? "validation_environment_unavailable" : "verify_tool_missing",
+				message: blockedReason ?? "验证阶段缺少验证工具结果。"
+			}]
 			: failedChecks,
 		requiredFixes: createRequiredFixes(failedChecks),
 		modifiedArtifacts: collectArtifacts(observations, ["write", "destructive"]),
@@ -335,6 +381,12 @@ function observationPresetName(observation: WorkflowToolObservation): string {
 function hasLspDiagnostics(observations: WorkflowToolObservation[]): boolean {
 	return observations.some((observation: WorkflowToolObservation): boolean => (
 		observationMatchesTool(observation, "mcp_godot_lsp_get_file_diagnostics")
+	));
+}
+
+function hasLspEnvironmentIssue(observations: WorkflowToolObservation[]): boolean {
+	return observations.some((observation: WorkflowToolObservation): boolean => (
+		observation.toolName.startsWith("mcp_godot_lsp_") && isEnvironmentIssueObservation(observation)
 	));
 }
 
@@ -382,7 +434,7 @@ export function applyDeterministicVerificationGate(
 	const sceneArtifacts: string[] = modifiedArtifacts.filter((artifact: string): boolean => artifact.endsWith(".tscn"));
 	const gateFailures: WorkflowFailedCheck[] = [];
 
-	if (gdArtifacts.length > 0 && !hasLspDiagnostics(outcome.toolObservations)) {
+	if (gdArtifacts.length > 0 && !hasLspDiagnostics(outcome.toolObservations) && !hasLspEnvironmentIssue(outcome.toolObservations)) {
 		gateFailures.push(createGateFailure(
 			"lsp_diagnostics_required",
 			"修改了 GDScript，但验证阶段没有运行 LSP diagnostics。",

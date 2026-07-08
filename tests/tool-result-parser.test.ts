@@ -62,3 +62,43 @@ test("empty LSP diagnostics result marks validation passed", (): void => {
 	assert.equal(summary.validationStatus, "passed");
 	assert.deepEqual(summary.failedChecks, []);
 });
+
+test("LSP status preserves unavailable workspace as environment issue", (): void => {
+	const summary = parseToolResultSummary(
+		"mcp_godot_lsp_get_status",
+		{},
+		JSON.stringify({
+			ok: false,
+			error: {
+				code: "godot_diagnostics_unavailable",
+				message: "godot_diagnostics_unavailable: no active workspace"
+			}
+		})
+	);
+
+	assert.equal(summary.ok, false);
+	assert.equal(summary.validationStatus, "failed");
+	assert.equal(summary.environmentIssue, true);
+	assert.match(summary.summary ?? "", /no active workspace/);
+	assert.match(summary.failedChecks?.[0] ?? "", /no active workspace/);
+});
+
+test("LSP diagnostics unavailable keeps error text instead of reporting zero clean diagnostics", (): void => {
+	const summary = parseToolResultSummary(
+		"mcp_godot_lsp_get_file_diagnostics",
+		{ resourcePath: "res://scripts/game.gd" },
+		JSON.stringify({
+			ok: false,
+			error: {
+				code: "godot_diagnostics_unavailable",
+				message: "godot_diagnostics_unavailable: no active workspace"
+			}
+		})
+	);
+
+	assert.equal(summary.ok, false);
+	assert.equal(summary.validationStatus, "failed");
+	assert.equal(summary.environmentIssue, true);
+	assert.match(summary.summary ?? "", /unavailable/);
+	assert.match(summary.failedChecks?.[0] ?? "", /no active workspace/);
+});

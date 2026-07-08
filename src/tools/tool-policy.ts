@@ -1,7 +1,7 @@
 import { isDynamicMcpToolName } from "./dynamic-mcp-tools.js";
 import { HARD_BLOCKED_TOOLS, TOOL_POLICIES } from "./tool-policy-table.js";
 
-export type ApprovalMode = "read-only" | "manual" | "auto-safe" | "bypass";
+export type ApprovalMode = "manual" | "auto-safe" | "bypass";
 
 export type ToolRisk = "read" | "verify" | "propose" | "write" | "destructive";
 
@@ -41,12 +41,6 @@ export function evaluateToolCall(
 		return { action: "deny", reason: "该工具已被硬性禁用" };
 	}
 
-	if (mode === "read-only") {
-		return policy.risk === "read" || policy.risk === "verify"
-			? { action: "allow" }
-			: { action: "deny", reason: "当前为只读模式，不允许写操作" };
-	}
-
 	if (mode === "manual") {
 		if (policy.risk === "read" || policy.risk === "verify" || policy.risk === "propose") {
 			return { action: "allow" };
@@ -57,6 +51,10 @@ export function evaluateToolCall(
 
 	if (mode === "auto-safe") {
 		if (policy.risk === "read" || policy.risk === "verify" || policy.risk === "propose") {
+			return { action: "allow" };
+		}
+
+		if (policy.risk === "write" && !isDynamicMcpToolName(toolName)) {
 			return { action: "allow" };
 		}
 

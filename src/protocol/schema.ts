@@ -511,7 +511,7 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		id: z.string(),
 		method: z.literal("approval.mode.set"),
 		params: z.object({
-			mode: z.enum(["manual", "auto-safe", "read-only"]),
+			mode: z.enum(["manual", "auto-safe"]),
 		}),
 	}),
 	z.object({

@@ -383,29 +383,12 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 						try {
 							workflowPlan = await createLlmWorkflowPlan(params, options, history, mcpSystemContext + additionalContextSection + guidePromptSection, abortController.signal);
 						} catch (error: unknown) {
-							const runId: string = `agent-run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-							sendSessionEvent(socket, request.id, session, "agent.run.started", {
-								runId,
+							logger.warn("ai", "llm_workflow_planner_failed_fallback", {
 								requestId: request.id,
-								title: "LLM 计划失败",
-								source: "llm",
-								steps: []
-							});
-							sendSessionEvent(socket, request.id, session, "agent.run.error", {
-								runId,
-								code: "planner_failed",
+								sessionId: session.sessionId,
 								message: error instanceof Error ? error.message : "LLM planner failed"
 							});
-							sendJson(socket, {
-								type: "response",
-								id: request.id,
-								ok: false,
-								error: {
-									code: "planner_failed",
-									message: error instanceof Error ? error.message : "LLM planner failed"
-								}
-							});
-							break;
+							workflowPlan = planWorkflow(params);
 						}
 					} else {
 						workflowPlan = planWorkflow(params);

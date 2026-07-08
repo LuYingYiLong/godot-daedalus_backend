@@ -6,7 +6,7 @@ import type { StoredSessionEvent } from "../src/session/session-store.js";
 import { createClientSession } from "../src/server/client-session.js";
 import type { ClientSession } from "../src/server/client-session.js";
 import { createAdditionalContextPromptSection } from "../src/server/additional-context.js";
-import { normalizeNextStepHints } from "../src/server/next-step-hints.js";
+import { normalizeNextStepHints, parseJsonObjectLoose } from "../src/server/next-step-hints.js";
 import { beginRequestExecution, finishRequestExecution } from "../src/server/request-lifecycle.js";
 import { hydratePendingGuides } from "../src/server/pending-guides.js";
 
@@ -143,4 +143,11 @@ test("next step hints normalize loose model output", (): void => {
 		{ title: "验证", message: "运行诊断并修复错误" },
 		{ title: "总结刚才的改动", message: "总结刚才的改动" }
 	]);
+});
+
+test("next step hint JSON parser returns stable errors for malformed arrays", (): void => {
+	assert.throws(
+		(): unknown => parseJsonObjectLoose("{\"hints\":[{\"title\":\"验证\"} {\"title\":\"总结\"}]}"),
+		/LLM did not return valid JSON/u
+	);
 });

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { chatWithDeepSeek, type DeepSeekChatOptions } from "../providers/deepseek-client.js";
+import { parseJsonObjectFromLlm } from "../providers/llm-json.js";
 import { promptIdSchema } from "../protocol/schema.js";
 import type { AiChatParams, ChatMessage, PromptId } from "../protocol/types.js";
 import { isSkillId, type SkillId } from "../skills/registry.js";
@@ -182,16 +183,7 @@ function parseLlmPlan(text: string): LlmPlan {
 }
 
 function parseJsonObject(text: string): unknown {
-	try {
-		return JSON.parse(text) as unknown;
-	} catch {
-		const startIndex: number = text.indexOf("{");
-		const endIndex: number = text.lastIndexOf("}");
-		if (startIndex >= 0 && endIndex > startIndex) {
-			return JSON.parse(text.slice(startIndex, endIndex + 1)) as unknown;
-		}
-		throw new Error("LLM planner did not return valid JSON");
-	}
+	return parseJsonObjectFromLlm(text, "LLM planner did not return valid JSON");
 }
 
 function createWorkflowPlanFromLlmPlan(rawPlan: LlmPlan, userMessage: string): WorkflowPlan | null {

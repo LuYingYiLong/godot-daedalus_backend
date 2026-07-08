@@ -149,6 +149,85 @@ test("successful LSP diagnostics lets verify phase complete", (): void => {
 	assert.deepEqual(outcome.verifiedArtifacts, ["res://scripts/game.gd"]);
 });
 
+test("verify phase treats LSP unavailable plus check-only pass as completed", (): void => {
+	const observations: WorkflowToolObservation[] = applyEvents([
+		{
+			type: "tool.result",
+			step: 0,
+			toolCallId: "call-lsp-status",
+			toolName: "mcp_godot_lsp_get_status",
+			resultChars: 120,
+			truncated: false,
+			ok: false,
+			validationStatus: "failed",
+			environmentIssue: true,
+			summary: "mcp_godot_lsp_get_status failed: godot_diagnostics_unavailable: no active workspace",
+			failedChecks: ["godot_diagnostics_unavailable: no active workspace"],
+			artifactRefs: []
+		},
+		{
+			type: "tool.call",
+			step: 0,
+			toolCallId: "call-check",
+			toolName: "mcp_terminal_run_safe_preset",
+			args: { presetName: "godot.check_only", resourcePath: "res://scripts/game.gd" },
+			serverId: "terminal",
+			serverName: "Terminal",
+			category: "terminal",
+			title: "运行验证",
+			summary: "godot.check_only",
+			target: {
+				kind: "command",
+				path: "res://scripts/game.gd",
+				label: "godot.check_only"
+			}
+		},
+		{
+			type: "tool.result",
+			step: 0,
+			toolCallId: "call-check",
+			toolName: "mcp_terminal_run_safe_preset",
+			resultChars: 120,
+			truncated: false,
+			ok: true,
+			exitCode: 0,
+			validationStatus: "passed",
+			summary: "godot.check_only res://scripts/game.gd passed",
+			artifactRefs: ["res://scripts/game.gd"]
+		}
+	]);
+	const outcome = createWorkflowPhaseOutcome(createPhase("verify", "verify"), "phase-run-1", "LSP 是环境问题，check-only 已通过。", observations);
+
+	assert.equal(outcome.status, "completed");
+	assert.deepEqual(outcome.failedChecks, []);
+	assert.deepEqual(outcome.requiredFixes, []);
+	assert.match(outcome.evidence.join("\n"), /no active workspace/);
+	assert.deepEqual(outcome.verifiedArtifacts, ["res://scripts/game.gd"]);
+});
+
+test("verify phase with only LSP unavailable is blocked instead of needs_fix", (): void => {
+	const observations: WorkflowToolObservation[] = applyEvents([{
+		type: "tool.result",
+		step: 0,
+		toolCallId: "call-lsp-status",
+		toolName: "mcp_godot_lsp_get_status",
+		resultChars: 120,
+		truncated: false,
+		ok: false,
+		validationStatus: "failed",
+		environmentIssue: true,
+		summary: "mcp_godot_lsp_get_status failed: godot_diagnostics_unavailable: no active workspace",
+		failedChecks: ["godot_diagnostics_unavailable: no active workspace"],
+		artifactRefs: []
+	}]);
+	const outcome = createWorkflowPhaseOutcome(createPhase("verify", "verify"), "phase-run-1", "LSP 不可用。", observations);
+
+	assert.equal(outcome.status, "blocked");
+	assert.equal(outcome.failedChecks[0]?.code, "validation_environment_unavailable");
+	assert.deepEqual(outcome.requiredFixes, []);
+	assert.match(outcome.blockedReason ?? "", /验证环境不可用/);
+});
+
 test("summarize gate blocks unresolved failed outcome until a later completed outcome", (): void => {
 	const verifyPhase: WorkflowPhase = createPhase("verify", "verify");
 	const failedOutcome = createWorkflowPhaseOutcome(
@@ -231,6 +310,78 @@ test("deterministic verification gate requires check-only after GDScript writes"
 
 	assert.equal(gatedOutcome.status, "needs_fix");
 	assert.equal(gatedOutcome.failedChecks[0]?.code, "godot_check_only_required");
+});
+
+test("deterministic verification gate accepts check-only when LSP is unavailable", (): void => {
+	const writeOutcome: WorkflowPhaseOutput = {
+		phaseId: "implement",
+		phaseRunId: "phase-run-write",
+		title: "实现修改",
+		status: "completed",
+		summary: "updated script",
+		evidence: [],
+		failedChecks: [],
+		requiredFixes: [],
+		modifiedArtifacts: ["res://scripts/game.gd"],
+		verifiedArtifacts: [],
+		toolObservations: []
+	};
+	const verifyPhase: WorkflowPhase = createPhase("verify", "verify");
+	const outcome = createWorkflowPhaseOutcome(
+		verifyPhase,
+		"phase-run-verify",
+		"LSP 不可用，已用 check-only 验证。",
+		applyEvents([
+			{
+				type: "tool.result",
+				step: 0,
+				toolCallId: "call-lsp-status",
+				toolName: "mcp_godot_lsp_get_status",
+				resultChars: 120,
+				truncated: false,
+				ok: false,
+				validationStatus: "failed",
+				environmentIssue: true,
+				summary: "mcp_godot_lsp_get_status failed: godot_diagnostics_unavailable: no active workspace",
+				failedChecks: ["godot_diagnostics_unavailable: no active workspace"],
+				artifactRefs: []
+			},
+			{
+				type: "tool.call",
+				step: 0,
+				toolCallId: "call-check",
+				toolName: "mcp_terminal_run_safe_preset",
+				args: { presetName: "godot.check_only", resourcePath: "res://scripts/game.gd" },
+				serverId: "terminal",
+				serverName: "Terminal",
+				category: "terminal",
+				title: "运行验证",
+				summary: "godot.check_only",
+				target: {
+					kind: "command",
+					path: "res://scripts/game.gd",
+					label: "godot.check_only"
+				}
+			},
+			{
+				type: "tool.result",
+				step: 0,
+				toolCallId: "call-check",
+				toolName: "mcp_terminal_run_safe_preset",
+				resultChars: 120,
+				truncated: false,
+				ok: true,
+				exitCode: 0,
+				validationStatus: "passed",
+				summary: "godot.check_only res://scripts/game.gd passed",
+				artifactRefs: ["res://scripts/game.gd"]
+			}
+		])
+	);
+	const gatedOutcome = applyDeterministicVerificationGate(verifyPhase, outcome, [writeOutcome]);
+
+	assert.equal(gatedOutcome.status, "completed");
+	assert.deepEqual(gatedOutcome.failedChecks, []);
 });
 
 test("deterministic verification gate passes when required GDScript checks ran", (): void => {
