@@ -6,6 +6,7 @@ import type { AiChatParams, ChatMessage, PromptId } from "../protocol/types.js";
 import { isSkillId, type SkillId } from "../skills/registry.js";
 import type { ToolBudgetLevel } from "../tools/llm-tool-budget.js";
 import { createWorkflowId, createWorkflowTitle, READ_TOOLS, VERIFY_TOOLS, WRITE_TOOLS } from "./planner.js";
+import { getAllowedToolsForLlmPlannedStep } from "./godot-template-planner.js";
 import type {
 	WorkflowPhase,
 	WorkflowPhaseOutput,
@@ -258,7 +259,7 @@ function createPhaseFromStep(step: LlmPlanStep, index: number, usedIds: Set<stri
 		skillId,
 		promptId,
 		toolBudget: getToolBudgetForToolGroup(toolGroup),
-		allowedTools: getAllowedToolsForToolGroup(toolGroup),
+		allowedTools: getAllowedToolsForLlmPlannedStep(toolGroup, step.title, step.instruction),
 		instruction: clipText(step.instruction, MAX_PHASE_INSTRUCTION_CHARS),
 		acceptanceCriteria: normalizeAcceptanceCriteria(step.acceptanceCriteria, toolGroup)
 	};

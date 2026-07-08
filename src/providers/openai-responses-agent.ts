@@ -42,6 +42,11 @@ type AppendToolResultItemsResult = {
 	reason: string | null;
 };
 
+function shouldRequireToolCallOnStep(params: AiChatParams, step: number, startStep: number): boolean {
+	const options: Record<string, unknown> | undefined = params.options as Record<string, unknown> | undefined;
+	return step === startStep && options?.requireToolCallOnFirstStep === true;
+}
+
 function convertToolDefinition(tool: ChatCompletionTool): FunctionTool | null {
 	if (tool.type !== "function") {
 		return null;
@@ -142,7 +147,8 @@ function createRequestBody(
 	options: ProviderChatOptions,
 	instructions: string,
 	inputItems: ResponseInputItem[],
-	tools?: Tool[] | undefined
+	tools?: Tool[] | undefined,
+	requireToolCall: boolean = false
 ): ResponseCreateParamsNonStreaming {
 	const requestBody: ResponseCreateParamsNonStreaming = {
 		model: resolveOpenAIResponsesModel(options),
@@ -153,6 +159,9 @@ function createRequestBody(
 	if (tools !== undefined && tools.length > 0) {
 		requestBody.tools = tools;
 		requestBody.parallel_tool_calls = false;
+		if (requireToolCall) {
+			requestBody.tool_choice = "required";
+		}
 	}
 	applyOpenAIResponsesOptions(requestBody, params);
 	return requestBody;
@@ -165,13 +174,14 @@ async function readResponsesAssistantMessage(
 	inputItems: ResponseInputItem[],
 	tools: Tool[],
 	streamAssistant: boolean,
+	requireToolCall: boolean,
 	onEvent?: OnToolEvent,
 	abortSignal?: AbortSignal | undefined
 ): Promise<ResponsesAssistantMessage> {
 	const client = createOpenAIResponsesClient(options);
 	if (!streamAssistant) {
 		const response: Response = await client.responses.create(
-			createRequestBody(params, options, instructions, inputItems, tools),
+			createRequestBody(params, options, instructions, inputItems, tools, requireToolCall),
 			{ signal: abortSignal }
 		);
 		return {
@@ -182,7 +192,7 @@ async function readResponsesAssistantMessage(
 	}
 
 	const requestBody: ResponseCreateParamsStreaming = {
-		...createRequestBody(params, options, instructions, inputItems, tools),
+		...createRequestBody(params, options, instructions, inputItems, tools, requireToolCall),
 		stream: true
 	};
 	const stream = await client.responses.create(requestBody, { signal: abortSignal });
@@ -264,6 +274,7 @@ async function runResponsesAgentLoop(
 			inputItems,
 			tools,
 			streamAssistant,
+			shouldRequireToolCallOnStep(params, step, startStep),
 			onEvent,
 			abortSignal
 		);

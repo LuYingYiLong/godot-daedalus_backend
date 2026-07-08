@@ -84,6 +84,39 @@ test("multiple Godot editors require an explicit session editor binding", async 
 	await toolPromise;
 });
 
+test("filesystem refresh broadcasts to online Godot editors in the workspace", async (): Promise<void> => {
+	const bridge = new GodotEditorBridge();
+	const socketA = createSocket();
+	const socketB = createSocket();
+	const socketOther = createSocket();
+	bridge.updateInstanceContext(socketA, "workspace-a", "editor-a", {}, "Godot A");
+	bridge.updateInstanceContext(socketB, "workspace-a", "editor-b", {}, "Godot B");
+	bridge.updateInstanceContext(socketOther, "workspace-b", "editor-other", {}, "Godot Other");
+
+	const refreshPromise = withMcpRequestContext({ workspaceId: "workspace-a" }, async (): Promise<unknown[] | null> => {
+		return await bridge.refreshFilesystem(["project.godot"]);
+	});
+	const requestedA = socketA.sent.find((message: Record<string, unknown>): boolean => message.event === "editor.tool.requested");
+	const requestedB = socketB.sent.find((message: Record<string, unknown>): boolean => message.event === "editor.tool.requested");
+	assert.ok(requestedA);
+	assert.ok(requestedB);
+	assert.equal(socketOther.sent.some((message: Record<string, unknown>): boolean => message.event === "editor.tool.requested"), false);
+
+	const dataA = requestedA.data as Record<string, unknown>;
+	const dataB = requestedB.data as Record<string, unknown>;
+	assert.equal(dataA.toolName, "refresh_filesystem");
+	assert.equal(dataB.toolName, "refresh_filesystem");
+	assert.deepEqual((dataA.args as Record<string, unknown>).changedPaths, ["project.godot"]);
+	assert.deepEqual((dataB.args as Record<string, unknown>).changedPaths, ["project.godot"]);
+	assert.equal(bridge.handleToolResult(String(dataA.callId), true, { ok: true, editor: "a" }, undefined), true);
+	assert.equal(bridge.handleToolResult(String(dataB.callId), true, { ok: true, editor: "b" }, undefined), true);
+
+	assert.deepEqual(await refreshPromise, [
+		{ ok: true, editor: "a" },
+		{ ok: true, editor: "b" }
+	]);
+});
+
 test("session events broadcast to subscribed frontend sockets once", (): void => {
 	const originSocket = createSocket();
 	const studioSocket = createSocket();

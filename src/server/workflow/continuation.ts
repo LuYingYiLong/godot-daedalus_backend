@@ -17,10 +17,18 @@ import { reviseLlmWorkflowPlan } from "../../workflow/llm-planner.js";
 import { WorkflowExecutionError } from "./workflow-error.js";
 import { MAX_WORKFLOW_AUTO_REPAIR_ROUNDS } from "./limits.js";
 import type { WorkflowPhaseRunResult, WorkflowPhaseToolStats } from "./shared-types.js";
-import { createEmptyWorkflowPhaseToolStats, createWorkflowWriteGuardRetryMessage, didWorkflowWritePhaseExecute, shouldRequireWorkflowWriteTool } from "./tool-events.js";
+import {
+	createEmptyWorkflowPhaseToolStats,
+	createWorkflowWriteGuardRetryMessage,
+	didWorkflowWritePhaseExecute,
+	getWorkflowWriteGuardRetryAllowedTools,
+	shouldRequireWorkflowWriteTool
+} from "./tool-events.js";
 import { sendWorkflowEvent, sendWorkflowTodoSnapshot } from "./events.js";
 import { createWorkflowPhasePrompt, runWorkflowPhase } from "./phase-runner.js";
 import { logger } from "../../logger.js";
+
+const MAX_WORKFLOW_WRITE_GUARD_RETRY_ATTEMPTS: number = 2;
 
 export function createWorkflowPendingContinuation(
 	phaseParams: AiChatParams,
@@ -74,7 +82,7 @@ export async function continueWorkflowExecution(
 
 		const phaseRunId: string = createWorkflowPhaseRunId(phase.id);
 		if (phase.toolGroup === "summarize") {
-			const blockingOutcome: WorkflowPhaseOutput | null = findBlockingOutcomeBeforeSummarize(phaseOutputs);
+			const blockingOutcome: WorkflowPhaseOutput | null = findBlockingOutcomeBeforeSummarize(phaseOutputs, phase.id);
 			if (blockingOutcome !== null) {
 				const guardMessage: string = `总结阶段被阻止：阶段「${blockingOutcome.title}」仍处于 ${blockingOutcome.status}，不能交付完成总结。`;
 				const blockedOutcome: WorkflowPhaseOutput = {
@@ -174,24 +182,35 @@ export async function continueWorkflowExecution(
 				phaseToolStats = phaseRunResult.toolStats;
 				phaseToolObservations = phaseRunResult.toolObservations;
 
-				if (
+				let writeGuardRetryAttempt: number = 0;
+				while (
 					agentResult.status === "completed"
 					&& shouldRequireWorkflowWriteTool(phase)
 					&& !didWorkflowWritePhaseExecute(phase, phaseToolStats)
+					&& writeGuardRetryAttempt < MAX_WORKFLOW_WRITE_GUARD_RETRY_ATTEMPTS
 				) {
+					writeGuardRetryAttempt += 1;
+					const retryAllowedTools: string[] = getWorkflowWriteGuardRetryAllowedTools(phase);
+					const retryPhase: WorkflowPhase = retryAllowedTools.length > 0
+						? { ...phase, allowedTools: retryAllowedTools }
+						: phase;
 					const retryPhaseParams: AiChatParams = createPhaseParams(
 						state.originalParams,
-						phase,
-						createWorkflowWriteGuardRetryMessage(phaseMessage),
+						retryPhase,
+						createWorkflowWriteGuardRetryMessage(phaseMessage, retryAllowedTools, writeGuardRetryAttempt, agentResult.text),
 						false
 					);
+					retryPhaseParams.options = {
+						...(retryPhaseParams.options ?? {}),
+						requireToolCallOnFirstStep: true
+					} as AiChatParams["options"] & Record<string, unknown>;
 					phaseRunResult = await runWorkflowPhase(
 						socket,
 						retryPhaseParams,
 						options,
 						state.history,
 						fullSystemPrompt,
-						phase,
+						retryPhase,
 						mcpHost,
 						session,
 						requestId,

@@ -164,16 +164,25 @@ export class GodotEditorBridge {
 		return typeof scenePath === "string" && scenePath.trim().length > 0 ? scenePath : undefined;
 	}
 
-	async refreshFilesystem(changedPaths: string[]): Promise<unknown | null> {
-		const connection: EditorConnection | null = this.selectConnection(undefined, undefined, false);
-		if (connection === null || !this.isConnectionOnline(connection)) {
+	async refreshFilesystem(changedPaths: string[]): Promise<unknown[] | null> {
+		const connections: EditorConnection[] = this.selectRefreshConnections();
+		if (connections.length === 0) {
 			return null;
 		}
 
-		return await this.requestEditorTool("refresh_filesystem", {
+		const args: JsonObject = {
 			changedPaths,
 			scanSources: true
-		});
+		};
+		const results: PromiseSettledResult<unknown>[] = await Promise.allSettled(
+			connections.map((connection: EditorConnection): Promise<unknown> => this.requestEditorToolForConnection(connection, "refresh_filesystem", args))
+		);
+		const rejected: PromiseRejectedResult | undefined = results.find((result: PromiseSettledResult<unknown>): result is PromiseRejectedResult => result.status === "rejected");
+		if (rejected !== undefined) {
+			throw rejected.reason instanceof Error ? rejected.reason : new Error(String(rejected.reason));
+		}
+
+		return results.map((result: PromiseSettledResult<unknown>): unknown => result.status === "fulfilled" ? result.value : null);
 	}
 
 	listInstances(workspaceId?: string | undefined): GodotEditorInstanceSummary[] {
@@ -387,6 +396,17 @@ export class GodotEditorBridge {
 			return Promise.reject(new Error("editor_unavailable: Godot editor client is not connected"));
 		}
 
+		return this.requestEditorToolForConnection(connection, toolName, args);
+	}
+
+	private selectRefreshConnections(): EditorConnection[] {
+		const resolvedWorkspaceId: string | undefined = getCurrentMcpWorkspaceId();
+		return Array.from(this.connectionsByInstanceId.values())
+			.filter((connection: EditorConnection): boolean => this.isConnectionOnline(connection))
+			.filter((connection: EditorConnection): boolean => resolvedWorkspaceId === undefined || connection.workspaceId === resolvedWorkspaceId);
+	}
+
+	private requestEditorToolForConnection(connection: EditorConnection, toolName: string, args: JsonObject): Promise<unknown> {
 		const callId: string = `editor-tool-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 		return new Promise<unknown>((resolve, reject): void => {
 			const timeout: NodeJS.Timeout = setTimeout((): void => {

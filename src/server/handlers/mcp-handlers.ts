@@ -8,6 +8,7 @@ import {
 	listCustomMcpServerSummaries,
 	removeCustomMcpServerConfig,
 	setCustomMcpServerEnabled,
+	updateCustomMcpServerConfig,
 	type CustomMcpServerSummary
 } from "../../mcp/custom-mcp-config-store.js";
 import { createProviderStatusEvent } from "../../providers/provider-error.js";
@@ -244,6 +245,35 @@ export async function handleMcpRequest(socket: WebSocket, request: ClientRequest
 				error: {
 					code: "mcp_config_error",
 					message: error instanceof Error ? error.message : "Failed to add custom MCP server"
+				}
+			});
+		}
+		break;
+	}
+
+	case "mcp.config.update": {
+		try {
+			const updated: CustomMcpServerSummary | null = await updateCustomMcpServerConfig(request.params);
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: true,
+				result: {
+					updated: updated !== null,
+					serverId: request.params.serverId,
+					server: updated,
+					...await createMcpConfigListResult(mcpHost, workspaceId)
+				}
+			});
+			refreshCustomMcpServersAndNotify(socket, mcpHost, workspaceId);
+		} catch (error: unknown) {
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: false,
+				error: {
+					code: "mcp_config_error",
+					message: error instanceof Error ? error.message : "Failed to update custom MCP server"
 				}
 			});
 		}

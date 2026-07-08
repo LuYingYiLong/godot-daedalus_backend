@@ -34,7 +34,7 @@ export async function selectMessagesWithinBudget(
 
 	for (let index: number = messages.length - 1; index >= 0; index -= 1) {
 		const message: ChatMessage | undefined = messages[index];
-		if (message === undefined) {
+		if (message === undefined || message.excludeFromLlmContext === true) {
 			continue;
 		}
 
@@ -57,6 +57,9 @@ export function summarizeMessagesAsSummary(messages: ChatMessage[]): string {
 	const turns: string[] = [];
 
 	for (const message of messages) {
+		if (message.excludeFromLlmContext === true) {
+			continue;
+		}
 		const roleLabel: string = message.role === "user" ? "用户" : message.role === "assistant" ? "助手" : "系统";
 		const truncated: string = message.content.length > 200
 			? message.content.slice(0, 200) + "..."

@@ -25,11 +25,13 @@ type ServerEvent = {
 };
 type ServerMessage = ServerResponse | ServerEvent;
 type MessagePredicate = (message: ServerMessage) => boolean;
+type SmokeScenario = "inline_diff" | "workflow_attach";
 
 type CliOptions = {
 	useLlm: boolean;
 	dryRun: boolean;
 	help: boolean;
+	scenario: SmokeScenario;
 	startBackend: boolean;
 	keepBackend: boolean;
 	provider: ProviderId;
@@ -41,7 +43,10 @@ type CliOptions = {
 	baseUrl?: string | undefined;
 	apiKeyEnv?: string | undefined;
 	timeoutMs: number;
+	workflow?: string | undefined;
 	targetPath: string;
+	scenePath: string;
+	scriptPath: string;
 };
 
 type StartedBackend = {
@@ -130,6 +135,17 @@ function parseProvider(value: string | boolean | undefined): ProviderId {
 	throw new Error(`Invalid provider: ${value}`);
 }
 
+function parseScenario(value: string | boolean | undefined): SmokeScenario {
+	if (typeof value !== "string" || value.trim().length === 0) {
+		return "inline_diff";
+	}
+	const normalized: string = value.trim().toLowerCase();
+	if (normalized === "inline_diff" || normalized === "workflow_attach") {
+		return normalized;
+	}
+	throw new Error(`Invalid scenario: ${value}`);
+}
+
 function getStringArg(values: Map<string, string | boolean>, ...names: string[]): string | undefined {
 	for (const name of names) {
 		const value: string | boolean | undefined = values.get(name);
@@ -144,11 +160,16 @@ function createDefaultTargetPath(): string {
 	return `scripts/daedalus_inline_diff_smoke_${Date.now().toString(36)}.gd`;
 }
 
+function createDefaultWorkflowBaseName(): string {
+	return `daedalus_full_smoke_${Date.now().toString(36)}`;
+}
+
 function parseOptions(argv: string[]): CliOptions {
 	const values: Map<string, string | boolean> = parseRawArgs(argv);
 	const help: boolean = values.has("help") || values.has("h");
 	const dryRun: boolean = parseBoolean(values.get("dry_run") ?? values.get("dryrun"), false);
 	const useLlm: boolean = values.has("use_llm") || values.has("usellm") || parseBoolean(values.get("llm"), false);
+	const scenario: SmokeScenario = parseScenario(getStringArg(values, "scenario", "case"));
 	const provider: ProviderId = parseProvider(getStringArg(values, "provider"));
 	const modelId: string = getStringArg(values, "model_id", "model")
 		?? getEnv("DAEDALUS_MODEL_ID")
@@ -170,11 +191,13 @@ function parseOptions(argv: string[]): CliOptions {
 	if (values.has("api_key") || values.has("api_key_value")) {
 		throw new Error("Do not pass API keys as command arguments. Use api_key_env=NAME or DAEDALUS_<PROVIDER>_API_KEY instead.");
 	}
+	const workflowBaseName: string = createDefaultWorkflowBaseName();
 
 	return {
 		useLlm,
 		dryRun,
 		help,
+		scenario,
 		startBackend: !parseBoolean(values.get("no_start_backend"), false),
 		keepBackend: parseBoolean(values.get("keep_backend"), false),
 		provider,
@@ -186,7 +209,10 @@ function parseOptions(argv: string[]): CliOptions {
 		baseUrl: getStringArg(values, "base_url", "baseurl") ?? getEnv(`${provider.toUpperCase()}_BASE_URL`),
 		apiKeyEnv: getStringArg(values, "api_key_env"),
 		timeoutMs,
-		targetPath: (getStringArg(values, "target", "target_path") ?? createDefaultTargetPath()).replaceAll("\\", "/")
+		workflow: getStringArg(values, "workflow"),
+		targetPath: (getStringArg(values, "target", "target_path") ?? createDefaultTargetPath()).replaceAll("\\", "/"),
+		scenePath: (getStringArg(values, "scene", "scene_path") ?? `scenes/${workflowBaseName}.tscn`).replaceAll("\\", "/"),
+		scriptPath: (getStringArg(values, "script", "script_path") ?? `scripts/${workflowBaseName}.gd`).replaceAll("\\", "/")
 	};
 }
 
@@ -196,13 +222,17 @@ function printHelp(): void {
 Usage:
   npm run dev:llm -- model_id=deepseek-v4-pro
   npm run smoke:llm -- use_llm provider=deepseek model_id=deepseek-v4-pro project=D:\\GodotProjects\\example
+  npm run smoke:llm:full -- model_id=deepseek-v4-pro
 
 Options:
   use_llm                         Required by smoke:llm to allow a real provider call.
+  scenario=inline_diff|workflow_attach
   provider=deepseek|moonshot|openai
   model_id=<model>
   project=<Godot project path>
   target_path=scripts/file.gd      Default is a timestamped smoke file.
+  scene_path=scenes/file.tscn      Used by scenario=workflow_attach.
+  script_path=scripts/file.gd      Used by scenario=workflow_attach.
   port=38182                      Used when starting a temporary backend.
   backend_url=ws://localhost:38180 Connect to an existing backend.
   no_start_backend                Do not start a temporary backend.
@@ -281,6 +311,52 @@ function createSmokePrompt(targetPath: string): string {
 		"```",
 		"不要读取、创建或修改任何其他文件。不要使用 propose 工具。写入成功后用一句话说明完成。"
 	].join("\n");
+}
+
+function createWorkflowAttachPrompt(scenePath: string, scriptPath: string): string {
+	const scriptContent: string = [
+		"extends Node",
+		"",
+		"const DAEDALUS_FULL_WORKFLOW_SMOKE: bool = true",
+		"const DAEDALUS_FULL_WORKFLOW_MESSAGE: String = \"full workflow smoke\"",
+		"",
+		"func _ready() -> void:",
+		"\tprint(DAEDALUS_FULL_WORKFLOW_MESSAGE)",
+		""
+	].join("\n");
+
+	return [
+		"执行 Godot Daedalus 真实 LLM 完整 workflow smoke。必须使用 API tool_calls，不要在文字里预告工具后结束。",
+		"目标是创建一个最小可验证 Godot 场景，并把脚本挂载到场景根节点。",
+		"",
+		"硬性要求：",
+		`1. 创建脚本 ${scriptPath}，内容必须完整写成：`,
+		"```gdscript",
+		scriptContent,
+		"```",
+		`2. 创建场景 ${scenePath}，根节点类型 Node，根节点名 DaedalusFullSmoke。`,
+		`3. 使用 mcp_godot_attach_script_to_node 或 mcp_godot_apply_scene_patch，把 res://${scriptPath} 挂载到场景根节点。`,
+		"4. 使用 mcp_godot_validate_scene_script_references 或 inspect_scene_tree 验证场景能引用这个脚本。",
+		"5. 不要修改任何其它文件，不要使用 Godot editor 在线工具，不要使用 terminal 写命令。",
+		"",
+		"写入阶段必须先发出真实写入 tool_call 或触发审批；不要只说“准备调用”。"
+	].join("\n");
+}
+
+function createPrompt(options: CliOptions): string {
+	if (options.scenario === "workflow_attach") {
+		return createWorkflowAttachPrompt(options.scenePath, options.scriptPath);
+	}
+
+	return createSmokePrompt(options.targetPath);
+}
+
+function getExpectedEditedPaths(options: CliOptions): string[] {
+	if (options.scenario === "workflow_attach") {
+		return [options.scenePath, options.scriptPath];
+	}
+
+	return [options.targetPath];
 }
 
 function startBackend(options: CliOptions): StartedBackend {
@@ -532,7 +608,7 @@ async function waitForBackend(url: string, timeoutMs: number, startedBackend: St
 	throw new Error(`Backend did not become healthy: ${lastError?.message ?? "timeout"}`);
 }
 
-function findBatchInEvent(message: ServerMessage, targetPath: string): JsonObject | null {
+function findBatchInEvent(message: ServerMessage, expectedPaths: readonly string[]): JsonObject | null {
 	if (message.type !== "event" || message.event !== "agent.tool.result" || !isRecord(message.data)) {
 		return null;
 	}
@@ -545,22 +621,77 @@ function findBatchInEvent(message: ServerMessage, targetPath: string): JsonObjec
 	if (!Array.isArray(editedFiles)) {
 		return null;
 	}
+	const expectedPathSet: Set<string> = new Set(expectedPaths);
 	const hasTarget: boolean = editedFiles.some((item: unknown): boolean => {
-		return isRecord(item) && item.path === targetPath;
+		if (!isRecord(item) || typeof item.path !== "string") {
+			return false;
+		}
+		const normalizedPath: string = normalizeResourcePath(item.path) ?? item.path;
+		return expectedPathSet.has(normalizedPath);
 	});
 	return hasTarget ? batch : null;
 }
 
-function isUnsafeApproval(data: JsonObject, targetPath: string): boolean {
+function normalizeResourcePath(value: unknown): string | undefined {
+	if (typeof value !== "string") {
+		return undefined;
+	}
+	return value.replace(/^res:\/\//u, "").replaceAll("\\", "/");
+}
+
+function isAllowedTextFileApproval(toolName: string, args: JsonObject, expectedPaths: ReadonlySet<string>): boolean {
+	if (
+		toolName !== "mcp_godot_create_text_file"
+		&& toolName !== "mcp_godot_overwrite_text_file"
+		&& toolName !== "mcp_godot_replace_text_in_file"
+		&& toolName !== "mcp_godot_delete_file"
+	) {
+		return false;
+	}
+
+	const relativePath: string | undefined = normalizeResourcePath(args.relativePath);
+	return relativePath !== undefined && expectedPaths.has(relativePath);
+}
+
+function isAllowedSceneApproval(toolName: string, args: JsonObject, expectedPaths: ReadonlySet<string>, scriptPath: string): boolean {
+	const scenePath: string | undefined = normalizeResourcePath(args.scenePath ?? args.relativePath);
+	if (scenePath === undefined || !expectedPaths.has(scenePath)) {
+		return false;
+	}
+
+	if (
+		toolName === "mcp_godot_create_scene"
+		|| toolName === "mcp_godot_add_node_to_scene"
+		|| toolName === "mcp_godot_apply_scene_patch"
+		|| toolName === "mcp_godot_connect_signal_in_scene"
+	) {
+		return true;
+	}
+
+	if (toolName !== "mcp_godot_attach_script_to_node") {
+		return false;
+	}
+
+	const approvalScriptPath: string | undefined = normalizeResourcePath(args.scriptPath);
+	return approvalScriptPath === scriptPath;
+}
+
+function isUnsafeApproval(data: JsonObject, options: CliOptions): boolean {
 	const toolName: string | undefined = asString(data.toolName);
-	if (toolName === undefined || !ALLOWED_SMOKE_WRITE_TOOLS.has(toolName)) {
+	if (toolName === undefined) {
 		return true;
 	}
 	const args: unknown = data.args;
 	if (!isRecord(args)) {
 		return true;
 	}
-	return args.relativePath !== targetPath;
+	if (options.scenario === "inline_diff") {
+		return !ALLOWED_SMOKE_WRITE_TOOLS.has(toolName) || args.relativePath !== options.targetPath;
+	}
+
+	const expectedPaths: ReadonlySet<string> = new Set(getExpectedEditedPaths(options));
+	return !isAllowedTextFileApproval(toolName, args, expectedPaths)
+		&& !isAllowedSceneApproval(toolName, args, expectedPaths, options.scriptPath);
 }
 
 async function configureProvider(client: RpcClient, options: CliOptions, apiKey: string | undefined): Promise<void> {
@@ -588,15 +719,107 @@ async function configureProvider(client: RpcClient, options: CliOptions, apiKey:
 	await client.sendRequest("provider.config.set", params, 30_000);
 }
 
+async function approveWithRetry(client: RpcClient, approvalId: string, timeoutMs: number): Promise<void> {
+	let lastError: Error | null = null;
+	for (let attempt: number = 0; attempt < 6; attempt += 1) {
+		if (attempt > 0) {
+			await new Promise<void>((resolve: () => void): NodeJS.Timeout => setTimeout(resolve, 250 * attempt));
+		}
+		try {
+			await client.sendRequest("approval.approve", { approvalId }, timeoutMs);
+			return;
+		} catch (error: unknown) {
+			lastError = error instanceof Error ? error : new Error("Approval failed");
+			if (!/Approval not found/u.test(lastError.message)) {
+				throw lastError;
+			}
+		}
+	}
+
+	throw lastError ?? new Error(`Approval failed: ${approvalId}`);
+}
+
+async function collectPersistedEditPaths(
+	client: RpcClient,
+	sessionId: string,
+	batches: Iterable<JsonObject>,
+	options: CliOptions
+): Promise<{ paths: Set<string>; batchIds: string[] }> {
+	const paths: Set<string> = new Set();
+	const batchIds: string[] = [];
+	const latestAfterShaByPath: Map<string, string> = new Map();
+	for (const batchSummary of batches) {
+		const batchId: string | undefined = asString(batchSummary.batchId);
+		if (batchId === undefined || batchIds.includes(batchId)) {
+			continue;
+		}
+		batchIds.push(batchId);
+		const batchResponse: unknown = await client.sendRequest("fileEdit.batch.get", { sessionId, batchId }, 30_000);
+		const fileEditBatch: unknown = isRecord(batchResponse) ? batchResponse.fileEditBatch : undefined;
+		if (!isRecord(fileEditBatch) || !Array.isArray(fileEditBatch.edits)) {
+			throw new Error(`fileEdit.batch.get did not return persisted edits for ${batchId}.`);
+		}
+		for (const edit of fileEditBatch.edits) {
+			if (!isRecord(edit) || typeof edit.path !== "string") {
+				continue;
+			}
+			const normalizedEditPath: string = normalizeResourcePath(edit.path) ?? edit.path;
+			paths.add(normalizedEditPath);
+			if (edit.undoable !== true) {
+				throw new Error(`Smoke edit is not undoable: ${JSON.stringify(edit)}`);
+			}
+			const afterSha256: string | undefined = asString(edit.afterSha256);
+			if (afterSha256 !== undefined) {
+				latestAfterShaByPath.set(normalizedEditPath, afterSha256);
+			}
+		}
+	}
+
+	for (const [editPath, afterSha256] of latestAfterShaByPath) {
+		const absolutePath: string = resolveTargetAbsolutePath(options.projectPath, editPath);
+		if (existsSync(absolutePath)) {
+			const diskText: string = readFileSync(absolutePath, "utf8");
+			if (sha256(diskText) !== afterSha256) {
+				throw new Error(`Disk file hash does not match latest persisted afterSha256 for ${editPath}.`);
+			}
+		}
+	}
+
+	return { paths, batchIds };
+}
+
+function validateWorkflowAttachResult(options: CliOptions, editedPaths: ReadonlySet<string>): void {
+	const expectedPaths: string[] = getExpectedEditedPaths(options);
+	for (const expectedPath of expectedPaths) {
+		if (!editedPaths.has(expectedPath)) {
+			throw new Error(`Agent completed without a persisted fileEditBatch for ${expectedPath}.`);
+		}
+	}
+
+	const scriptAbsolutePath: string = resolveTargetAbsolutePath(options.projectPath, options.scriptPath);
+	const sceneAbsolutePath: string = resolveTargetAbsolutePath(options.projectPath, options.scenePath);
+	const scriptText: string = readFileSync(scriptAbsolutePath, "utf8");
+	const sceneText: string = readFileSync(sceneAbsolutePath, "utf8");
+	if (!scriptText.includes("DAEDALUS_FULL_WORKFLOW_SMOKE")) {
+		throw new Error(`Smoke script does not contain the expected marker: ${options.scriptPath}`);
+	}
+	if (!sceneText.includes(options.scriptPath) || !sceneText.includes("script = ExtResource")) {
+		throw new Error(`Smoke scene does not appear to attach ${options.scriptPath}.`);
+	}
+}
+
 async function runSmoke(options: CliOptions): Promise<void> {
 	if (!existsSync(options.projectPath)) {
 		throw new Error(`Godot project was not found: ${options.projectPath}`);
 	}
-	resolveTargetAbsolutePath(options.projectPath, options.targetPath);
+	for (const expectedPath of getExpectedEditedPaths(options)) {
+		resolveTargetAbsolutePath(options.projectPath, expectedPath);
+	}
 	const apiKey: string | undefined = resolveApiKey(options);
 	let startedBackend: StartedBackend | null = null;
 	const approvedApprovals: Set<string> = new Set();
-	const observedBatch: { value: JsonObject | null } = { value: null };
+	const observedBatches: Map<string, JsonObject> = new Map();
+	let approvalQueue: Promise<void> = Promise.resolve();
 
 	try {
 		if (options.startBackend) {
@@ -623,22 +846,31 @@ async function runSmoke(options: CliOptions): Promise<void> {
 				throw new Error("session.create did not return a session id");
 			}
 			await client.sendRequest("approval.mode.set", { mode: "manual" }, 10_000);
+			const expectedPaths: string[] = getExpectedEditedPaths(options);
 
 			const finalMessagePromise: Promise<ServerMessage> = client.waitForMessage((message: ServerMessage): boolean => {
-				const maybeBatch: JsonObject | null = findBatchInEvent(message, options.targetPath);
+				const maybeBatch: JsonObject | null = findBatchInEvent(message, expectedPaths);
 				if (maybeBatch !== null) {
-					observedBatch.value = maybeBatch;
+					const batchId: string | undefined = asString(maybeBatch.batchId);
+					if (batchId !== undefined) {
+						observedBatches.set(batchId, maybeBatch);
+					}
 				}
 				if (message.type === "event" && message.event === "agent.tool.approval_required" && isRecord(message.data)) {
 					const approvalId: string | undefined = asString(message.data.approvalId);
 					if (approvalId !== undefined && !approvedApprovals.has(approvalId)) {
 						approvedApprovals.add(approvalId);
-						if (isUnsafeApproval(message.data, options.targetPath)) {
+						if (isUnsafeApproval(message.data, options)) {
 							client.reportFatal(new Error(`Refusing to approve non-smoke write: ${JSON.stringify(message.data)}`));
 							return false;
 						}
 						console.log(`Approving smoke write ${approvalId}`);
-						void client.sendRequest("approval.approve", { approvalId }, options.timeoutMs).catch((error: unknown): void => {
+						approvalQueue = approvalQueue
+							.then(async (): Promise<void> => approveWithRetry(client, approvalId, options.timeoutMs))
+							.catch((error: unknown): void => {
+								client.reportFatal(error instanceof Error ? error : new Error("Approval failed"));
+							});
+						void approvalQueue.catch((error: unknown): void => {
 							client.reportFatal(error instanceof Error ? error : new Error("Approval failed"));
 						});
 					}
@@ -651,55 +883,40 @@ async function runSmoke(options: CliOptions): Promise<void> {
 			}, options.timeoutMs);
 
 			console.log(`Running real LLM smoke with ${options.provider}/${options.modelId}`);
-			console.log(`Target file: ${options.targetPath}`);
+			console.log(`Scenario: ${options.scenario}`);
+			const workflowMode: string = options.workflow ?? (options.scenario === "workflow_attach" ? "auto" : "single");
+			console.log(`Expected edited paths: ${expectedPaths.join(", ")}`);
+			console.log(`Workflow mode: ${workflowMode}`);
 			client.sendRequestNoWait("ai.chat", {
-				message: createSmokePrompt(options.targetPath),
+				message: createPrompt(options),
 				mode: "agent",
 				options: {
 					temperature: 0,
 					stream: false,
 					toolBudget: "project_edit",
-					workflow: "single"
+					workflow: workflowMode
 				}
 			});
 
 			const finalMessage: ServerMessage = await finalMessagePromise;
+			await approvalQueue;
 			if (finalMessage.type === "event" && finalMessage.event === "agent.run.error") {
 				throw new Error(`Agent failed: ${JSON.stringify(finalMessage.data)}`);
 			}
-			const batchSummary: JsonObject | null = observedBatch.value;
-			if (batchSummary === null) {
+			if (observedBatches.size === 0) {
 				throw new Error("Agent completed without a fileEditBatch for the smoke file.");
 			}
 
-			const batchId: string | undefined = asString(batchSummary.batchId);
-			if (batchId === undefined) {
-				throw new Error("Observed fileEditBatch did not include batchId.");
-			}
-			const batchResponse: unknown = await client.sendRequest("fileEdit.batch.get", { sessionId, batchId }, 30_000);
-			const fileEditBatch: unknown = isRecord(batchResponse) ? batchResponse.fileEditBatch : undefined;
-			if (!isRecord(fileEditBatch) || !Array.isArray(fileEditBatch.edits)) {
-				throw new Error("fileEdit.batch.get did not return persisted edits.");
-			}
-			const targetEdit: unknown = fileEditBatch.edits.find((edit: unknown): boolean => {
-				return isRecord(edit) && edit.path === options.targetPath;
-			});
-			if (!isRecord(targetEdit)) {
+			const persistedEdits = await collectPersistedEditPaths(client, sessionId, observedBatches.values(), options);
+			if (options.scenario === "workflow_attach") {
+				validateWorkflowAttachResult(options, persistedEdits.paths);
+			} else if (!persistedEdits.paths.has(options.targetPath)) {
 				throw new Error("Persisted batch did not include the smoke target edit.");
 			}
-			if (targetEdit.undoable !== true) {
-				throw new Error(`Smoke edit is not undoable: ${JSON.stringify(targetEdit)}`);
-			}
-			const afterSha256: string | undefined = asString(targetEdit.afterSha256);
-			const targetAbsolutePath: string = resolveTargetAbsolutePath(options.projectPath, options.targetPath);
-			const diskText: string = readFileSync(targetAbsolutePath, "utf8");
-			if (afterSha256 !== undefined && sha256(diskText) !== afterSha256) {
-				throw new Error("Disk file hash does not match persisted afterSha256.");
-			}
 
-			console.log(`LLM inline diff smoke passed. Session: ${sessionId}`);
-			console.log(`File edit batch: ${batchId}`);
-			console.log(`Smoke file: ${targetAbsolutePath}`);
+			console.log(`LLM ${options.scenario} smoke passed. Session: ${sessionId}`);
+			console.log(`File edit batches: ${persistedEdits.batchIds.join(", ")}`);
+			console.log(`Edited paths: ${Array.from(persistedEdits.paths).join(", ")}`);
 		} finally {
 			client.close();
 		}
@@ -727,7 +944,10 @@ async function main(): Promise<void> {
 			projectPath: options.projectPath,
 			backendUrl: options.backendUrl,
 			startBackend: options.startBackend,
-			targetPath: options.targetPath
+			scenario: options.scenario,
+			targetPath: options.targetPath,
+			scenePath: options.scenePath,
+			scriptPath: options.scriptPath
 		}, null, 2));
 		return;
 	}

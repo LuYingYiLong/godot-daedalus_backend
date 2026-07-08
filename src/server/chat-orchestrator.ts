@@ -71,8 +71,9 @@ import {
 import { getProviderDefaultBaseUrl, getProviderDefaultModel, getProviderDisplayName } from "../providers/provider-registry.js";
 import { classifyProviderError, createProviderStatusEvent } from "../providers/provider-error.js";
 import { generateSessionTitle, shouldApplyGeneratedSessionTitle } from "./session-title.js";
-import { createSingleAnswerPlan, planWorkflow, READ_TOOLS, VERIFY_TOOLS, WRITE_TOOLS } from "../workflow/planner.js";
+import { createSingleAnswerPlan, planWorkflow, planWorkflowAfterLlmPlannerFailure, READ_TOOLS, VERIFY_TOOLS, WRITE_TOOLS } from "../workflow/planner.js";
 import { createLlmWorkflowPlan, reviseLlmWorkflowPlan } from "../workflow/llm-planner.js";
+import { createGodotTemplateWorkflowPlan } from "../workflow/godot-template-planner.js";
 import {
 	applyDeterministicVerificationGate,
 	applyToolEventToWorkflowObservations,
@@ -119,7 +120,7 @@ import {
 import { normalizeChatParamsForMode, resolveAllowedToolsForChatParams } from "./chat-mode.js";
 import { logPromptTrace, logProjectInstructionTrace } from "./prompt-trace.js";
 import { isCancellationError, sendAgentCancelled, sendAiCancelled, beginRequestExecution, finishRequestExecution, parseMessage } from "./request-lifecycle.js";
-import { estimateTextTokens, estimateMessagesTokens, computeHistoryBudget, appendChatTurnToSession, selectHistoryForModel, createSummaryMessage, loadSessionCompressorPrompt } from "./token-budget.js";
+import { estimateTextTokens, estimateMessagesTokens, computeHistoryBudget, appendChatTurnToSession, appendFailedChatTurnToSession, selectHistoryForModel, createSummaryMessage, loadSessionCompressorPrompt } from "./token-budget.js";
 import { getSessionProjectPath, toChatMessage, clampSessionOpenMessageLimit, createPreviewValue, createSessionEventPreview, createTimelinePageResult, startFullSessionLoad, waitForFullSessionLoad } from "./session-preview.js";
 import { createProviderChatOptions } from "./provider-chat-options.js";
 import { clipTextByChars, cloneAdditionalContextItems, getAdditionalContextDataRecord, getContextNumber, getContextString, createLineColumnRangeText, appendScriptSelectionPromptLines, appendFilesystemSelectionPromptLines, createAdditionalContextPromptSection } from "./additional-context.js";
@@ -292,9 +293,9 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 			session.activeAbortControllers.set(request.id, abortController);
 			session.activeRunRequestId = request.id;
 			const runStartedAtMs: number = Date.now();
+			const turnStartedAt: string = new Date().toISOString();
 
 			try {
-				const turnStartedAt: string = new Date().toISOString();
 				const options: ProviderChatOptions = createProviderChatOptions(session, apiKey);
 				logger.info("ai", "chat_started", {
 					requestId: request.id,
@@ -379,19 +380,24 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				if (requestHasImages) {
 					workflowPlan = createSingleAnswerPlan(params, []);
 				} else if (slashCommandResult.type === "none") {
-					if (params.options?.workflow === "llm_planned") {
-						try {
-							workflowPlan = await createLlmWorkflowPlan(params, options, history, mcpSystemContext + additionalContextSection + guidePromptSection, abortController.signal);
-						} catch (error: unknown) {
-							logger.warn("ai", "llm_workflow_planner_failed_fallback", {
-								requestId: request.id,
-								sessionId: session.sessionId,
-								message: error instanceof Error ? error.message : "LLM planner failed"
-							});
+					if (params.options?.workflow !== "llm_planned") {
+						workflowPlan = createGodotTemplateWorkflowPlan(params);
+					}
+					if (workflowPlan === null) {
+						if (params.options?.workflow === "llm_planned") {
+							try {
+								workflowPlan = await createLlmWorkflowPlan(params, options, history, mcpSystemContext + additionalContextSection + guidePromptSection, abortController.signal);
+							} catch (error: unknown) {
+								logger.warn("ai", "llm_workflow_planner_failed_fallback", {
+									requestId: request.id,
+									sessionId: session.sessionId,
+									message: error instanceof Error ? error.message : "LLM planner failed"
+								});
+								workflowPlan = planWorkflowAfterLlmPlannerFailure(params);
+							}
+						} else {
 							workflowPlan = planWorkflow(params);
 						}
-					} else {
-						workflowPlan = planWorkflow(params);
 					}
 				}
 
@@ -401,7 +407,9 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				logger.info("ai", "workflow_planned", {
 					requestId: request.id,
 					sessionId: session.sessionId,
+					workflowSource: workflowPlan.source ?? null,
 					workflowPhaseCount: workflowPlan.phases.length,
+					workflowPhaseIds: workflowPlan.phases.map((phase: WorkflowPhase): string => phase.id),
 					historyMessages: history.length,
 					historyBudgetTokens,
 					allowedToolCount: allowedToolNames?.length ?? null
@@ -471,6 +479,19 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 					code: providerError.code,
 					message: providerError.message
 				});
+				await waitForSessionEventPersistence(session);
+				await appendFailedChatTurnToSession(
+					session,
+					params.message,
+					{
+						code: providerError.code,
+						message: providerError.message
+					},
+					request.id,
+					turnStartedAt,
+					undefined,
+					params.additionalContext
+				);
 				sendJson(socket, {
 					type: "response",
 					id: request.id,

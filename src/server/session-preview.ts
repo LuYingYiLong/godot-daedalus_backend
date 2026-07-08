@@ -46,6 +46,21 @@ export function toChatMessage(message: StoredMessage): ChatMessage {
 		chatMessage.additionalContext = cloneStoredAdditionalContextItems(message.additionalContext);
 	}
 
+	if (message.excludeFromLlmContext === true) {
+		chatMessage.excludeFromLlmContext = true;
+	}
+
+	if (message.status === "failed") {
+		chatMessage.status = "failed";
+	}
+
+	if (message.error !== undefined) {
+		chatMessage.error = {
+			code: message.error.code,
+			message: message.error.message
+		};
+	}
+
 	return chatMessage;
 }
 

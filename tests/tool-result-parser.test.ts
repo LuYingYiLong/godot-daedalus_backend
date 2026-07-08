@@ -23,6 +23,24 @@ test("terminal preset failed result becomes structured failed validation", (): v
 	assert.match(summary.failedChecks?.[0] ?? "", /Unexpected token/);
 });
 
+test("Godot terminal spawn errors are marked as environment issues", (): void => {
+	const summary = parseToolResultSummary(
+		"mcp_terminal_run_safe_preset",
+		{ presetName: "godot.check_only", resourcePath: "res://scripts/game.gd" },
+		JSON.stringify({
+			ok: false,
+			exitCode: null,
+			stderr: "Process error: spawn godot ENOENT",
+			resourcePath: "res://scripts/game.gd"
+		})
+	);
+
+	assert.equal(summary.ok, false);
+	assert.equal(summary.validationStatus, "failed");
+	assert.equal(summary.environmentIssue, true);
+	assert.match(summary.failedChecks?.[0] ?? "", /spawn godot ENOENT/);
+});
+
 test("LSP diagnostics result counts errors and marks validation failed", (): void => {
 	const summary = parseToolResultSummary(
 		"mcp_godot_lsp_get_file_diagnostics",

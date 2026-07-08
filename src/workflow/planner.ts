@@ -236,3 +236,13 @@ export function planWorkflow(params: AiChatParams): WorkflowPlan | null {
 
 	return null;
 }
+
+export function planWorkflowAfterLlmPlannerFailure(params: AiChatParams): WorkflowPlan | null {
+	return planWorkflow({
+		...params,
+		options: {
+			...(params.options ?? {}),
+			workflow: "auto"
+		}
+	});
+}

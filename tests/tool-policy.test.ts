@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { evaluateToolCall, getToolPolicy } from "../src/tools/tool-policy.js";
+import { evaluateToolCall, getEffectiveToolPolicy, getToolPolicy } from "../src/tools/tool-policy.js";
 
 const readTool: string = "mcp_godot_read_text_file";
 const verifyTool: string = "mcp_terminal_run_safe_preset";
@@ -28,6 +28,16 @@ test("manual mode requests approval for write risks", (): void => {
 	assert.equal(evaluateToolCall("manual", writeTool, {}).action, "request_approval");
 	assert.equal(evaluateToolCall("manual", dynamicMcpTool, {}).action, "request_approval");
 	assert.equal(evaluateToolCall("manual", destructiveTool, {}).action, "request_approval");
+});
+
+test("terminal write preset uses actual preset risk at approval boundary", (): void => {
+	assert.equal(getEffectiveToolPolicy("mcp_terminal_run_write_preset", { presetName: "godot.check_only" })?.risk, "verify");
+	assert.equal(evaluateToolCall("manual", "mcp_terminal_run_write_preset", {
+		presetName: "godot.check_only",
+		resourcePath: "scripts/game.gd"
+	}).action, "allow");
+	assert.equal(evaluateToolCall("manual", "mcp_terminal_run_write_preset", { presetName: "git.init" }).action, "request_approval");
+	assert.equal(evaluateToolCall("manual", "mcp_terminal_run_write_preset", { presetName: "godot.list_scenes" }).action, "request_approval");
 });
 
 test("auto-safe mode self-approves builtin write tools but not dynamic MCP or destructive tools", (): void => {

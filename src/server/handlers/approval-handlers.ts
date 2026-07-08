@@ -152,7 +152,8 @@ import {
 	validatePendingApprovalBeforeExecution,
 	createApprovedWorkflowToolObservation,
 	sendAgentPaused,
-	sendContinuedAgentResult
+	sendContinuedAgentResult,
+	waitForPendingApprovalContinuationRegistration
 } from "../approval-continuation.js";
 import { createAgentToolEventForwarder, createEmptyWorkflowPhaseToolStats, updateWorkflowPhaseToolStats, shouldRequireWorkflowWriteTool, didWorkflowWritePhaseExecute, isWorkflowProposalPhase, createWorkflowWriteGuardRetryMessage } from "../workflow/tool-events.js";
 import { persistFileEditBatch } from "../file-edit-batches.js";
@@ -276,7 +277,10 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 			}
 
 			const pendingState: PendingApprovalState | undefined = findPendingApprovalState(hydrated.states, request.params.approvalId);
-			const pendingContinuation: PendingAiContinuation | undefined = await restorePendingContinuationForApproval(session, pendingState, apiKey);
+			let pendingContinuation: PendingAiContinuation | undefined = await restorePendingContinuationForApproval(session, pendingState, apiKey);
+			if (pendingContinuation === undefined && pendingState?.continuation === undefined) {
+				pendingContinuation = await waitForPendingApprovalContinuationRegistration(session, request.params.approvalId);
+			}
 			if (pendingState?.continuation !== undefined && pendingContinuation === undefined) {
 				const message: string = `当前没有可用的 ${getProviderDisplayName(session.activeProvider)} API key，无法恢复审批后的 LLM continuation。请先配置 provider 后重试。`;
 				if (session.sessionId !== undefined) {

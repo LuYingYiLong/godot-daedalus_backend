@@ -3,7 +3,7 @@ import type { McpHost } from "../../mcp/mcp-host.js";
 import type { ClientSession } from "../client-session.js";
 import type { OnToolEvent, ToolEvent } from "../../tools/tool-dispatcher.js";
 import { parseToolResultSummary } from "../../tools/tool-result-parser.js";
-import { getToolPolicy } from "../../tools/tool-policy.js";
+import { getEffectiveToolPolicy, getToolPolicy } from "../../tools/tool-policy.js";
 import type { WorkflowPhase } from "../../workflow/types.js";
 import { sendSessionEvent } from "../session-events.js";
 import { scheduleTerminalJobWakeup } from "../terminal-job-wakeup.js";
@@ -141,7 +141,11 @@ export function updateWorkflowPhaseToolStats(stats: WorkflowPhaseToolStats, even
 		return;
 	}
 
-	const policy = getToolPolicy(toolName);
+	if (event.type !== "tool.call" && event.type !== "tool.approval_required") {
+		return;
+	}
+
+	const policy = getEffectiveToolPolicy(toolName, event.args);
 	if (policy?.risk === "propose") {
 		stats.proposeToolEvents += 1;
 	}
@@ -172,13 +176,41 @@ export function isWorkflowProposalPhase(phase: WorkflowPhase): boolean {
 		|| text.includes("方案");
 }
 
-export function createWorkflowWriteGuardRetryMessage(phaseMessage: string): string {
-	return [
+export function createWorkflowWriteGuardRetryMessage(
+	phaseMessage: string,
+	allowedToolNames: readonly string[] = [],
+	attempt: number = 1,
+	previousText: string = ""
+): string {
+	const lines: string[] = [
 		phaseMessage,
 		"",
 		"## 后端执行守卫",
 		"上一次候选回复没有实际调用当前阶段需要的 propose/write 工具，也没有触发审批，因此当前阶段还没有完成。",
+		`这是第 ${attempt} 次守卫重试。本次重试的第一步必须发出 API tool_call，不能只输出文字说明。`,
 		"如果当前阶段是预览/提案，请调用允许的 propose_* 工具；如果当前阶段是实际修改，请调用写入工具并按审批流程暂停。",
-		"不要只描述计划、步骤或意图。"
-	].join("\n");
+		"不要只调用 read/verify 工具替代写入工具；read/verify 结果不能完成当前写入阶段。",
+		"不要只描述计划、步骤或意图，也不要写“准备调用/接下来调用”后结束。"
+	];
+	if (allowedToolNames.length > 0) {
+		lines.push("");
+		lines.push("本次重试只允许调用这些写入/提案工具之一：");
+		for (const toolName of allowedToolNames) {
+			lines.push(`- ${toolName}`);
+		}
+	}
+	if (previousText.trim().length > 0) {
+		lines.push("");
+		lines.push("上一轮未通过的文本回复如下，它不能作为完成依据：");
+		lines.push(previousText.slice(0, 2000));
+	}
+
+	return lines.join("\n");
+}
+
+export function getWorkflowWriteGuardRetryAllowedTools(phase: WorkflowPhase): string[] {
+	return phase.allowedTools.filter((toolName: string): boolean => {
+		const risk: string | undefined = getToolPolicy(toolName)?.risk;
+		return risk === "propose" || risk === "write" || risk === "destructive";
+	});
 }

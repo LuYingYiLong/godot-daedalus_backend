@@ -167,6 +167,22 @@ export function foldPendingApprovalStates(events: StoredApprovalEvent[]): Pendin
 	return [...states.values()];
 }
 
+export function mergeHydratedPendingApprovalStates(
+	hydratedStates: PendingApprovalState[],
+	memoryStates: PendingApprovalState[]
+): PendingApprovalState[] {
+	const mergedStates: PendingApprovalState[] = [...hydratedStates];
+	const hydratedIds: Set<string> = new Set(hydratedStates.map((state: PendingApprovalState): string => state.approval.approvalId));
+
+	for (const memoryState of memoryStates) {
+		if (!hydratedIds.has(memoryState.approval.approvalId)) {
+			mergedStates.push(memoryState);
+		}
+	}
+
+	return mergedStates;
+}
+
 export function serializePendingApprovalState(state: PendingApprovalState): Record<string, unknown> {
 	const result: Record<string, unknown> = {
 		...state.approval,

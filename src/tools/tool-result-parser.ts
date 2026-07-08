@@ -16,6 +16,7 @@ export type ParsedToolResultSummary = {
 };
 
 const DIAGNOSTICS_ENVIRONMENT_ERROR_PATTERN: RegExp = /\b(godot_diagnostics_unavailable|lsp_unavailable|dap_unavailable|no active workspace|ECONNREFUSED|ETIMEDOUT|timeout|not available|not running)\b/iu;
+const GODOT_TERMINAL_ENVIRONMENT_ERROR_PATTERN: RegExp = /\b(spawn\s+.*\s+ENOENT|ENOENT|not found|not recognized|无法将|找不到)\b/iu;
 
 function parseJsonObject(text: string): Record<string, unknown> | null {
 	try {
@@ -186,6 +187,9 @@ function parseTerminalSummary(record: Record<string, unknown>, args: Record<stri
 	const ok: boolean | undefined = getBoolean(record.ok);
 	const exitCode: number | null | undefined = getNumberOrNull(record.exitCode);
 	const resourcePath: string | undefined = getString(record.resourcePath) ?? getString(args.resourcePath);
+	const failureMessage: string = createFailureMessage(record, `exitCode=${String(exitCode)}`);
+	const environmentIssue: boolean = presetName.startsWith("godot.")
+		&& (status === "spawn_error" || GODOT_TERMINAL_ENVIRONMENT_ERROR_PATTERN.test(failureMessage));
 	if (status === "running") {
 		return {
 			ok: undefined,
@@ -201,7 +205,7 @@ function parseTerminalSummary(record: Record<string, unknown>, args: Record<stri
 
 	const isFailedStatus: boolean = status === "failed" || status === "timed_out" || status === "spawn_error";
 	const failedChecks: string[] = ok === false || isFailedStatus
-		? [`${presetName}${resourcePath === undefined ? "" : ` ${resourcePath}`} failed: ${createFailureMessage(record, `exitCode=${String(exitCode)}`)}`]
+		? [`${presetName}${resourcePath === undefined ? "" : ` ${resourcePath}`} failed: ${failureMessage}`]
 		: [];
 
 	return {
@@ -210,6 +214,7 @@ function parseTerminalSummary(record: Record<string, unknown>, args: Record<stri
 		validationStatus: ok === false || isFailedStatus ? "failed" : ok === true || status === "completed" ? "passed" : "unknown",
 		summary: `${presetName}${resourcePath === undefined ? "" : ` ${resourcePath}`} ${ok === false || status === "failed" || status === "timed_out" ? "failed" : ok === true || status === "completed" ? "passed" : "finished"}`,
 		failedChecks: failedChecks.length > 0 ? failedChecks : undefined,
+		environmentIssue: environmentIssue || undefined,
 		artifactRefs: collectArtifactRefs(args, record),
 		terminalJobId: jobId,
 		terminalJobStatus: status

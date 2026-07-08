@@ -16,6 +16,7 @@ import { createAdditionalContextPromptSection } from "../additional-context.js";
 import { createMcpSystemContext, createProviderRuntimeContext } from "../prompt-context.js";
 import { createAgentToolEventForwarder, createEmptyWorkflowPhaseToolStats, updateWorkflowPhaseToolStats } from "./tool-events.js";
 import type { WorkflowPhaseRunResult, WorkflowPhaseToolStats } from "./shared-types.js";
+import { isEmptyProviderResponseError } from "./provider-errors.js";
 
 export async function runWorkflowPhase(
 	socket: WebSocket,
@@ -41,9 +42,21 @@ export async function runWorkflowPhase(
 		toolObservations = applyToolEventToWorkflowObservations(toolObservations, event);
 		forwardToolEvent(event);
 	};
-	const agentResult: ProviderAgentResult = streamPhase
-		? await runProviderAgentStreaming(params, options, history, fullSystemPrompt, mcpHost, session.approvalGateway, phase.allowedTools, onToolEvent, abortSignal)
-		: await runProviderAgent(params, options, history, fullSystemPrompt, mcpHost, session.approvalGateway, phase.allowedTools, onToolEvent, abortSignal);
+	let agentResult: ProviderAgentResult;
+	try {
+		agentResult = streamPhase
+			? await runProviderAgentStreaming(params, options, history, fullSystemPrompt, mcpHost, session.approvalGateway, phase.allowedTools, onToolEvent, abortSignal)
+			: await runProviderAgent(params, options, history, fullSystemPrompt, mcpHost, session.approvalGateway, phase.allowedTools, onToolEvent, abortSignal);
+	} catch (error: unknown) {
+		if (phase.toolGroup === "write" && isEmptyProviderResponseError(error)) {
+			agentResult = {
+				status: "completed",
+				text: ""
+			};
+		} else {
+			throw error;
+		}
+	}
 	return {
 		agentResult,
 		toolStats,

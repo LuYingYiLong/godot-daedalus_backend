@@ -1,5 +1,5 @@
 import type { ToolEvent } from "../tools/tool-dispatcher.js";
-import { getToolPolicy } from "../tools/tool-policy.js";
+import { getEffectiveToolPolicy, getToolPolicy } from "../tools/tool-policy.js";
 import type {
 	WorkflowFailedCheck,
 	WorkflowPhase,
@@ -73,7 +73,7 @@ export function applyToolEventToWorkflowObservations(
 	event: ToolEvent
 ): WorkflowToolObservation[] {
 	if (event.type === "tool.call") {
-		const risk: string | undefined = getToolPolicy(event.toolName)?.risk;
+		const risk: string | undefined = getEffectiveToolPolicy(event.toolName, event.args)?.risk;
 		return upsertObservation(observations, {
 			toolCallId: event.toolCallId,
 			toolName: event.toolName,
@@ -85,7 +85,7 @@ export function applyToolEventToWorkflowObservations(
 	}
 
 	if (event.type === "tool.approval_required") {
-		const risk: string | undefined = getToolPolicy(event.toolName)?.risk;
+		const risk: string | undefined = getEffectiveToolPolicy(event.toolName, event.args)?.risk;
 		return upsertObservation(observations, {
 			toolCallId: event.toolCallId,
 			toolName: event.toolName,
@@ -140,7 +140,9 @@ function isVerificationObservation(observation: WorkflowToolObservation): boolea
 	}
 
 	return observation.toolName === "mcp_godot_lsp_get_file_diagnostics"
+		|| observation.toolName.startsWith("mcp_godot_lsp_")
 		|| observation.toolName === "mcp_godot_dap_get_last_error"
+		|| observation.toolName.startsWith("mcp_godot_dap_")
 		|| observation.toolName === "mcp_godot_dap_get_stack_trace"
 		|| observation.toolName === "mcp_godot_inspect_scene_tree"
 		|| observation.toolName === "mcp_godot_validate_scene_script_references";
@@ -392,8 +394,22 @@ function hasLspEnvironmentIssue(observations: WorkflowToolObservation[]): boolea
 
 function hasGodotCheckOnly(observations: WorkflowToolObservation[]): boolean {
 	return observations.some((observation: WorkflowToolObservation): boolean => (
-		observationMatchesTool(observation, "mcp_terminal_run_safe_preset")
+		(
+			observationMatchesTool(observation, "mcp_terminal_run_safe_preset")
+			|| observationMatchesTool(observation, "mcp_terminal_run_write_preset")
+		)
 		&& observationPresetName(observation).includes("check_only")
+	));
+}
+
+function hasGodotCheckOnlyEnvironmentIssue(observations: WorkflowToolObservation[]): boolean {
+	return observations.some((observation: WorkflowToolObservation): boolean => (
+		(
+			observation.toolName === "mcp_terminal_run_safe_preset"
+			|| observation.toolName === "mcp_terminal_run_write_preset"
+		)
+		&& observationPresetName(observation).includes("check_only")
+		&& isEnvironmentIssueObservation(observation)
 	));
 }
 
@@ -409,6 +425,18 @@ function hasSceneValidation(observations: WorkflowToolObservation[]): boolean {
 
 function collectPreviouslyModifiedArtifacts(outputs: WorkflowPhaseOutput[]): string[] {
 	return uniqueStrings(outputs.flatMap((output: WorkflowPhaseOutput): string[] => output.modifiedArtifacts));
+}
+
+function collectVerificationObservations(
+	outcome: WorkflowPhaseOutput,
+	previousOutputs: WorkflowPhaseOutput[]
+): WorkflowToolObservation[] {
+	return [
+		...previousOutputs.flatMap((output: WorkflowPhaseOutput): WorkflowToolObservation[] => (
+			output.toolObservations.filter(isVerificationObservation)
+		)),
+		...outcome.toolObservations.filter(isVerificationObservation)
+	];
 }
 
 function createGateFailure(code: string, message: string, artifact: string): WorkflowFailedCheck {
@@ -432,23 +460,24 @@ export function applyDeterministicVerificationGate(
 	const modifiedArtifacts: string[] = collectPreviouslyModifiedArtifacts(previousOutputs);
 	const gdArtifacts: string[] = modifiedArtifacts.filter((artifact: string): boolean => artifact.endsWith(".gd"));
 	const sceneArtifacts: string[] = modifiedArtifacts.filter((artifact: string): boolean => artifact.endsWith(".tscn"));
+	const verificationObservations: WorkflowToolObservation[] = collectVerificationObservations(outcome, previousOutputs);
 	const gateFailures: WorkflowFailedCheck[] = [];
 
-	if (gdArtifacts.length > 0 && !hasLspDiagnostics(outcome.toolObservations) && !hasLspEnvironmentIssue(outcome.toolObservations)) {
+	if (gdArtifacts.length > 0 && !hasLspDiagnostics(verificationObservations) && !hasLspEnvironmentIssue(verificationObservations)) {
 		gateFailures.push(createGateFailure(
 			"lsp_diagnostics_required",
 			"修改了 GDScript，但验证阶段没有运行 LSP diagnostics。",
 			gdArtifacts.join(", ")
 		));
 	}
-	if (gdArtifacts.length > 0 && !hasGodotCheckOnly(outcome.toolObservations)) {
+	if (gdArtifacts.length > 0 && !hasGodotCheckOnly(verificationObservations) && !hasGodotCheckOnlyEnvironmentIssue(verificationObservations)) {
 		gateFailures.push(createGateFailure(
 			"godot_check_only_required",
 			"修改了 GDScript，但验证阶段没有运行 Godot check-only。",
 			gdArtifacts.join(", ")
 		));
 	}
-	if (sceneArtifacts.length > 0 && !hasSceneValidation(outcome.toolObservations)) {
+	if (sceneArtifacts.length > 0 && !hasSceneValidation(verificationObservations)) {
 		gateFailures.push(createGateFailure(
 			"scene_validation_required",
 			"修改了场景文件，但验证阶段没有运行场景验证。",
@@ -470,10 +499,13 @@ export function applyDeterministicVerificationGate(
 	};
 }
 
-export function findBlockingOutcomeBeforeSummarize(outputs: WorkflowPhaseOutput[]): WorkflowPhaseOutput | null {
+export function findBlockingOutcomeBeforeSummarize(outputs: WorkflowPhaseOutput[], currentPhaseId?: string | undefined): WorkflowPhaseOutput | null {
 	for (let index: number = outputs.length - 1; index >= 0; index -= 1) {
 		const output: WorkflowPhaseOutput | undefined = outputs[index];
 		if (output === undefined) {
+			continue;
+		}
+		if (currentPhaseId !== undefined && output.phaseId === currentPhaseId) {
 			continue;
 		}
 		if (output.status === "completed") {

@@ -4,7 +4,8 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import {
 	createPersistedApprovalRequestedData,
 	createRuntimePendingContinuation,
-	foldPendingApprovalStates
+	foldPendingApprovalStates,
+	mergeHydratedPendingApprovalStates
 } from "../src/session/approval-persistence.js";
 import type { StoredApprovalEvent } from "../src/session/session-store.js";
 import type { PendingAiContinuation } from "../src/server/client-session.js";
@@ -119,4 +120,35 @@ test("approval persistence folds pending, interrupted, and executed states", ():
 	assert.equal(runtimeContinuation.options.apiKey, "new-api-key");
 	assert.equal(runtimeContinuation.options.provider, "deepseek");
 	assert.equal(runtimeContinuation.options.model, "deepseek-v4-flash");
+});
+
+test("hydrated approval states keep in-memory approvals created during continuation races", (): void => {
+	const hydratedApproval: PendingApproval = createPendingApproval();
+	const memoryApproval: PendingApproval = {
+		...createPendingApproval(),
+		approvalId: "approval-memory-race",
+		toolCallId: "call-memory-race",
+		createdAt: Date.parse("2026-07-03T00:00:01.000Z")
+	};
+	const hydratedStates = foldPendingApprovalStates([
+		createApprovalEvent(
+			"requested",
+			createPersistedApprovalRequestedData(hydratedApproval, createPendingContinuation(), "workspace-a"),
+			"2026-07-03T00:00:00.000Z"
+		)
+	]);
+	const mergedStates = mergeHydratedPendingApprovalStates(hydratedStates, [{
+		approval: memoryApproval,
+		status: "pending",
+		restored: false,
+		interrupted: false,
+		requestId: "request-memory-race",
+		createdAt: "2026-07-03T00:00:01.000Z",
+		updatedAt: "2026-07-03T00:00:01.000Z"
+	}]);
+
+	assert.deepEqual(
+		mergedStates.map((state) => state.approval.approvalId).sort(),
+		["approval-memory-race", "approval-test"]
+	);
 });

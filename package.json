@@ -31,6 +31,7 @@
     "smoke:beta": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/beta-smoke.ps1",
     "smoke:llm": "tsx scripts/llm-inline-diff-smoke.ts",
     "dev:llm": "tsx scripts/llm-inline-diff-smoke.ts use_llm",
+    "smoke:llm:full": "tsx scripts/llm-inline-diff-smoke.ts use_llm scenario=workflow_attach",
     "prepublishOnly": "npm test",
     "prepare": "husky",
     "commitlint": "commitlint --from=HEAD~10"

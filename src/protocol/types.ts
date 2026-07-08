@@ -19,6 +19,12 @@ export type ChatMessage = {
 	requestId?: string | undefined;
 	createdAt?: string | undefined;
 	additionalContext?: AdditionalContextItem[] | undefined;
+	excludeFromLlmContext?: true | undefined;
+	status?: "failed" | undefined;
+	error?: {
+		code: string;
+		message: string;
+	} | undefined;
 };
 
 export type ServerResponse =

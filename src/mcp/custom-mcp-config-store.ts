@@ -26,6 +26,20 @@ export type CustomMcpServerInput = {
 	headers?: Record<string, string> | undefined;
 };
 
+export type CustomMcpSecretUpdateRecord = Record<string, string | null | undefined>;
+
+export type CustomMcpServerUpdateInput = {
+	serverId: string;
+	description?: string | undefined;
+	transport: CustomMcpTransport;
+	enabled?: boolean | undefined;
+	command?: string | undefined;
+	args?: string[] | undefined;
+	env?: CustomMcpSecretUpdateRecord | undefined;
+	url?: string | undefined;
+	headers?: CustomMcpSecretUpdateRecord | undefined;
+};
+
 export type StoredCustomMcpServerConfig = {
 	id: string;
 	name: string;
@@ -127,6 +141,23 @@ function normalizeSecretRecord(value: Record<string, string> | undefined): Recor
 	return result;
 }
 
+function normalizeSecretUpdateRecord(value: CustomMcpSecretUpdateRecord | undefined): CustomMcpSecretUpdateRecord {
+	if (value === undefined) {
+		return {};
+	}
+
+	const result: CustomMcpSecretUpdateRecord = {};
+	for (const [rawName, rawSecretValue] of Object.entries(value).slice(0, MAX_SECRET_NAMES)) {
+		const name: string = rawName.trim();
+		if (name.length === 0) {
+			continue;
+		}
+
+		result[name] = rawSecretValue;
+	}
+	return result;
+}
+
 function secretAccount(serverId: string, kind: "env" | "header", name: string): string {
 	return `${MCP_SECRET_PREFIX}:${serverId}:${kind}:${name}`;
 }
@@ -203,6 +234,42 @@ async function deleteSecrets(serverId: string, kind: "env" | "header", names: re
 	for (const name of names ?? []) {
 		await keytar.deletePassword(KEYTAR_SERVICE, secretAccount(serverId, kind, name));
 	}
+}
+
+async function updateSecrets(
+	serverId: string,
+	kind: "env" | "header",
+	previousNames: readonly string[] | undefined,
+	updates: CustomMcpSecretUpdateRecord | undefined
+): Promise<string[]> {
+	const normalizedUpdates: CustomMcpSecretUpdateRecord = normalizeSecretUpdateRecord(updates);
+	const previousNameSet: Set<string> = new Set(previousNames ?? []);
+	const nextNames: string[] = Object.keys(normalizedUpdates).sort();
+	const nextNameSet: Set<string> = new Set(nextNames);
+
+	for (const name of nextNames) {
+		const secretValue: string | null | undefined = normalizedUpdates[name];
+		if ((secretValue === null || secretValue === undefined || secretValue.length === 0) && !previousNameSet.has(name)) {
+			throw new Error(`Secret value is required for new ${kind}: ${name}`);
+		}
+	}
+
+	for (const previousName of previousNameSet) {
+		if (!nextNameSet.has(previousName)) {
+			await keytar.deletePassword(KEYTAR_SERVICE, secretAccount(serverId, kind, previousName));
+		}
+	}
+
+	for (const name of nextNames) {
+		const secretValue: string | null | undefined = normalizedUpdates[name];
+		if (secretValue === null || secretValue === undefined || secretValue.length === 0) {
+			continue;
+		}
+
+		await keytar.setPassword(KEYTAR_SERVICE, secretAccount(serverId, kind, name), secretValue);
+	}
+
+	return nextNames;
 }
 
 async function createMaskedSecrets(serverId: string, kind: "env" | "header", names: readonly string[] | undefined): Promise<Record<string, string>> {
@@ -287,6 +354,69 @@ export async function addCustomMcpServerConfig(input: CustomMcpServerInput): Pro
 	configs.push(config);
 	await writeStoredConfigs(configs);
 	return createCustomMcpServerSummary(config);
+}
+
+export async function updateCustomMcpServerConfig(input: CustomMcpServerUpdateInput): Promise<CustomMcpServerSummary | null> {
+	const configs: StoredCustomMcpServerConfig[] = await readStoredConfigs();
+	const index: number = configs.findIndex((config: StoredCustomMcpServerConfig): boolean => config.id === input.serverId);
+	if (index < 0) {
+		return null;
+	}
+
+	const current: StoredCustomMcpServerConfig = configs[index]!;
+	const updated: StoredCustomMcpServerConfig = {
+		id: current.id,
+		name: current.name,
+		description: normalizeText(input.description ?? current.description, 300),
+		transport: input.transport,
+		enabled: input.enabled ?? current.enabled,
+		createdAt: current.createdAt,
+		updatedAt: new Date().toISOString()
+	};
+
+	if (input.transport === "stdio") {
+		const command: string = normalizeText(input.command, 300);
+		if (command.length === 0) {
+			throw new Error("STDIO MCP server command is required");
+		}
+
+		updated.command = command;
+		const args: string[] = normalizeStdioArgsForCommand(command, normalizeArgs(input.args));
+		if (args.length > 0) {
+			updated.args = args;
+		}
+
+		const envNames: string[] = await updateSecrets(current.id, "env", current.envNames, input.env);
+		await deleteSecrets(current.id, "header", current.headerNames);
+		if (envNames.length > 0) {
+			updated.envNames = envNames;
+		}
+	} else {
+		const urlText: string = normalizeText(input.url, 1000);
+		if (urlText.length === 0) {
+			throw new Error("HTTP MCP server URL is required");
+		}
+
+		try {
+			const url: URL = new URL(urlText);
+			if (url.protocol !== "http:" && url.protocol !== "https:") {
+				throw new Error("URL must use http or https");
+			}
+		} catch (error: unknown) {
+			throw new Error(error instanceof Error ? error.message : "Invalid HTTP MCP server URL");
+		}
+
+		updated.url = urlText;
+		const headerNames: string[] = await updateSecrets(current.id, "header", current.headerNames, input.headers);
+		await deleteSecrets(current.id, "env", current.envNames);
+		if (headerNames.length > 0) {
+			updated.headerNames = headerNames;
+		}
+	}
+
+	configs[index] = updated;
+	await writeStoredConfigs(configs);
+	return createCustomMcpServerSummary(updated);
 }
 
 export async function removeCustomMcpServerConfig(serverId: string): Promise<boolean> {

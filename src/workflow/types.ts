@@ -6,7 +6,7 @@ export type WorkflowPhaseId = string;
 
 export type WorkflowTodoStatus = "pending" | "running" | "done" | "failed" | "paused";
 
-export type WorkflowSource = "fixed" | "llm";
+export type WorkflowSource = "fixed" | "llm" | "godot_template";
 
 export type WorkflowToolGroup = "read" | "write" | "verify" | "summarize";
 

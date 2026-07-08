@@ -48,6 +48,57 @@ type ToolCallAccumulator = {
 	argumentsText: string;
 };
 
+function shouldRequireToolCallOnStep(params: AiChatParams, step: number, startStep: number): boolean {
+	const options: Record<string, unknown> | undefined = params.options as Record<string, unknown> | undefined;
+	return step === startStep && options?.requireToolCallOnFirstStep === true;
+}
+
+export function shouldSkipRequiredToolChoice(options: DeepSeekChatOptions): boolean {
+	const model: string = resolveChatModel(options).toLowerCase();
+	return options.provider === "moonshot" || (options.provider === "deepseek" && model.startsWith("deepseek-v4"));
+}
+
+export function shouldDisableThinkingForToolCalls(options: DeepSeekChatOptions, tools: readonly ChatCompletionTool[]): boolean {
+	const model: string = resolveChatModel(options).toLowerCase();
+	return tools.length > 0 && options.provider === "deepseek" && model.startsWith("deepseek-v4");
+}
+
+function applyDeepSeekToolMode(
+	requestBody: ChatCompletionCreateParamsNonStreaming | ChatCompletionCreateParamsStreaming,
+	options: DeepSeekChatOptions,
+	tools: readonly ChatCompletionTool[]
+): void {
+	if (!shouldDisableThinkingForToolCalls(options, tools)) {
+		return;
+	}
+
+	const body = requestBody as unknown as Record<string, unknown>;
+	const extraBody: Record<string, unknown> = typeof body.extra_body === "object" && body.extra_body !== null && !Array.isArray(body.extra_body)
+		? { ...(body.extra_body as Record<string, unknown>) }
+		: {};
+	extraBody.thinking = { type: "disabled" };
+	body.extra_body = extraBody;
+}
+
+function applyToolChoiceForStep(
+	requestBody: ChatCompletionCreateParamsNonStreaming | ChatCompletionCreateParamsStreaming,
+	params: AiChatParams,
+	options: DeepSeekChatOptions,
+	step: number,
+	startStep: number,
+	tools: ChatCompletionTool[]
+): void {
+	if (tools.length === 0 || !shouldRequireToolCallOnStep(params, step, startStep)) {
+		return;
+	}
+
+	if (shouldSkipRequiredToolChoice(options)) {
+		return;
+	}
+
+	requestBody.tool_choice = "required";
+}
+
 function extractTextContent(content: ChatCompletionMessageParam["content"]): string {
 	if (typeof content === "string") {
 		return content;
@@ -406,6 +457,7 @@ async function readStreamingAssistantMessage(
 	messages: ChatCompletionMessageParam[],
 	tools: ChatCompletionTool[],
 	step: number,
+	startStep: number,
 	onEvent?: OnToolEvent,
 	emitContentDeltas: boolean = true,
 	abortSignal?: AbortSignal | undefined
@@ -417,7 +469,9 @@ async function readStreamingAssistantMessage(
 		stream: true
 	};
 
+	applyToolChoiceForStep(requestBody, params, options, step, startStep, tools);
 	applyChatOptions(requestBody, params, options);
+	applyDeepSeekToolMode(requestBody, options, tools);
 
 	const stream = await client.chat.completions.create(requestBody, { signal: abortSignal });
 	const toolCallAccumulators: Map<number, ToolCallAccumulator> = new Map();
@@ -565,6 +619,7 @@ async function runAgentLoop(
 				messages,
 				tools,
 				step,
+				startStep,
 				onEvent,
 				true,
 				abortSignal
@@ -581,7 +636,9 @@ async function runAgentLoop(
 				tools
 			};
 
+			applyToolChoiceForStep(requestBody, params, options, step, startStep, tools);
 			applyChatOptions(requestBody, params, options);
+			applyDeepSeekToolMode(requestBody, options, tools);
 
 			const completion = await client.chat.completions.create(requestBody, { signal: abortSignal });
 			const choice = completion.choices[0];

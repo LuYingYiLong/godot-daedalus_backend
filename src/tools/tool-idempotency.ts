@@ -68,6 +68,11 @@ const GODOT_PROJECT_MUTATION_TOOLS: ReadonlySet<string> = new Set([
 	"mcp_godot_editor_apply_scene_patch"
 ]);
 
+const GODOT_PROJECT_SETTINGS_MUTATION_TOOLS: ReadonlySet<string> = new Set([
+	"mcp_godot_set_project_setting",
+	"mcp_godot_unset_project_setting"
+]);
+
 function normalizeForStableJson(value: unknown): unknown {
 	if (Array.isArray(value)) {
 		return value.map((item: unknown): unknown => normalizeForStableJson(item));
@@ -243,8 +248,12 @@ function addRefreshPath(paths: Set<string>, value: unknown): void {
 	paths.add(trimmed);
 }
 
-function collectGodotRefreshPaths(args: Record<string, unknown>): string[] {
+export function collectGodotRefreshPaths(llmToolName: string, args: Record<string, unknown>): string[] {
 	const paths: Set<string> = new Set();
+	if (GODOT_PROJECT_SETTINGS_MUTATION_TOOLS.has(llmToolName)) {
+		paths.add("project.godot");
+	}
+
 	addRefreshPath(paths, args.relativePath);
 	addRefreshPath(paths, args.scenePath);
 	addRefreshPath(paths, args.scriptPath);
@@ -278,7 +287,7 @@ function refreshEditorFilesystemAfterGodotMutation(
 		return;
 	}
 
-	const changedPaths: string[] = collectGodotRefreshPaths(args);
+	const changedPaths: string[] = collectGodotRefreshPaths(llmToolName, args);
 	void mcpHost.getEditorBridge().refreshFilesystem(changedPaths).catch((error: unknown): void => {
 		logger.warn("godot_editor", "filesystem_refresh_failed", {
 			llmToolName,

@@ -9,12 +9,44 @@ export type ToolPolicy = {
 	risk: ToolRisk;
 };
 
+const TERMINAL_PRESET_RISKS: Record<string, ToolRisk> = {
+	"backend.typecheck": "verify",
+	"git.status": "read",
+	"git.diff": "read",
+	"git.init": "write",
+	"godot.check_only": "verify",
+	"godot.validate_scene": "verify"
+};
+
 export function getToolPolicy(toolName: string): ToolPolicy | undefined {
 	if (isDynamicMcpToolName(toolName)) {
 		return { risk: "write" };
 	}
 
 	return TOOL_POLICIES[toolName];
+}
+
+export function getEffectiveToolPolicy(toolName: string, args: Record<string, unknown>): ToolPolicy | undefined {
+	const policy: ToolPolicy | undefined = getToolPolicy(toolName);
+	if (policy === undefined) {
+		return undefined;
+	}
+
+	if (toolName !== "mcp_terminal_run_write_preset") {
+		return policy;
+	}
+
+	const presetName: unknown = args.presetName;
+	if (typeof presetName !== "string") {
+		return policy;
+	}
+
+	const presetRisk: ToolRisk | undefined = TERMINAL_PRESET_RISKS[presetName];
+	if (presetRisk === "read" || presetRisk === "verify") {
+		return { risk: presetRisk };
+	}
+
+	return policy;
 }
 
 export function isHardBlocked(toolName: string): boolean {
@@ -29,9 +61,9 @@ export type ApprovalDecision =
 export function evaluateToolCall(
 	mode: ApprovalMode,
 	toolName: string,
-	_args: Record<string, unknown>
+	args: Record<string, unknown>
 ): ApprovalDecision {
-	const policy: ToolPolicy | undefined = getToolPolicy(toolName);
+	const policy: ToolPolicy | undefined = getEffectiveToolPolicy(toolName, args);
 
 	if (!policy) {
 		return { action: "deny", reason: `未知工具: ${toolName}` };

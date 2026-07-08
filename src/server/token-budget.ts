@@ -16,6 +16,9 @@ import type { ProviderChatOptions } from "../providers/deepseek-client.js";
 import type { ClientSession } from "./client-session.js";
 import { cloneAdditionalContextItems } from "./additional-context.js";
 import { logger } from "../logger.js";
+import { filterLlmContextMessages, isLlmContextMessage } from "./transcript-history.js";
+
+export { appendFailedChatTurnToSession, filterLlmContextMessages, isLlmContextMessage } from "./transcript-history.js";
 
 const tokenCounterPromise: Promise<TokenCounter> = createTokenCounter();
 let sessionCompressorPromptCache: string | undefined;
@@ -46,6 +49,9 @@ export async function estimateMessagesTokens(messages: ChatMessage[]): Promise<n
 	let total: number = 0;
 
 	for (const message of messages) {
+		if (!isLlmContextMessage(message)) {
+			continue;
+		}
 		total += await tc.countText(`${message.role}: ${message.content}`);
 	}
 
@@ -96,7 +102,7 @@ export async function estimateCurrentMessageTokensForProvider(options: ProviderC
 
 export async function selectHistoryWithinBudget(messages: ChatMessage[], budgetTokens: number): Promise<ChatMessage[]> {
 	const tc: TokenCounter = await getTokenCounter();
-	return selectMessagesWithinBudget(messages, budgetTokens, tc);
+	return selectMessagesWithinBudget(filterLlmContextMessages(messages), budgetTokens, tc);
 }
 
 export async function computeHistoryBudget(
@@ -155,7 +161,7 @@ export async function appendChatTurnToSession(
 
 export async function selectHistoryForModel(session: ClientSession, budgetTokens: number): Promise<ChatMessage[]> {
 	if (session.summaryMessage === undefined) {
-		return selectHistoryWithinBudget(session.messages, budgetTokens);
+		return selectHistoryWithinBudget(filterLlmContextMessages(session.messages), budgetTokens);
 	}
 
 	const summaryTokens: number = await estimateMessagesTokens([session.summaryMessage]);
@@ -163,7 +169,7 @@ export async function selectHistoryForModel(session: ClientSession, budgetTokens
 	const recentSourceMessages: ChatMessage[] = session.summaryCoveredMessageCount !== undefined
 		? session.messages.slice(session.summaryCoveredMessageCount)
 		: session.messages;
-	const recentMessages: ChatMessage[] = await selectHistoryWithinBudget(recentSourceMessages, recentBudgetTokens);
+	const recentMessages: ChatMessage[] = await selectHistoryWithinBudget(filterLlmContextMessages(recentSourceMessages), recentBudgetTokens);
 	return [session.summaryMessage, ...recentMessages];
 }
 

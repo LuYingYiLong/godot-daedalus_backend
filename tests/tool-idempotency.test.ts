@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getLlmToolExecutionIdentity, shouldDedupeLlmToolExecution } from "../src/tools/tool-idempotency.js";
+import { collectGodotRefreshPaths, getLlmToolExecutionIdentity, shouldDedupeLlmToolExecution } from "../src/tools/tool-idempotency.js";
 
 test("only write and destructive tools are deduplicated", (): void => {
 	assert.equal(shouldDedupeLlmToolExecution("mcp_godot_read_text_file"), false);
@@ -43,4 +43,20 @@ test("tool execution fingerprints include workspace scope", (): void => {
 
 test("read tools do not produce execution identities", (): void => {
 	assert.equal(getLlmToolExecutionIdentity("mcp_godot_read_text_file", { relativePath: "project.godot" }), undefined);
+});
+
+test("project setting mutations refresh project.godot", (): void => {
+	assert.deepEqual(
+		collectGodotRefreshPaths("mcp_godot_set_project_setting", {
+			key: "application/config/name",
+			valueExpression: "\"Daedalus\""
+		}),
+		["project.godot"]
+	);
+	assert.deepEqual(
+		collectGodotRefreshPaths("mcp_godot_unset_project_setting", {
+			key: "application/config/name"
+		}),
+		["project.godot"]
+	);
 });

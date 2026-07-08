@@ -3,7 +3,7 @@ import type { AiChatParams } from "../protocol/types.js";
 import type { AgentContinuation, ProviderAgentResult } from "../providers/agent-types.js";
 import type { ProviderChatOptions } from "../providers/deepseek-client.js";
 import { appendApprovalEvent, readApprovalEvents } from "../session/session-store.js";
-import { createPersistedApprovalRequestedData, createRuntimePendingContinuation, foldPendingApprovalStates, type PendingApprovalState } from "../session/approval-persistence.js";
+import { createPersistedApprovalRequestedData, createRuntimePendingContinuation, foldPendingApprovalStates, mergeHydratedPendingApprovalStates, type PendingApprovalState } from "../session/approval-persistence.js";
 import type { WorkflowRunState, WorkflowToolObservation } from "../workflow/types.js";
 import { getToolPolicy } from "../tools/tool-policy.js";
 import type { PendingApproval } from "../tools/approval-gateway.js";
@@ -101,7 +101,11 @@ export async function loadHydratedPendingApprovalStates(
 		};
 	}
 
-	const states: PendingApprovalState[] = foldPendingApprovalStates(approvalEvents);
+	const memoryStates: PendingApprovalState[] = createMemoryPendingApprovalStates(session);
+	const states: PendingApprovalState[] = mergeHydratedPendingApprovalStates(
+		foldPendingApprovalStates(approvalEvents),
+		memoryStates
+	);
 	session.approvalGateway.replacePending(states.map((state: PendingApprovalState): PendingApproval => state.approval));
 	const pendingIds: Set<string> = new Set(states.map((state: PendingApprovalState): string => state.approval.approvalId));
 	for (const approvalId of session.pendingAiContinuations.keys()) {
@@ -127,16 +131,34 @@ export async function loadHydratedPendingApprovalStates(
 export function createMemoryPendingApprovalStates(session: ClientSession): PendingApprovalState[] {
 	return session.approvalGateway.listPending().map((pendingApproval: PendingApproval): PendingApprovalState => {
 		const timestamp: string = new Date(pendingApproval.createdAt).toISOString();
+		const continuation: PendingAiContinuation | undefined = session.pendingAiContinuations.get(pendingApproval.approvalId);
 		return {
 			approval: pendingApproval,
 			status: "pending",
 			restored: false,
 			interrupted: false,
-			requestId: "",
+			requestId: continuation?.requestId ?? "",
 			createdAt: timestamp,
 			updatedAt: timestamp
 		};
 	});
+}
+
+export async function waitForPendingApprovalContinuationRegistration(
+	session: ClientSession,
+	approvalId: string,
+	timeoutMs: number = 3000
+): Promise<PendingAiContinuation | undefined> {
+	const deadline: number = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		const pendingContinuation: PendingAiContinuation | undefined = session.pendingAiContinuations.get(approvalId);
+		if (pendingContinuation !== undefined) {
+			return pendingContinuation;
+		}
+		await new Promise<void>((resolve: () => void): NodeJS.Timeout => setTimeout(resolve, 50));
+	}
+
+	return session.pendingAiContinuations.get(approvalId);
 }
 
 export function findPendingApprovalState(states: PendingApprovalState[], approvalId: string): PendingApprovalState | undefined {

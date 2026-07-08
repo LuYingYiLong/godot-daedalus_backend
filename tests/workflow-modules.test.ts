@@ -2,10 +2,18 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ToolEvent } from "../src/tools/tool-dispatcher.js";
 import type { WorkflowPhase } from "../src/workflow/types.js";
+import { planWorkflowAfterLlmPlannerFailure } from "../src/workflow/planner.js";
+import {
+	classifyGodotTask,
+	createGodotTemplateWorkflowPlan,
+	getAllowedToolsForLlmPlannedStep,
+	narrowLlmPlannedWriteTools
+} from "../src/workflow/godot-template-planner.js";
 import {
 	createEmptyWorkflowPhaseToolStats,
 	createWorkflowWriteGuardRetryMessage,
 	didWorkflowWritePhaseExecute,
+	getWorkflowWriteGuardRetryAllowedTools,
 	isWorkflowProposalPhase,
 	updateWorkflowPhaseToolStats
 } from "../src/server/workflow/tool-events.js";
@@ -13,6 +21,7 @@ import {
 	convertWorkflowSnapshotToAgentSnapshot,
 	mapWorkflowEventToAgentEvent
 } from "../src/server/workflow/events.js";
+import { isEmptyProviderResponseError } from "../src/server/workflow/provider-errors.js";
 
 test("workflow tool stats track propose, write and approval events", (): void => {
 	const stats = createEmptyWorkflowPhaseToolStats();
@@ -65,7 +74,172 @@ test("workflow proposal phases satisfy write guard with propose tools", (): void
 
 	assert.equal(isWorkflowProposalPhase(phase), true);
 	assert.equal(didWorkflowWritePhaseExecute(phase, stats), true);
-	assert.match(createWorkflowWriteGuardRetryMessage("阶段消息"), /后端执行守卫/);
+	const retryMessage: string = createWorkflowWriteGuardRetryMessage("阶段消息", ["mcp_godot_attach_script_to_node"], 2, "准备调用工具。");
+	assert.match(retryMessage, /后端执行守卫/);
+	assert.match(retryMessage, /mcp_godot_attach_script_to_node/);
+	assert.match(retryMessage, /read\/verify 结果不能完成当前写入阶段/);
+});
+
+test("workflow write guard retry narrows allowed tools to mutation tools", (): void => {
+	const phase: WorkflowPhase = {
+		id: "attach-script",
+		title: "将脚本挂载到场景",
+		instruction: "挂载脚本",
+		status: "pending",
+		toolGroup: "write",
+		toolBudget: "project_edit",
+		allowedTools: [
+			"mcp_godot_read_text_file",
+			"mcp_godot_propose_attach_script_to_node",
+			"mcp_godot_attach_script_to_node",
+			"mcp_godot_validate_scene_script_references",
+			"mcp_terminal_run_safe_preset"
+		]
+	} as WorkflowPhase;
+
+	assert.deepEqual(getWorkflowWriteGuardRetryAllowedTools(phase), [
+		"mcp_godot_propose_attach_script_to_node",
+		"mcp_godot_attach_script_to_node"
+	]);
+	assert.match(createWorkflowWriteGuardRetryMessage("阶段消息"), /第一步必须发出 API tool_call/);
+});
+
+test("workflow phase runner recognizes provider empty response errors", (): void => {
+	assert.equal(isEmptyProviderResponseError(new Error("LLM returned empty response")), true);
+	assert.equal(isEmptyProviderResponseError(new Error("LLM returned empty choices")), false);
+	assert.equal(isEmptyProviderResponseError("LLM returned empty response"), false);
+});
+
+test("workflow write guard rejects ordinary write phases that only proposed changes", (): void => {
+	const phase: WorkflowPhase = {
+		id: "attach-script",
+		title: "将脚本挂载到场景",
+		instruction: "实际挂载脚本",
+		status: "pending",
+		toolGroup: "write",
+		toolBudget: "project_edit",
+		allowedTools: []
+	} as WorkflowPhase;
+	const stats = createEmptyWorkflowPhaseToolStats();
+
+	updateWorkflowPhaseToolStats(stats, {
+		type: "tool.call",
+		toolName: "mcp_godot_propose_attach_script_to_node"
+	} as ToolEvent);
+
+	assert.equal(didWorkflowWritePhaseExecute(phase, stats), false);
+});
+
+test("workflow write stats do not count safe terminal presets through write wrapper as mutations", (): void => {
+	const phase: WorkflowPhase = {
+		id: "write",
+		title: "实现功能",
+		instruction: "写入文件",
+		status: "pending",
+		toolGroup: "write",
+		toolBudget: "project_edit",
+		allowedTools: []
+	} as WorkflowPhase;
+	const stats = createEmptyWorkflowPhaseToolStats();
+
+	updateWorkflowPhaseToolStats(stats, {
+		type: "tool.call",
+		step: 0,
+		toolCallId: "call-check",
+		toolName: "mcp_terminal_run_write_preset",
+		args: { presetName: "godot.check_only", resourcePath: "scripts/game.gd" },
+		serverId: "terminal",
+		serverName: "Terminal",
+		category: "terminal",
+		title: "运行终端命令",
+		summary: "godot.check_only scripts/game.gd",
+		target: {
+			kind: "command",
+			path: "scripts/game.gd",
+			label: "godot.check_only scripts/game.gd"
+		}
+	});
+
+	assert.equal(stats.writeToolEvents, 0);
+	assert.equal(didWorkflowWritePhaseExecute(phase, stats), false);
+});
+
+test("llm planner failure falls back to fixed multi-phase workflow for implementation requests", (): void => {
+	const plan = planWorkflowAfterLlmPlannerFailure({
+		message: "创建一个最小 Godot 场景并挂载脚本",
+		mode: "agent",
+		options: {
+			workflow: "llm_planned"
+		}
+	});
+
+	assert.notEqual(plan, null);
+	assert.deepEqual(plan?.phases.map((phase: WorkflowPhase): WorkflowPhase["toolGroup"] => phase.toolGroup), [
+		"read",
+		"write",
+		"verify",
+		"summarize"
+	]);
+});
+
+test("Godot task classifier detects script scene attachment tasks", (): void => {
+	const classification = classifyGodotTask([
+		"创建脚本 scripts/smoke.gd，内容如下：",
+		"```gdscript",
+		"extends Node",
+		"```",
+		"创建场景 scenes/smoke.tscn，并把 res://scripts/smoke.gd 挂载到根节点。"
+	].join("\n"));
+
+	assert.equal(classification.type, "scene_attach_script");
+	assert.equal(classification.scriptPath, "scripts/smoke.gd");
+	assert.equal(classification.scenePath, "scenes/smoke.tscn");
+	assert.equal(classification.nodePath, ".");
+	assert.equal(classification.scriptContent, "extends Node\n");
+});
+
+test("Godot template workflow uses narrow phase tools for script scene attach", (): void => {
+	const plan = createGodotTemplateWorkflowPlan({
+		message: "创建脚本 scripts/smoke.gd，创建场景 scenes/smoke.tscn，并把脚本挂载到根节点。",
+		options: {
+			workflow: "auto"
+		}
+	});
+
+	assert.equal(plan?.source, "godot_template");
+	assert.deepEqual(plan?.phases.map((phase: WorkflowPhase): string => phase.id), [
+		"inspect",
+		"write-script",
+		"create-scene",
+		"attach-script",
+		"validate-scene-references",
+		"summarize"
+	]);
+	const attachPhase = plan?.phases.find((phase: WorkflowPhase): boolean => phase.id === "attach-script");
+	assert.ok(attachPhase !== undefined);
+	assert.equal(attachPhase.allowedTools.includes("mcp_godot_attach_script_to_node"), true);
+	assert.equal(attachPhase.allowedTools.includes("mcp_godot_apply_scene_patch"), true);
+	assert.equal(attachPhase.allowedTools.includes("mcp_godot_create_text_file"), false);
+	assert.equal(attachPhase.allowedTools.includes("mcp_terminal_run_write_preset"), false);
+});
+
+test("LLM planned write tools are narrowed by phase semantics", (): void => {
+	const attachTools = getAllowedToolsForLlmPlannedStep(
+		"write",
+		"Attach script to root",
+		"Attach res://scripts/smoke.gd to scenes/smoke.tscn root node"
+	);
+	assert.equal(attachTools.includes("mcp_godot_attach_script_to_node"), true);
+	assert.equal(attachTools.includes("mcp_godot_create_text_file"), false);
+	assert.equal(attachTools.includes("mcp_terminal_run_write_preset"), false);
+
+	const sceneTools = narrowLlmPlannedWriteTools({
+		title: "创建场景",
+		instruction: "创建场景 scenes/smoke.tscn，根节点 Node",
+		toolGroup: "write"
+	});
+	assert.equal(sceneTools.includes("mcp_godot_create_scene"), true);
+	assert.equal(sceneTools.includes("mcp_godot_attach_script_to_node"), false);
 });
 
 test("workflow events map to agent event compatibility surface", (): void => {
