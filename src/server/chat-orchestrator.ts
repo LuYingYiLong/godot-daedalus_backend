@@ -169,6 +169,8 @@ import { startWorkflowExecution } from "./workflow/executor.js";
 import { ensureProviderConfigured } from "./handlers/provider-handlers.js";
 import { beginSessionRun, finishSessionRun } from "./client-connections.js";
 import { logger } from "../logger.js";
+import { createInitialPlan } from "./plan-mode.js";
+import { createPlanGetResult, type StoredPlan } from "./plan-store.js";
 
 function createSessionInfoResult(session: ClientSession, mcpHost: McpHost, historyTokensStored: number | null = null): Record<string, unknown> {
 	return {
@@ -326,6 +328,24 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 						});
 						break;
 					}
+				}
+				if (params.mode === "plan") {
+					const plan: StoredPlan = await createInitialPlan(
+						socket,
+						request.id,
+						session,
+						params,
+						options,
+						turnStartedAt,
+						abortController.signal
+					);
+					sendJson(socket, {
+						type: "response",
+						id: request.id,
+						ok: true,
+						result: createPlanGetResult(plan)
+					});
+					break;
 				}
 				const activeSkillId: SkillId | undefined = params.skillId ?? session.activeSkillId;
 				const activeSkill = activeSkillId !== undefined ? getSkill(activeSkillId) : undefined;

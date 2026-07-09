@@ -64,3 +64,49 @@ export async function appendFailedChatTurnToSession(
 	});
 	return true;
 }
+
+export async function appendTranscriptOnlyChatTurnToSession(
+	session: ClientSession,
+	userMessage: string,
+	assistantMessage: string,
+	requestId: string,
+	userCreatedAt: string = new Date().toISOString(),
+	assistantCreatedAt: string = new Date().toISOString(),
+	additionalContext?: readonly AdditionalContextItem[] | undefined
+): Promise<boolean> {
+	if (!session.sessionId) {
+		return false;
+	}
+	if (session.messages.some((message: ChatMessage): boolean => message.requestId === requestId)) {
+		return false;
+	}
+
+	const userChatMessage: ChatMessage = {
+		role: "user",
+		content: userMessage,
+		requestId,
+		createdAt: userCreatedAt,
+		excludeFromLlmContext: true
+	};
+	const clonedAdditionalContext: AdditionalContextItem[] | undefined = cloneAdditionalContextItems(additionalContext);
+	if (clonedAdditionalContext !== undefined) {
+		userChatMessage.additionalContext = clonedAdditionalContext;
+	}
+
+	session.messages = [
+		...session.messages,
+		userChatMessage,
+		{
+			role: "assistant",
+			content: assistantMessage,
+			requestId,
+			createdAt: assistantCreatedAt,
+			excludeFromLlmContext: true
+		}
+	];
+	await saveSession(session.sessionId, session.messages, {
+		workspaceId: session.activeWorkspace?.id,
+		activeSkillId: session.activeSkillId
+	});
+	return true;
+}

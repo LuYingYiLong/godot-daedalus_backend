@@ -7,7 +7,7 @@ import { CUSTOM_MCP_TOOLS_SENTINEL } from "../src/tools/tool-sentinels.js";
 import { READ_TOOLS, VERIFY_TOOLS, WRITE_TOOLS } from "../src/workflow/planner.js";
 import { normalizeChatParamsForMode, resolveAllowedToolsForChatParams } from "../src/server/chat-mode.js";
 
-test("ai.chat schema accepts ask mode and rejects unknown modes", (): void => {
+test("ai.chat schema accepts ask and plan modes and rejects unknown modes", (): void => {
 	const askResult = aiChatParamsSchema.safeParse({
 		message: "这段 GDScript 为什么报错？",
 		mode: "ask",
@@ -19,9 +19,15 @@ test("ai.chat schema accepts ask mode and rejects unknown modes", (): void => {
 	});
 	assert.equal(askResult.success, true);
 
+	const planResult = aiChatParamsSchema.safeParse({
+		message: "帮我做一个 Godot AI 插件",
+		mode: "plan"
+	});
+	assert.equal(planResult.success, true);
+
 	const unknownResult = aiChatParamsSchema.safeParse({
 		message: "hello",
-		mode: "plan"
+		mode: "execute"
 	});
 	assert.equal(unknownResult.success, false);
 });
@@ -53,7 +59,7 @@ test("ask mode normalizes workflow and tool budget without mutating agent mode",
 	assert.equal(normalizeChatParamsForMode(agentParams), agentParams);
 });
 
-test("ask mode allows built-in read and verify tools but blocks write tools and custom MCP", (): void => {
+test("ask and plan modes allow built-in read and verify tools but block write tools and custom MCP", (): void => {
 	const allowedTools: readonly string[] | undefined = resolveAllowedToolsForChatParams(
 		{
 			message: "帮我检查这个脚本",
@@ -77,6 +83,19 @@ test("ask mode allows built-in read and verify tools but blocks write tools and 
 		assert.equal(allowedTools.includes(toolName), false, `unexpected write tool ${toolName}`);
 	}
 	assert.equal(allowedTools.includes(CUSTOM_MCP_TOOLS_SENTINEL), false);
+
+	const planAllowedTools: readonly string[] | undefined = resolveAllowedToolsForChatParams(
+		{
+			message: "先给我出计划",
+			mode: "plan",
+			options: {
+				workflow: "llm_planned",
+				toolBudget: "project_edit"
+			}
+		},
+		WRITE_TOOLS
+	);
+	assert.deepEqual(planAllowedTools, allowedTools);
 });
 
 test("ask mode prompt contains advisor constraints before custom instructions", async (): Promise<void> => {

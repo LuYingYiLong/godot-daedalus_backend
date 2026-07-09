@@ -65,7 +65,7 @@ export const additionalContextItemSchema = z.object({
 
 export const aiChatParamsSchema = z.object({
 	message: z.string(),
-	mode: z.enum(["agent", "ask"]).optional(),
+	mode: z.enum(["agent", "ask", "plan"]).optional(),
 	promptId: promptIdSchema.optional(),
 	skillId: skillIdSchema.optional(),
 	systemPrompt: z.string().optional(),
@@ -525,6 +525,41 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		params: z.object({
 			sessionId: z.string().min(1),
 			batchId: z.string().min(1),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("plan.get"),
+		params: z.object({
+			sessionId: z.string().min(1).optional(),
+			planId: z.string().min(1),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("plan.clarify"),
+		params: z.object({
+			planId: z.string().min(1),
+			reply: z.string().min(1).max(8000),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("plan.revise"),
+		params: z.object({
+			planId: z.string().min(1),
+			feedback: z.string().min(1).max(12000),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("plan.approve"),
+		params: z.object({
+			planId: z.string().min(1),
 		}),
 	}),
 	z.object({

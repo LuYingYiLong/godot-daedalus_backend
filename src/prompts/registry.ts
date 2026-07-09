@@ -99,7 +99,7 @@ export async function composeSystemPrompt(
 	promptId: PromptId | undefined,
 	extraSystemPrompt: string | undefined,
 	runtimeContext: string = "",
-	chatMode: "agent" | "ask" | undefined = undefined
+	chatMode: "agent" | "ask" | "plan" | undefined = undefined
 ): Promise<string> {
 	const templateContent: string = await loadPromptTemplate(promptId ?? DEFAULT_PROMPT_ID);
 	const trimmedExtraPrompt: string = extraSystemPrompt?.trim() ?? "";
