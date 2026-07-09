@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { ReadOnlyToolApprovalGateway } from "../src/tools/approval-gateway.js";
+import { getDynamicMcpToolNames, replaceDynamicMcpTools } from "../src/tools/dynamic-mcp-tools.js";
 import { evaluateToolCall, getEffectiveToolPolicy, getToolPolicy } from "../src/tools/tool-policy.js";
 
 const readTool: string = "mcp_godot_read_text_file";
@@ -47,6 +49,45 @@ test("auto-safe mode self-approves builtin write tools but not dynamic MCP or de
 	assert.equal(evaluateToolCall("auto-safe", writeTool, {}).action, "allow");
 	assert.equal(evaluateToolCall("auto-safe", dynamicMcpTool, {}).action, "request_approval");
 	assert.equal(evaluateToolCall("auto-safe", destructiveTool, {}).action, "request_approval");
+});
+
+test("read-only gateway allows only read, verify and plan-safe dynamic MCP tools", async (): Promise<void> => {
+	replaceDynamicMcpTools([
+		{
+			serverId: "custom-context7",
+			serverName: "context7",
+			toolName: "query-docs",
+			description: "Read docs",
+			inputSchema: { type: "object" },
+			planAccess: "read"
+		},
+		{
+			serverId: "custom-unsafe",
+			serverName: "unsafe",
+			toolName: "mutate",
+			description: "Unknown external mutation",
+			inputSchema: { type: "object" }
+		}
+	]);
+	const dynamicToolNames: string[] = getDynamicMcpToolNames();
+	const planSafeToolName: string = dynamicToolNames.find((toolName: string): boolean => toolName.includes("context7")) ?? "";
+	const unsafeToolName: string = dynamicToolNames.find((toolName: string): boolean => toolName.includes("unsafe")) ?? "";
+	const gateway = new ReadOnlyToolApprovalGateway([
+		readTool,
+		verifyTool,
+		writeTool,
+		planSafeToolName,
+		unsafeToolName
+	]);
+
+	assert.equal((await gateway.evaluate(readTool, {}, "call-read")).action, "allow");
+	assert.equal((await gateway.evaluate(verifyTool, { presetName: "godot.check_only" }, "call-verify")).action, "allow");
+	assert.equal((await gateway.evaluate(writeTool, {}, "call-write")).action, "deny");
+	assert.equal((await gateway.evaluate(planSafeToolName, {}, "call-custom-read")).action, "allow");
+	assert.equal((await gateway.evaluate(unsafeToolName, {}, "call-custom-unsafe")).action, "deny");
+	assert.equal(getToolPolicy(planSafeToolName)?.risk, "write");
+
+	replaceDynamicMcpTools([]);
 });
 
 test("bypass mode still requires approval for destructive tools", (): void => {

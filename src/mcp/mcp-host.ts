@@ -181,7 +181,8 @@ export class McpHost {
 			serverName: config.name,
 			toolName: tool.name,
 			description: tool.description,
-			inputSchema: tool.inputSchema
+			inputSchema: tool.inputSchema,
+			planAccess: config.planAccess ?? "disabled"
 		}));
 
 		let workspaceTools: Map<string, DynamicMcpToolSource[]> | undefined = this.workspaceCustomTools.get(workspaceId);

@@ -120,6 +120,26 @@ $env:GODOT_EXECUTABLE_PATH = "D:\Godot_v4.7-stable_win64.exe\Godot_v4.7-stable_w
 godot-daedalus-terminal-mcp
 ```
 
+## Run The Automation MCP Server
+
+Automation MCP is a development-only MCP server for external smoke clients such as Codex. It controls the backend through normal WebSocket/RPC calls and is not exposed to the Godot plugin MCP menu or to Daedalus in-product LLM tools.
+
+It is disabled unless explicitly enabled:
+
+```powershell
+$env:DAEDALUS_AUTOMATION_MCP = "1"
+npm run automation:mcp -- --backend-url ws://localhost:38180
+```
+
+Published package users can run:
+
+```powershell
+$env:DAEDALUS_AUTOMATION_MCP = "1"
+godot-daedalus-automation-mcp --backend-url ws://localhost:38180
+```
+
+See [`docs/automation-mcp.md`](docs/automation-mcp.md) for Codex MCP configuration, approval whitelist settings, tool names, and smoke workflow examples.
+
 ## Development
 
 ```powershell
@@ -134,6 +154,7 @@ Useful scripts:
 - `npm start`: run the WebSocket backend from source.
 - `npm run mcp`: run the Godot MCP server from source.
 - `npm run terminal:mcp`: run the terminal MCP server from source.
+- `npm run automation:mcp`: run the development-only Automation MCP server. Requires `DAEDALUS_AUTOMATION_MCP=1`.
 - `npm run ping`: run the local ping client.
 - `npm run pack:check`: inspect the npm package contents without publishing.
 - `npm run smoke:beta`: start the backend and run the Windows/Godot public Beta smoke checks.
@@ -147,6 +168,7 @@ Public Beta release readiness is tracked in [`docs/beta-release-checklist.md`](d
 The npm package uses the `files` whitelist in `package.json`. Runtime users receive:
 
 - `bin/`
+- `docs/`
 - `src/`
 - `scripts/beta-smoke.ps1`
 - `scripts/llm-inline-diff-smoke.ts`

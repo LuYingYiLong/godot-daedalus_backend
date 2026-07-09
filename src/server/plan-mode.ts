@@ -1,6 +1,7 @@
 import type WebSocket from "ws";
 import type { AiChatParams, ChatMessage } from "../protocol/types.js";
-import { chatWithDeepSeek, type ProviderChatOptions } from "../providers/deepseek-client.js";
+import type { ProviderChatOptions } from "../providers/deepseek-client.js";
+import type { McpHost } from "../mcp/mcp-host.js";
 import { parseJsonObjectLoose } from "./next-step-hints.js";
 import type { ClientSession } from "./client-session.js";
 import { clipTextByChars, cloneAdditionalContextItems } from "./additional-context.js";
@@ -16,9 +17,23 @@ import {
 import { sendSessionEvent, waitForSessionEventPersistence } from "./session-events.js";
 import { appendTranscriptOnlyChatTurnToSession } from "./transcript-history.js";
 import { logger } from "../logger.js";
+import { runProviderAgentStreaming } from "../providers/provider-agent.js";
+import { ReadOnlyToolApprovalGateway } from "../tools/approval-gateway.js";
+import type { OnToolEvent, ToolEvent } from "../tools/tool-dispatcher.js";
+import { resolveAllowedToolsForChatParams } from "./chat-mode.js";
+import { createAgentToolEventForwarder } from "./workflow/tool-events.js";
 
 const PLAN_PREVIEW_MAX_CHARS: number = 1600;
 const CLARIFICATION_REPLY_MAX_COUNT: number = 3;
+const PLAN_RUNNER_MAX_ATTEMPTS: number = 2;
+
+type PlanDecisionRuntime = {
+	socket: WebSocket;
+	requestId: string;
+	session: ClientSession;
+	mcpHost: McpHost;
+	requireToolInspection?: boolean | undefined;
+};
 
 export type PlanDecision =
 	| {
@@ -33,6 +48,25 @@ export type PlanDecision =
 		planMarkdown: string;
 		assumptions: string[];
 	};
+
+export function sendPlanMessageDelta(socket: WebSocket, requestId: string, session: ClientSession, text: string): void {
+	if (text.trim().length === 0) {
+		return;
+	}
+	sendSessionEvent(socket, requestId, session, "agent.message.delta", {
+		runId: requestId,
+		mode: "plan",
+		text
+	});
+}
+
+export function sendPlanMessageDone(socket: WebSocket, requestId: string, session: ClientSession, planId?: string | undefined): void {
+	sendSessionEvent(socket, requestId, session, "agent.message.done", {
+		runId: requestId,
+		mode: "plan",
+		planId: planId ?? null
+	});
+}
 
 function isBroadGodotPluginGoal(message: string): boolean {
 	const normalized: string = message.trim().toLowerCase();
@@ -120,11 +154,14 @@ function createPlanPreview(markdown: string): string {
 	return clipTextByChars(markdown.trim(), PLAN_PREVIEW_MAX_CHARS);
 }
 
-function createPlannerSystemPrompt(): string {
+export function createPlannerSystemPrompt(): string {
 	return [
 		"你是 Godot Daedalus 的 Plan 模式规划器。此阶段只能澄清和生成计划，不能执行、不能写文件、不能假装已经修改项目。",
 		"先判断用户目标是否足够明确；如果直接做容易偏离真实需求，必须要求澄清。",
 		"关键缺失信息会影响整体设计时必须问；不关键的信息可以写入 assumptions。",
+		"不要臆测技术栈、协议或测试框架；如果缺少关键信息，优先要求澄清，或把不关键的不确定点写为假设。",
+		"当前 godot-daedalus_backend 仓库事实：后端是 TypeScript WebSocket/RPC 服务，协议边界使用 zod schema，测试使用 Node 内置 test runner（node:test / node --import tsx --test），常用命令是 npm run typecheck、npm test、npm run check。",
+		"除非用户明确要求或目标仓库已有证据，不要在计划中写 Vitest、Jest、gRPC、protobuf 等未确认技术。",
 		"输出必须是 JSON object，不要输出 markdown fence。",
 		"需要澄清时格式：{\"decision\":\"needs_clarification\",\"title\":\"短标题\",\"question\":\"一个问题\",\"recommendedReplies\":[{\"label\":\"短按钮\",\"text\":\"用户可直接采用的澄清回复\",\"description\":\"可选说明\"}]}。",
 		"计划就绪时格式：{\"decision\":\"plan_ready\",\"title\":\"短标题\",\"planMarkdown\":\"完整 Markdown 计划\",\"assumptions\":[\"合理假设\"]}。",
@@ -132,7 +169,13 @@ function createPlannerSystemPrompt(): string {
 	].join("\n");
 }
 
-function createPlannerMessage(originalMessage: string, clarifications: readonly string[], revisions: readonly string[], currentPlanMarkdown?: string | undefined): string {
+function createPlannerMessage(
+	originalMessage: string,
+	clarifications: readonly string[],
+	revisions: readonly string[],
+	currentPlanMarkdown?: string | undefined,
+	extraInstruction?: string | undefined
+): string {
 	const lines: string[] = [
 		"用户原始目标：",
 		originalMessage.trim()
@@ -152,6 +195,10 @@ function createPlannerMessage(originalMessage: string, clarifications: readonly 
 		for (const revision of revisions) {
 			lines.push(`- ${revision}`);
 		}
+	}
+	if (extraInstruction !== undefined && extraInstruction.trim().length > 0) {
+		lines.push("\n本次额外要求：");
+		lines.push(extraInstruction.trim());
 	}
 	return lines.join("\n");
 }
@@ -196,31 +243,108 @@ export async function createPlanDecision(
 	clarifications: readonly string[] = [],
 	revisions: readonly string[] = [],
 	currentPlanMarkdown?: string | undefined,
+	runtime?: PlanDecisionRuntime | undefined,
 	abortSignal?: AbortSignal | undefined
 ): Promise<PlanDecision> {
 	if (clarifications.length === 0 && revisions.length === 0 && isBroadGodotPluginGoal(params.message)) {
 		return createGodotPluginClarification(params.message);
 	}
 
+	if (runtime === undefined) {
+		throw new Error("Plan agent runner requires runtime context.");
+	}
+
+	const requireToolInspection: boolean = runtime.requireToolInspection ?? true;
+	for (let attempt: number = 0; attempt < PLAN_RUNNER_MAX_ATTEMPTS; attempt += 1) {
+		const extraInstruction: string | undefined = attempt === 0
+			? undefined
+			: "你上一次没有先调用任何工具就给出了计划。请先使用一个最小必要的 read/verify 或 Plan-safe custom MCP 工具读取事实，再输出 JSON 决策。";
+		const result = await runPlanAgentDecision(
+			params,
+			options,
+			clarifications,
+			revisions,
+			currentPlanMarkdown,
+			runtime,
+			extraInstruction,
+			abortSignal
+		);
+		if (result.decision.decision !== "plan_ready" || !requireToolInspection || result.toolCallCount > 0) {
+			return result.decision;
+		}
+		sendPlanMessageDelta(runtime.socket, runtime.requestId, runtime.session, "我需要先读取最小必要上下文，再给出可执行计划。\n");
+	}
+
+	throw new Error("Plan runner did not call any read/verify tool before producing a plan.");
+}
+
+async function runPlanAgentDecision(
+	params: AiChatParams,
+	options: ProviderChatOptions,
+	clarifications: readonly string[],
+	revisions: readonly string[],
+	currentPlanMarkdown: string | undefined,
+	runtime: PlanDecisionRuntime,
+	extraInstruction: string | undefined,
+	abortSignal?: AbortSignal | undefined
+): Promise<{ decision: PlanDecision; toolCallCount: number }> {
 	const plannerParams: AiChatParams = {
-		message: createPlannerMessage(params.message, clarifications, revisions, currentPlanMarkdown),
+		message: createPlannerMessage(params.message, clarifications, revisions, currentPlanMarkdown, extraInstruction),
 		mode: "plan",
 		options: {
 			temperature: 0.2,
 			maxTokens: 3200,
 			responseFormat: "json",
-			stream: false
+			stream: true,
+			toolBudget: "normal",
+			workflow: "single"
 		}
 	};
-	const responseText: string = await chatWithDeepSeek(
+
+	const allowedToolNames: readonly string[] = resolveAllowedToolsForChatParams(plannerParams, undefined) ?? [];
+	const gateway = new ReadOnlyToolApprovalGateway(allowedToolNames);
+	const baseForwarder: OnToolEvent = createAgentToolEventForwarder(
+		runtime.socket,
+		runtime.requestId,
+		runtime.session,
+		runtime.requestId,
+		`plan-step-${runtime.requestId}`,
+		runtime.requestId,
+		runtime.mcpHost
+	);
+	let toolCallCount: number = 0;
+	const onEvent: OnToolEvent = (event: ToolEvent): void => {
+		if (event.type === "ai.delta") {
+			return;
+		}
+		if (event.type === "tool.call") {
+			toolCallCount += 1;
+		}
+		baseForwarder(event);
+	};
+	const agentResult = await runProviderAgentStreaming(
 		plannerParams,
 		options,
 		[] satisfies ChatMessage[],
 		createPlannerSystemPrompt(),
+		runtime.mcpHost,
+		gateway,
+		allowedToolNames,
+		onEvent,
 		abortSignal
 	);
-	const rawDecision: unknown = parseJsonObjectLoose(responseText);
-	return normalizePlanDecision(rawDecision, "执行计划");
+	if (agentResult.status === "approval_required") {
+		throw new Error(`Plan runner requested approval for ${agentResult.toolName}, which is not allowed.`);
+	}
+	if (agentResult.status === "protocol_violation") {
+		throw new Error(agentResult.reason);
+	}
+
+	const rawDecision: unknown = parseJsonObjectLoose(agentResult.text);
+	return {
+		decision: normalizePlanDecision(rawDecision, "执行计划"),
+		toolCallCount
+	};
 }
 
 export async function createInitialPlan(
@@ -229,13 +353,20 @@ export async function createInitialPlan(
 	session: ClientSession,
 	params: AiChatParams,
 	options: ProviderChatOptions,
+	mcpHost: McpHost,
 	turnStartedAt: string,
 	abortSignal?: AbortSignal | undefined
 ): Promise<StoredPlan> {
 	if (!session.sessionId) {
 		throw new Error("Plan mode requires an active session.");
 	}
-	const decision: PlanDecision = await createPlanDecision(params, options, [], [], undefined, abortSignal);
+	sendPlanMessageDelta(socket, requestId, session, "我先判断这个目标是否足够明确，并只做计划分析，不会修改项目。\n\n");
+	const decision: PlanDecision = await createPlanDecision(params, options, [], [], undefined, {
+		socket,
+		requestId,
+		session,
+		mcpHost
+	}, abortSignal);
 	let metadata: StoredPlanMetadata;
 	let markdown: string;
 	let assistantMessage: string;
@@ -253,6 +384,7 @@ export async function createInitialPlan(
 		markdown = "";
 		assistantMessage = `需要澄清：${decision.question}`;
 		eventName = "plan.clarification.required";
+		sendPlanMessageDelta(socket, requestId, session, `我需要先确认一个关键点，避免计划偏离你的真实目标：\n\n${decision.question}\n`);
 	} else {
 		markdown = decision.planMarkdown;
 		metadata = createPlanMetadata({
@@ -265,15 +397,12 @@ export async function createInitialPlan(
 		});
 		assistantMessage = metadata.previewMarkdown;
 		eventName = "plan.generated";
+		sendPlanMessageDelta(socket, requestId, session, "计划已经生成，请先预览并确认是否执行。\n");
 	}
 
 	const storedPlan: StoredPlan = await writeStoredPlan(metadata, markdown);
 	sendSessionEvent(socket, requestId, session, eventName, createPlanEventPayload(storedPlan));
-	sendSessionEvent(socket, requestId, session, "agent.message.done", {
-		runId: requestId,
-		mode: "plan",
-		planId: metadata.planId
-	});
+	sendPlanMessageDone(socket, requestId, session, metadata.planId);
 	await waitForSessionEventPersistence(session);
 	await appendTranscriptOnlyChatTurnToSession(
 		session,
@@ -297,6 +426,7 @@ export async function applyPlanClarification(
 	plan: StoredPlan,
 	reply: string,
 	options: ProviderChatOptions,
+	runtime: PlanDecisionRuntime,
 	abortSignal?: AbortSignal | undefined
 ): Promise<StoredPlan> {
 	const nextClarifications: string[] = [...plan.metadata.clarifications, reply.trim()];
@@ -306,6 +436,7 @@ export async function applyPlanClarification(
 		nextClarifications,
 		plan.metadata.revisions,
 		plan.markdown,
+		runtime,
 		abortSignal
 	);
 	return updateStoredPlan(plan.metadata.sessionId, plan.metadata.planId, (): StoredPlan => {
@@ -342,6 +473,7 @@ export async function applyPlanRevision(
 	plan: StoredPlan,
 	feedback: string,
 	options: ProviderChatOptions,
+	runtime: PlanDecisionRuntime,
 	abortSignal?: AbortSignal | undefined
 ): Promise<StoredPlan> {
 	const nextRevisions: string[] = [...plan.metadata.revisions, feedback.trim()];
@@ -351,6 +483,7 @@ export async function applyPlanRevision(
 		plan.metadata.clarifications,
 		nextRevisions,
 		plan.markdown,
+		runtime,
 		abortSignal
 	);
 	return updateStoredPlan(plan.metadata.sessionId, plan.metadata.planId, (): StoredPlan => {

@@ -9,4 +9,5 @@ export type McpServerConfig = {
 	url?: string | undefined;
 	headers?: Record<string, string> | undefined;
 	custom?: boolean | undefined;
+	planAccess?: "disabled" | "read" | undefined;
 };

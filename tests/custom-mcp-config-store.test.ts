@@ -49,6 +49,7 @@ test("custom MCP config update preserves identity and applies secret update sema
 			name: "Demo Tools",
 			description: "Original",
 			transport: "stdio",
+			planAccess: "read",
 			command: "npx",
 			args: ["-y", "old-mcp"],
 			env: {
@@ -78,6 +79,7 @@ test("custom MCP config update preserves identity and applies secret update sema
 		assert.equal(updated?.createdAt, createdAt);
 		assert.equal(updated?.description, "Updated");
 		assert.equal(updated?.enabled, false);
+		assert.equal(updated?.planAccess, "read");
 		assert.equal(updated?.command, "uvx");
 		assert.deepEqual(updated?.args, ["new-mcp"]);
 		assert.deepEqual(updated?.envNames, ["NEW_TOKEN", "TOKEN"]);
@@ -113,6 +115,7 @@ test("custom MCP config update preserves identity and applies secret update sema
 		const stored = await listStoredCustomMcpServerConfigs();
 		assert.equal(stored[0]?.id, serverId);
 		assert.equal(stored[0]?.name, "Demo Tools");
+		assert.equal(stored[0]?.planAccess, "read");
 	});
 });
 
@@ -132,12 +135,14 @@ test("custom MCP config update can switch transports and preserve existing heade
 			serverId,
 			transport: "http",
 			enabled: true,
+			planAccess: "read",
 			url: "https://example.com/mcp",
 			headers: {
 				Authorization: "Bearer first"
 			}
 		});
 		assert.equal(switched?.transport, "http");
+		assert.equal(switched?.planAccess, "read");
 		assert.equal(switched?.url, "https://example.com/mcp");
 		assert.deepEqual(switched?.headerNames, ["Authorization"]);
 		assert.equal(secrets.has(`mcp:${serverId}:env:TOKEN`), false);
@@ -152,6 +157,7 @@ test("custom MCP config update can switch transports and preserve existing heade
 			}
 		});
 		assert.equal(preserved?.url, "https://example.com/next");
+		assert.equal(preserved?.planAccess, "read");
 		assert.deepEqual(preserved?.headerNames, ["Authorization"]);
 		assert.equal(secrets.get(`mcp:${serverId}:header:Authorization`), "Bearer first");
 	});

@@ -7,7 +7,8 @@
     "godot-daedalus-backend": "bin/godot-daedalus-backend.js",
     "godot-daedalus-manager": "bin/godot-daedalus-manager.js",
     "godot-daedalus-mcp": "bin/godot-daedalus-mcp.js",
-    "godot-daedalus-terminal-mcp": "bin/godot-daedalus-terminal-mcp.js"
+    "godot-daedalus-terminal-mcp": "bin/godot-daedalus-terminal-mcp.js",
+    "godot-daedalus-automation-mcp": "bin/godot-daedalus-automation-mcp.js"
   },
   "files": [
     "bin/",
@@ -24,6 +25,7 @@
     "ping": "tsx src/ping-client.ts",
     "mcp": "tsx src/mcp/godot/server.ts",
     "terminal:mcp": "tsx src/mcp/terminal/server.ts",
+    "automation:mcp": "tsx src/mcp/automation/server.ts",
     "typecheck": "tsc --noEmit",
     "test": "npm run typecheck && node --import tsx --test \"tests/*.test.ts\"",
     "check": "npm test && npm run pack:check",

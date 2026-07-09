@@ -13,12 +13,14 @@ const MAX_ARGUMENTS: number = 64;
 const MAX_SECRET_NAMES: number = 64;
 
 export type CustomMcpTransport = "stdio" | "http";
+export type CustomMcpPlanAccess = "disabled" | "read";
 
 export type CustomMcpServerInput = {
 	name: string;
 	description?: string | undefined;
 	transport: CustomMcpTransport;
 	enabled?: boolean | undefined;
+	planAccess?: CustomMcpPlanAccess | undefined;
 	command?: string | undefined;
 	args?: string[] | undefined;
 	env?: Record<string, string> | undefined;
@@ -33,6 +35,7 @@ export type CustomMcpServerUpdateInput = {
 	description?: string | undefined;
 	transport: CustomMcpTransport;
 	enabled?: boolean | undefined;
+	planAccess?: CustomMcpPlanAccess | undefined;
 	command?: string | undefined;
 	args?: string[] | undefined;
 	env?: CustomMcpSecretUpdateRecord | undefined;
@@ -46,6 +49,7 @@ export type StoredCustomMcpServerConfig = {
 	description: string;
 	transport: CustomMcpTransport;
 	enabled: boolean;
+	planAccess: CustomMcpPlanAccess;
 	createdAt: string;
 	updatedAt: string;
 	command?: string | undefined;
@@ -61,6 +65,7 @@ export type CustomMcpServerSummary = {
 	description: string;
 	transport: CustomMcpTransport;
 	enabled: boolean;
+	planAccess: CustomMcpPlanAccess;
 	createdAt: string;
 	updatedAt: string;
 	command: string | null;
@@ -75,6 +80,10 @@ export type CustomMcpServerSummary = {
 function normalizeText(value: string | undefined, maxLength: number): string {
 	const trimmed: string = value?.trim() ?? "";
 	return trimmed.slice(0, maxLength);
+}
+
+function normalizePlanAccess(value: CustomMcpPlanAccess | undefined): CustomMcpPlanAccess {
+	return value === "read" ? "read" : "disabled";
 }
 
 function slugify(value: string): string {
@@ -186,6 +195,7 @@ function isStoredCustomMcpServerConfig(value: unknown): value is StoredCustomMcp
 		&& typeof record.description === "string"
 		&& (record.transport === "stdio" || record.transport === "http")
 		&& typeof record.enabled === "boolean"
+		&& (record.planAccess === undefined || record.planAccess === "disabled" || record.planAccess === "read")
 		&& typeof record.createdAt === "string"
 		&& typeof record.updatedAt === "string";
 }
@@ -294,6 +304,7 @@ function createStoredConfig(input: CustomMcpServerInput): StoredCustomMcpServerC
 		description: normalizeText(input.description, 300),
 		transport: input.transport,
 		enabled: input.enabled ?? true,
+		planAccess: normalizePlanAccess(input.planAccess),
 		createdAt: now,
 		updatedAt: now
 	};
@@ -370,6 +381,7 @@ export async function updateCustomMcpServerConfig(input: CustomMcpServerUpdateIn
 		description: normalizeText(input.description ?? current.description, 300),
 		transport: input.transport,
 		enabled: input.enabled ?? current.enabled,
+		planAccess: normalizePlanAccess(input.planAccess ?? current.planAccess),
 		createdAt: current.createdAt,
 		updatedAt: new Date().toISOString()
 	};
@@ -488,7 +500,8 @@ export async function buildCustomMcpServerConfigs(workspace: WorkspaceConfig): P
 				command: config.command,
 				args: normalizeStdioArgsForCommand(config.command, config.args ?? []),
 				env,
-				custom: true
+				custom: true,
+				planAccess: config.planAccess
 			});
 			continue;
 		}
@@ -500,7 +513,8 @@ export async function buildCustomMcpServerConfigs(workspace: WorkspaceConfig): P
 			transport: "http",
 			url: config.url,
 			headers: await loadSecrets(config.id, "header", config.headerNames),
-			custom: true
+			custom: true,
+			planAccess: config.planAccess
 		});
 	}
 
@@ -514,6 +528,7 @@ async function createCustomMcpServerSummary(config: StoredCustomMcpServerConfig)
 		description: config.description,
 		transport: config.transport,
 		enabled: config.enabled,
+		planAccess: normalizePlanAccess(config.planAccess),
 		createdAt: config.createdAt,
 		updatedAt: config.updatedAt,
 		command: config.command ?? null,

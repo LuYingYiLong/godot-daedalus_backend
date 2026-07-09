@@ -30,6 +30,7 @@ import { createToolResultLimitFallback, createToolResultLimitReason, fitToolResu
 const FINALIZE_AFTER_TOOL_LIMIT_PROMPT: string =
 	"工具调用阶段已经达到后端限制。请停止请求更多工具，基于目前已经获得的工具结果直接回答用户。"
 	+ "如果信息不完整，请明确说明哪些部分是根据已有信息总结的，哪些部分还需要进一步检查。";
+const TOOL_PROTOCOL_VIOLATION_RETRY_LIMIT: number = 1;
 export type DeepSeekAgentContinuation = ChatCompletionsAgentContinuation;
 export type DeepSeekAgentResult = ProviderAgentResult;
 
@@ -170,6 +171,24 @@ function filterToolCallsForAllowedTools(
 	}
 
 	return filteredToolCalls;
+}
+
+export function createToolProtocolCorrectionMessage(allowedToolNames: readonly string[]): string {
+	const lines: string[] = [
+		"上一条 assistant 输出包含 XML/DSML/裸工具标签，但后端不会解析正文里的工具协议。",
+		"不要再输出 <Tool>、<parameter>、DSML、JSON 工具结构或任何工具调用预告。"
+	];
+	if (allowedToolNames.length > 0) {
+		lines.push("如果需要使用工具，下一步必须通过 Chat Completions API 的 tool_calls 字段调用真实工具。");
+		lines.push("本阶段可用工具名如下：");
+		for (const toolName of allowedToolNames) {
+			lines.push(`- ${toolName}`);
+		}
+	} else {
+		lines.push("当前阶段没有可用工具，请只输出面向用户的自然语言结果。");
+	}
+
+	return lines.join("\n");
 }
 
 function containsKnownToolSyntax(text: string | null | undefined): boolean {
@@ -600,6 +619,7 @@ async function runAgentLoop(
 ): Promise<DeepSeekAgentResult> {
 	let totalToolResultChars: number = initialToolResultChars;
 	const allowedToolNames: ReadonlySet<string> = getAllowedToolNames(tools);
+	let toolProtocolViolationRetries: number = 0;
 
 	for (let step: number = startStep; step < maxSteps; step += 1) {
 		if (abortSignal?.aborted) {
@@ -667,6 +687,16 @@ async function runAgentLoop(
 
 			const hasKnownToolSyntax: boolean = containsKnownToolSyntax(text) || suppressedStreamToolSyntax;
 			if (hasKnownToolSyntax) {
+				if (toolProtocolViolationRetries < TOOL_PROTOCOL_VIOLATION_RETRY_LIMIT) {
+					toolProtocolViolationRetries += 1;
+					messages.push({
+						role: "system",
+						content: createToolProtocolCorrectionMessage(Array.from(allowedToolNames))
+					});
+					step -= 1;
+					continue;
+				}
+
 				return {
 					status: "protocol_violation",
 					text: "",

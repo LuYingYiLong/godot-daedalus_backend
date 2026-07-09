@@ -3,6 +3,35 @@ import type { WorkflowFailedCheck, WorkflowPhase, WorkflowPlan, WorkflowTodoItem
 
 const AUTO_REPAIR_ID_PREFIX: string = "auto-repair-";
 const AUTO_VERIFY_ID_PREFIX: string = "auto-verify-";
+const REPAIR_READ_TOOLS: string[] = [
+	"mcp_godot_get_project_summary",
+	"mcp_godot_list_project_files",
+	"mcp_godot_list_scenes",
+	"mcp_godot_list_scripts",
+	"mcp_godot_read_text_file",
+	"mcp_godot_search_text",
+	"mcp_godot_inspect_scene_tree",
+	"mcp_godot_get_project_settings",
+	"mcp_godot_lsp_get_status",
+	"mcp_godot_lsp_get_file_diagnostics"
+];
+const SCRIPT_REPAIR_WRITE_TOOLS: string[] = [
+	"mcp_godot_create_text_file",
+	"mcp_godot_overwrite_text_file",
+	"mcp_godot_replace_text_in_file"
+];
+const SCENE_REPAIR_WRITE_TOOLS: string[] = [
+	"mcp_godot_create_scene",
+	"mcp_godot_add_node_to_scene",
+	"mcp_godot_attach_script_to_node",
+	"mcp_godot_connect_signal_in_scene",
+	"mcp_godot_apply_scene_patch",
+	"mcp_godot_editor_apply_scene_patch"
+];
+const PROJECT_SETTING_REPAIR_WRITE_TOOLS: string[] = [
+	"mcp_godot_set_project_setting",
+	"mcp_godot_unset_project_setting"
+];
 
 export function countWorkflowAutoRepairRounds(plan: WorkflowPlan): number {
 	return plan.phases.filter((phase: WorkflowPhase): boolean => (
@@ -52,6 +81,119 @@ function shouldUseVerifyOnlyRepair(failedChecks: WorkflowFailedCheck[]): boolean
 		"validation_environment_unavailable"
 	]);
 	return failedChecks.every((check: WorkflowFailedCheck): boolean => verifyOnlyCodes.has(check.code));
+}
+
+function uniqueTools(tools: readonly string[]): string[] {
+	const result: string[] = [];
+	const seen: Set<string> = new Set();
+	for (const toolName of tools) {
+		if (seen.has(toolName)) {
+			continue;
+		}
+		seen.add(toolName);
+		result.push(toolName);
+	}
+
+	return result;
+}
+
+function collectRepairEvidence(
+	failedPhase: WorkflowPhase,
+	verifyFailureReason: string,
+	failedChecks: WorkflowFailedCheck[]
+): string {
+	const parts: string[] = [
+		failedPhase.id,
+		failedPhase.title,
+		failedPhase.instruction,
+		verifyFailureReason
+	];
+	for (const check of failedChecks) {
+		parts.push(check.code);
+		parts.push(check.message);
+		if (check.artifact !== undefined) {
+			parts.push(check.artifact);
+		}
+	}
+
+	return parts.join("\n").toLowerCase();
+}
+
+function hasAny(text: string, terms: readonly string[]): boolean {
+	return terms.some((term: string): boolean => text.includes(term));
+}
+
+function inferRepairWriteTools(
+	failedPhase: WorkflowPhase,
+	verifyFailureReason: string,
+	failedChecks: WorkflowFailedCheck[]
+): string[] {
+	const evidence: string = collectRepairEvidence(failedPhase, verifyFailureReason, failedChecks);
+	const tools: string[] = [];
+
+	if (hasAny(evidence, [
+		"project.godot",
+		"project setting",
+		"project_settings",
+		"项目设置",
+		"application/config",
+		"display/window",
+		"input/",
+		"autoload"
+	])) {
+		tools.push(...PROJECT_SETTING_REPAIR_WRITE_TOOLS);
+	}
+
+	if (hasAny(evidence, [
+		".tscn",
+		"scene",
+		"node",
+		"script reference",
+		"attach",
+		"signal",
+		"场景",
+		"节点",
+		"脚本引用",
+		"挂载",
+		"信号"
+	])) {
+		tools.push(...SCENE_REPAIR_WRITE_TOOLS);
+	}
+
+	if (hasAny(evidence, [
+		".gd",
+		"gdscript",
+		"diagnostic",
+		"parse error",
+		"type error",
+		"script or scene",
+		"脚本或场景",
+		"语法",
+		"诊断",
+		"类型"
+	])) {
+		tools.push(...SCRIPT_REPAIR_WRITE_TOOLS);
+	}
+
+	if (tools.length === 0) {
+		return WRITE_TOOLS.filter((toolName: string): boolean => !toolName.includes("_propose_") && toolName !== "mcp_terminal_run_write_preset");
+	}
+
+	return uniqueTools(tools);
+}
+
+function createRepairInstruction(failedPhase: WorkflowPhase, verifyFailureReason: string, repairWriteTools: string[]): string {
+	return [
+		`上一验证阶段「${failedPhase.title}」发现任务尚未可交付。`,
+		"请根据验证失败内容完成必要修复。当前阶段第一步必须调用下面列出的实际写入工具之一；如果写入触发审批，按审批流程暂停。",
+		"不要只输出计划、修复建议、工具调用预告或后续动作。不要只调用 read/verify 工具替代写入。",
+		"",
+		"## 本阶段允许的实际写入工具",
+		...repairWriteTools.map((toolName: string): string => `- ${toolName}`),
+		"",
+		"## 验证失败内容",
+		verifyFailureReason
+	].join("\n");
 }
 
 function createAutoVerifyPhase(
@@ -112,6 +254,7 @@ export function insertWorkflowAutoRepairPhases(
 		};
 	}
 
+	const repairWriteTools: string[] = inferRepairWriteTools(failedPhase, verifyFailureReason, failedChecks);
 	const repairPhase: WorkflowPhase = {
 		id: createUniquePhaseId(plan, AUTO_REPAIR_ID_PREFIX, round),
 		title: "修复验证问题",
@@ -119,18 +262,11 @@ export function insertWorkflowAutoRepairPhases(
 		skillId: "file.creator",
 		promptId: "godot.assistant",
 		toolBudget: "project_edit",
-		allowedTools: [...READ_TOOLS, ...WRITE_TOOLS],
+		allowedTools: uniqueTools([...REPAIR_READ_TOOLS, ...repairWriteTools]),
 		repairOf: failedPhase.id,
 		repairRound: round,
 		acceptanceCriteria,
-		instruction: [
-			`上一验证阶段「${failedPhase.title}」发现任务尚未可交付。`,
-			"请根据验证失败内容完成必要修复，必须调用实际写入工具；如果写入触发审批，按审批流程暂停。",
-			"不要只输出计划或修复建议。",
-			"",
-			"## 验证失败内容",
-			verifyFailureReason
-		].join("\n")
+		instruction: createRepairInstruction(failedPhase, verifyFailureReason, repairWriteTools)
 	};
 	const phases: WorkflowPhase[] = [
 		...plan.phases.slice(0, insertIndex),

@@ -88,12 +88,14 @@ const customMcpSecretRecordSchema = z.record(z.string().min(1).max(160), z.strin
 	.refine((value: Record<string, string>): boolean => Object.keys(value).length <= 64, "Too many secret entries");
 const customMcpSecretUpdateRecordSchema = z.record(z.string().min(1).max(160), z.union([z.string().max(20000), z.null()]))
 	.refine((value: Record<string, string | null>): boolean => Object.keys(value).length <= 64, "Too many secret entries");
+const customMcpPlanAccessSchema = z.enum(["disabled", "read"]).optional();
 const customMcpServerInputSchema = z.discriminatedUnion("transport", [
 	z.object({
 		name: z.string().min(1).max(80),
 		description: z.string().max(300).optional(),
 		transport: z.literal("stdio"),
 		enabled: z.boolean().optional(),
+		planAccess: customMcpPlanAccessSchema,
 		command: z.string().min(1).max(300),
 		args: z.array(z.string().max(1000)).max(64).optional(),
 		env: customMcpSecretRecordSchema.optional(),
@@ -103,6 +105,7 @@ const customMcpServerInputSchema = z.discriminatedUnion("transport", [
 		description: z.string().max(300).optional(),
 		transport: z.literal("http"),
 		enabled: z.boolean().optional(),
+		planAccess: customMcpPlanAccessSchema,
 		url: z.string().url().max(1000),
 		headers: customMcpSecretRecordSchema.optional(),
 	})
@@ -113,6 +116,7 @@ const customMcpServerUpdateSchema = z.discriminatedUnion("transport", [
 		description: z.string().max(300).optional(),
 		transport: z.literal("stdio"),
 		enabled: z.boolean().optional(),
+		planAccess: customMcpPlanAccessSchema,
 		command: z.string().min(1).max(300),
 		args: z.array(z.string().max(1000)).max(64).optional(),
 		env: customMcpSecretUpdateRecordSchema.optional(),
@@ -122,6 +126,7 @@ const customMcpServerUpdateSchema = z.discriminatedUnion("transport", [
 		description: z.string().max(300).optional(),
 		transport: z.literal("http"),
 		enabled: z.boolean().optional(),
+		planAccess: customMcpPlanAccessSchema,
 		url: z.string().url().max(1000),
 		headers: customMcpSecretUpdateRecordSchema.optional(),
 	}).strict()

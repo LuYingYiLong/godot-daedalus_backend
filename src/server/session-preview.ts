@@ -2,7 +2,6 @@ import type { AdditionalContextItem, ChatMessage } from "../protocol/types.js";
 import {
 	openSession,
 	type StoredMessage,
-	type StoredSessionEvent,
 	type StoredSessionTimelinePage
 } from "../session/session-store.js";
 import type { ClientSession } from "./client-session.js";
@@ -11,8 +10,6 @@ import { logger } from "../logger.js";
 
 const DEFAULT_SESSION_OPEN_MESSAGE_LIMIT: number = 80;
 const MAX_SESSION_OPEN_MESSAGE_LIMIT: number = 500;
-const DEFAULT_SESSION_OPEN_EVENT_LIMIT: number = 80;
-const MAX_SESSION_OPEN_EVENT_LIMIT: number = 160;
 const SESSION_OPEN_PREVIEW_STRING_LIMIT: number = 1200;
 const SESSION_OPEN_PREVIEW_ARRAY_LIMIT: number = 80;
 
@@ -114,32 +111,14 @@ export function createPreviewValue(value: unknown, depth: number = 0): unknown {
 	return preview;
 }
 
-export function createSessionEventPreview(event: StoredSessionEvent): StoredSessionEvent {
-	return {
-		...event,
-		data: createPreviewValue(event.data)
-	};
-}
-
 export function createTimelinePageResult(page: StoredSessionTimelinePage, limit: number): Record<string, unknown> {
-	const eventLimit: number = Math.min(
-		MAX_SESSION_OPEN_EVENT_LIMIT,
-		Math.max(DEFAULT_SESSION_OPEN_EVENT_LIMIT, limit * 2)
-	);
-	const events: StoredSessionEvent[] = page.events.length > eventLimit
-		? page.events.slice(page.events.length - eventLimit)
-		: page.events;
-
 	return {
-		messageCount: page.messageCount,
+		blockCount: page.blockCount,
+		blockOffset: page.blockOffset,
 		eventCount: page.eventCount,
-		messagesOffset: page.messagesOffset,
-		eventsIncluded: events.length,
 		limit,
-		eventLimit,
 		hasMoreBefore: page.hasMoreBefore,
-		messages: page.messages.map(toChatMessage),
-		events: events.map(createSessionEventPreview),
+		timelineBlocks: page.timelineBlocks,
 		latestWorkflowSnapshot: page.latestWorkflowSnapshot === null ? null : createPreviewValue(page.latestWorkflowSnapshot),
 		latestAgentSnapshot: page.latestAgentSnapshot === null ? null : createPreviewValue(page.latestAgentSnapshot)
 	};

@@ -14,6 +14,7 @@ export type DynamicMcpToolSource = {
 	toolName: string;
 	description?: string | undefined;
 	inputSchema?: unknown;
+	planAccess?: "disabled" | "read" | undefined;
 };
 
 export type DynamicMcpToolMetadata = DynamicMcpToolSource & {
@@ -175,12 +176,22 @@ export function getDynamicMcpToolNames(): string[] {
 	return Array.from(getActiveDynamicToolSet().mapping.keys());
 }
 
+export function getPlanSafeDynamicMcpToolNames(): string[] {
+	return Array.from(getActiveDynamicToolSet().metadata.entries())
+		.filter(([_toolName, metadata]: [string, DynamicMcpToolMetadata]): boolean => metadata.planAccess === "read")
+		.map(([toolName]: [string, DynamicMcpToolMetadata]): string => toolName);
+}
+
 export function isDynamicMcpToolName(toolName: string): boolean {
 	return toolName.startsWith(CUSTOM_MCP_TOOL_PREFIX);
 }
 
 export function getDynamicMcpToolMetadata(toolName: string): DynamicMcpToolMetadata | undefined {
 	return getActiveDynamicToolSet().metadata.get(toolName);
+}
+
+export function isPlanSafeDynamicMcpToolName(toolName: string): boolean {
+	return getDynamicMcpToolMetadata(toolName)?.planAccess === "read";
 }
 
 export function getDynamicMcpToolDefinitions(): ChatCompletionTool[] {

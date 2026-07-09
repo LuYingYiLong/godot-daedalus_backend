@@ -18,7 +18,8 @@ export function shouldPersistSessionEvent(eventName: ServerEvent["event"]): bool
 		|| eventName.startsWith("ai.thinking.")
 		|| eventName === "ai.status"
 		|| eventName.startsWith("workflow.")
-		|| eventName.startsWith("guide.");
+		|| eventName.startsWith("guide.")
+		|| eventName.startsWith("plan.");
 }
 
 export function getThinkingEventBufferKey(sessionId: string, requestId: string): string {

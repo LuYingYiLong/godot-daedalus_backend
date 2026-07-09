@@ -54,14 +54,14 @@ test("session store creates, opens, pages, rewinds, archives, restores, and dele
 		assert.equal(opened.events.length, 2);
 
 		const recent = await store.openSessionRecentTimeline(metadata.id, 1);
-		assert.equal(recent.messages.length, 1);
-		assert.equal(recent.messages[0]?.requestId, "req-2");
+		assert.equal(recent.timelineBlocks.length, 1);
+		assert.equal(recent.timelineBlocks[0]?.requestId, "req-2");
 		assert.deepEqual(recent.latestWorkflowSnapshot, { phases: [] });
 		assert.equal(recent.hasMoreBefore, true);
 
-		const firstPage = await store.openSessionTimelinePage(metadata.id, recent.messagesOffset, 1);
-		assert.equal(firstPage.messages.length, 1);
-		assert.equal(firstPage.messages[0]?.requestId, "req-1");
+		const firstPage = await store.openSessionTimelinePage(metadata.id, recent.blockOffset, 1);
+		assert.equal(firstPage.timelineBlocks.length, 1);
+		assert.equal(firstPage.timelineBlocks[0]?.requestId, "req-1");
 
 		const rewound = await store.rewindSessionFromRequest(metadata.id, "req-2");
 		assert.equal(rewound.length, 1);

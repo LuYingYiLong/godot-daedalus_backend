@@ -65,7 +65,9 @@ export function describeToolEvent(toolName: string, args: Record<string, unknown
 		const serverId: string = metadata?.serverId ?? "custom";
 		const serverName: string = metadata?.serverName ?? "Custom MCP";
 		const originalToolName: string = metadata?.toolName ?? toolName;
-		return createDisplay(serverId, serverName, "write", "自定义 MCP 工具", `${serverName}: ${originalToolName}`, {
+		const category: ToolEventCategory = metadata?.planAccess === "read" ? "docs" : "write";
+		const title: string = metadata?.planAccess === "read" ? "读取自定义 MCP" : "自定义 MCP 工具";
+		return createDisplay(serverId, serverName, category, title, `${serverName}: ${originalToolName}`, {
 			kind: "unknown",
 			label: originalToolName
 		});

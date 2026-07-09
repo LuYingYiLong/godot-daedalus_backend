@@ -12,6 +12,7 @@ test("mcp.config.update schema accepts stdio and http updates", (): void => {
 			description: "Updated",
 			transport: "stdio",
 			enabled: true,
+			planAccess: "read",
 			command: "npx",
 			args: ["-y", "demo"],
 			env: {
@@ -29,10 +30,26 @@ test("mcp.config.update schema accepts stdio and http updates", (): void => {
 		params: {
 			serverId: "custom-demo",
 			transport: "http",
+			planAccess: "disabled",
 			url: "https://example.com/mcp",
 			headers: {
 				Authorization: ""
 			}
+		}
+	}).success, true);
+});
+
+test("mcp.config.add schema accepts plan-safe custom MCP access", (): void => {
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "mcp-add-plan-safe",
+		method: "mcp.config.add",
+		params: {
+			name: "context7",
+			transport: "stdio",
+			planAccess: "read",
+			command: "npx",
+			args: ["-y", "@upstash/context7-mcp"]
 		}
 	}).success, true);
 });
@@ -67,6 +84,18 @@ test("mcp.config.update schema rejects invalid update payloads", (): void => {
 			serverId: "custom-demo",
 			name: "Renamed",
 			transport: "stdio",
+			command: "npx"
+		}
+	}).success, false);
+
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "mcp-update-bad-plan-access",
+		method: "mcp.config.update",
+		params: {
+			serverId: "custom-demo",
+			transport: "stdio",
+			planAccess: "write",
 			command: "npx"
 		}
 	}).success, false);

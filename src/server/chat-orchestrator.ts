@@ -100,7 +100,7 @@ import {
 	type ThinkingEventBuffer
 } from "./client-session.js";
 import { getToolPolicy } from "../tools/tool-policy.js";
-import type { PendingApproval } from "../tools/approval-gateway.js";
+import { ApprovalGateway, ReadOnlyToolApprovalGateway, type PendingApproval } from "../tools/approval-gateway.js";
 import { getLlmToolExecutionIdentity } from "../tools/tool-idempotency.js";
 import { resolveToolMapping } from "../tools/tool-mapping.js";
 import {
@@ -121,7 +121,7 @@ import { normalizeChatParamsForMode, resolveAllowedToolsForChatParams } from "./
 import { logPromptTrace, logProjectInstructionTrace } from "./prompt-trace.js";
 import { isCancellationError, sendAgentCancelled, sendAiCancelled, beginRequestExecution, finishRequestExecution, parseMessage } from "./request-lifecycle.js";
 import { estimateTextTokens, estimateMessagesTokens, computeHistoryBudget, appendChatTurnToSession, appendFailedChatTurnToSession, selectHistoryForModel, createSummaryMessage, loadSessionCompressorPrompt } from "./token-budget.js";
-import { getSessionProjectPath, toChatMessage, clampSessionOpenMessageLimit, createPreviewValue, createSessionEventPreview, createTimelinePageResult, startFullSessionLoad, waitForFullSessionLoad } from "./session-preview.js";
+import { getSessionProjectPath, toChatMessage, clampSessionOpenMessageLimit, createPreviewValue, createTimelinePageResult, startFullSessionLoad, waitForFullSessionLoad } from "./session-preview.js";
 import { createProviderChatOptions } from "./provider-chat-options.js";
 import { clipTextByChars, cloneAdditionalContextItems, getAdditionalContextDataRecord, getContextNumber, getContextString, createLineColumnRangeText, appendScriptSelectionPromptLines, appendFilesystemSelectionPromptLines, createAdditionalContextPromptSection } from "./additional-context.js";
 import { MAX_GUIDE_TEXT_CHARS, createGuideId, createPendingGuide, serializePendingGuide, findPendingGuideIndexById, findPendingGuideByClientId, readEventDataObject, hydratePendingGuides, persistGuideEvent, formatGuidePromptSection, consumePendingGuideSection } from "./pending-guides.js";
@@ -336,6 +336,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 						session,
 						params,
 						options,
+						mcpHost,
 						turnStartedAt,
 						abortController.signal
 					);
@@ -435,21 +436,29 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 					allowedToolCount: allowedToolNames?.length ?? null
 				});
 
-				await startWorkflowExecution(
-					socket,
-					request.id,
-					session,
-					mcpHost,
-					options,
-					workflowPlan,
-					params,
-					history,
-					historyBudgetTokens,
-					turnStartedAt,
-					mcpSystemContext + additionalContextSection + guidePromptSection,
-					guidePromptSection,
-					abortController.signal
-				);
+				const originalApprovalGateway: ApprovalGateway = session.approvalGateway;
+				if (params.mode === "ask") {
+					session.approvalGateway = new ReadOnlyToolApprovalGateway(allowedToolNames ?? []);
+				}
+				try {
+					await startWorkflowExecution(
+						socket,
+						request.id,
+						session,
+						mcpHost,
+						options,
+						workflowPlan,
+						params,
+						history,
+						historyBudgetTokens,
+						turnStartedAt,
+						mcpSystemContext + additionalContextSection + guidePromptSection,
+						guidePromptSection,
+						abortController.signal
+					);
+				} finally {
+					session.approvalGateway = originalApprovalGateway;
+				}
 				logger.info("ai", "chat_finished", {
 					requestId: request.id,
 					sessionId: session.sessionId,

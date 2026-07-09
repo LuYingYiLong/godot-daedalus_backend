@@ -58,6 +58,10 @@ test("workflow auto repair insertion preserves current todos and adds repair plu
 	assert.equal(repairedPlan.phases[3]?.toolGroup, "write");
 	assert.equal(repairedPlan.phases[4]?.toolGroup, "verify");
 	assert.ok(repairedPlan.phases[3]?.allowedTools.includes("mcp_godot_replace_text_in_file"));
+	assert.ok(repairedPlan.phases[3]?.allowedTools.includes("mcp_godot_apply_scene_patch"));
+	assert.ok(!repairedPlan.phases[3]?.allowedTools.includes("mcp_terminal_run_write_preset"));
+	assert.ok(!repairedPlan.phases[3]?.allowedTools.includes("mcp_godot_propose_replace_text_in_file"));
+	assert.match(repairedPlan.phases[3]?.instruction ?? "", /第一步必须调用/);
 	assert.ok(repairedPlan.phases[4]?.allowedTools.includes("mcp_terminal_run_safe_preset"));
 	assert.equal(repairedPlan.revision, 1);
 });
@@ -106,4 +110,75 @@ test("workflow verification-only failures add reverify without write repair", ()
 	assert.ok(!repairedPlan.phases[3]?.allowedTools.includes("mcp_godot_overwrite_text_file"));
 	assert.match(repairedPlan.phases[3]?.instruction ?? "", /不能修改项目文件/);
 	assert.equal(repairedPlan.revision, 1);
+});
+
+test("workflow auto repair narrows scene failures to scene write tools", (): void => {
+	const verify: WorkflowPhase = createPhase("verify-scene", "验证场景引用", "verify");
+	const summarize: WorkflowPhase = createPhase("summarize", "总结交付", "summarize");
+	const plan: WorkflowPlan = {
+		id: "workflow-scene-repair",
+		title: "测试场景修复",
+		source: "godot_template",
+		revision: 0,
+		phases: [verify, summarize],
+		todos: [createTodo(verify, "failed"), createTodo(summarize)]
+	};
+	const failedChecks: WorkflowFailedCheck[] = [
+		{
+			code: "scene_reference_invalid",
+			message: "scenes/main.tscn 的 script reference 缺失，需要重新挂载脚本。",
+			artifact: "scenes/main.tscn"
+		}
+	];
+
+	const repairedPlan: WorkflowPlan = insertWorkflowAutoRepairPhases(
+		plan,
+		1,
+		verify,
+		"scenes/main.tscn 的 script reference 缺失，需要重新挂载脚本。",
+		failedChecks
+	);
+	const repairPhase: WorkflowPhase | undefined = repairedPlan.phases[1];
+
+	assert.equal(repairPhase?.toolGroup, "write");
+	assert.equal(repairPhase?.allowedTools.includes("mcp_godot_attach_script_to_node"), true);
+	assert.equal(repairPhase?.allowedTools.includes("mcp_godot_apply_scene_patch"), true);
+	assert.equal(repairPhase?.allowedTools.includes("mcp_godot_overwrite_text_file"), false);
+	assert.match(repairPhase?.instruction ?? "", /mcp_godot_attach_script_to_node/);
+});
+
+test("workflow auto repair narrows project setting failures to setting write tools", (): void => {
+	const verify: WorkflowPhase = createPhase("verify-settings", "验证项目设置", "verify");
+	const summarize: WorkflowPhase = createPhase("summarize", "总结交付", "summarize");
+	const plan: WorkflowPlan = {
+		id: "workflow-settings-repair",
+		title: "测试项目设置修复",
+		source: "godot_template",
+		revision: 0,
+		phases: [verify, summarize],
+		todos: [createTodo(verify, "failed"), createTodo(summarize)]
+	};
+	const failedChecks: WorkflowFailedCheck[] = [
+		{
+			code: "project_setting_mismatch",
+			message: "project.godot 中 application/config/name 仍为旧值。",
+			artifact: "project.godot"
+		}
+	];
+
+	const repairedPlan: WorkflowPlan = insertWorkflowAutoRepairPhases(
+		plan,
+		1,
+		verify,
+		"project.godot 中 application/config/name 仍为旧值。",
+		failedChecks
+	);
+	const repairPhase: WorkflowPhase | undefined = repairedPlan.phases[1];
+
+	assert.equal(repairPhase?.toolGroup, "write");
+	assert.equal(repairPhase?.allowedTools.includes("mcp_godot_set_project_setting"), true);
+	assert.equal(repairPhase?.allowedTools.includes("mcp_godot_unset_project_setting"), true);
+	assert.equal(repairPhase?.allowedTools.includes("mcp_godot_apply_scene_patch"), false);
+	assert.equal(repairPhase?.allowedTools.includes("mcp_godot_replace_text_in_file"), false);
+	assert.match(repairPhase?.instruction ?? "", /mcp_godot_set_project_setting/);
 });

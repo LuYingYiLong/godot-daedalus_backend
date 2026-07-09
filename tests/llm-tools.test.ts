@@ -6,6 +6,8 @@ import {
 } from "../src/tools/builtin-tool-definitions.js";
 import {
 	getDynamicMcpToolMetadata,
+	getPlanSafeDynamicMcpToolNames,
+	isPlanSafeDynamicMcpToolName,
 	replaceDynamicMcpTools
 } from "../src/tools/dynamic-mcp-tools.js";
 import { CUSTOM_MCP_TOOLS_SENTINEL } from "../src/tools/tool-sentinels.js";
@@ -100,4 +102,33 @@ test("tool mapping resolves builtin and dynamic tools", (): void => {
 		serverId: "external",
 		toolName: "write_asset"
 	});
+});
+
+test("dynamic MCP tools expose plan-safe metadata only when explicitly marked read", (): void => {
+	replaceDynamicMcpTools([
+		{
+			serverId: "context7",
+			serverName: "context7",
+			toolName: "resolve-library-id",
+			planAccess: "read"
+		},
+		{
+			serverId: "writer",
+			serverName: "Writer",
+			toolName: "write_file"
+		}
+	]);
+
+	const dynamicNames: string[] = getToolDefinitionsForNames([CUSTOM_MCP_TOOLS_SENTINEL])
+		.filter(isFunctionTool)
+		.map((tool): string => tool.function.name);
+	const planSafeNames: string[] = getPlanSafeDynamicMcpToolNames();
+	const contextName: string | undefined = dynamicNames.find((name: string): boolean => getDynamicMcpToolMetadata(name)?.serverId === "context7");
+	const writerName: string | undefined = dynamicNames.find((name: string): boolean => getDynamicMcpToolMetadata(name)?.serverId === "writer");
+
+	assert.notEqual(contextName, undefined);
+	assert.notEqual(writerName, undefined);
+	assert.deepEqual(planSafeNames, [contextName]);
+	assert.equal(isPlanSafeDynamicMcpToolName(contextName ?? ""), true);
+	assert.equal(isPlanSafeDynamicMcpToolName(writerName ?? ""), false);
 });

@@ -3,6 +3,7 @@ import test from "node:test";
 import { aiChatParamsSchema } from "../src/protocol/schema.js";
 import type { AiChatParams } from "../src/protocol/types.js";
 import { composeSystemPrompt } from "../src/prompts/registry.js";
+import { getPlanSafeDynamicMcpToolNames, replaceDynamicMcpTools } from "../src/tools/dynamic-mcp-tools.js";
 import { CUSTOM_MCP_TOOLS_SENTINEL } from "../src/tools/tool-sentinels.js";
 import { READ_TOOLS, VERIFY_TOOLS, WRITE_TOOLS } from "../src/workflow/planner.js";
 import { normalizeChatParamsForMode, resolveAllowedToolsForChatParams } from "../src/server/chat-mode.js";
@@ -59,7 +60,20 @@ test("ask mode normalizes workflow and tool budget without mutating agent mode",
 	assert.equal(normalizeChatParamsForMode(agentParams), agentParams);
 });
 
-test("ask and plan modes allow built-in read and verify tools but block write tools and custom MCP", (): void => {
+test("ask and plan modes allow built-in read, verify and plan-safe custom MCP tools", (): void => {
+	replaceDynamicMcpTools([
+		{
+			serverId: "context7",
+			serverName: "context7",
+			toolName: "get-library-docs",
+			planAccess: "read"
+		},
+		{
+			serverId: "unsafe",
+			serverName: "Unsafe",
+			toolName: "write_file"
+		}
+	]);
 	const allowedTools: readonly string[] | undefined = resolveAllowedToolsForChatParams(
 		{
 			message: "帮我检查这个脚本",
@@ -83,6 +97,9 @@ test("ask and plan modes allow built-in read and verify tools but block write to
 		assert.equal(allowedTools.includes(toolName), false, `unexpected write tool ${toolName}`);
 	}
 	assert.equal(allowedTools.includes(CUSTOM_MCP_TOOLS_SENTINEL), false);
+	const planSafeDynamicToolNames: string[] = getPlanSafeDynamicMcpToolNames();
+	assert.equal(planSafeDynamicToolNames.length, 1);
+	assert.equal(allowedTools.includes(planSafeDynamicToolNames[0] ?? ""), true);
 
 	const planAllowedTools: readonly string[] | undefined = resolveAllowedToolsForChatParams(
 		{
@@ -96,6 +113,7 @@ test("ask and plan modes allow built-in read and verify tools but block write to
 		WRITE_TOOLS
 	);
 	assert.deepEqual(planAllowedTools, allowedTools);
+	replaceDynamicMcpTools([]);
 });
 
 test("ask mode prompt contains advisor constraints before custom instructions", async (): Promise<void> => {
