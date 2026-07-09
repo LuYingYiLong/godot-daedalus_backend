@@ -3,6 +3,7 @@ import type { AiChatParams, ServerEvent } from "../protocol/types.js";
 import type { ProviderChatOptions } from "../providers/deepseek-client.js";
 import { appendAgentEvent, appendSessionEvent, appendWorkflowEvent, openSession, renameSession, type SessionMetadata } from "../session/session-store.js";
 import { generateSessionTitle, shouldApplyGeneratedSessionTitle } from "./session-title.js";
+import { resolveProviderTaskModelOptions } from "../providers/task-model-routing.js";
 import type { ClientSession, ThinkingEventBuffer } from "./client-session.js";
 import { sendJson } from "./send-json.js";
 import { broadcastSessionEvent } from "./client-connections.js";
@@ -264,7 +265,8 @@ export function maybeScheduleSessionTitleGeneration(
 			return;
 		}
 
-		const generatedTitle: string = await generateSessionTitle(params.message, options);
+		const titleOptions = (await resolveProviderTaskModelOptions("sessionTitle", options)).options;
+		const generatedTitle: string = await generateSessionTitle(params.message, titleOptions);
 		if (generatedTitle.length === 0) {
 			logger.info("session_title", "skipped_empty_title", {
 				sessionId,

@@ -8,6 +8,7 @@ import {
 	getProviderDefaultBaseUrl,
 	getProviderDefaultModel,
 	getProviderDisplayName,
+	getProviderFallbackModels,
 	getProviderIds,
 	isProviderId,
 	type ProviderModelInfo
@@ -19,9 +20,23 @@ export type ProviderConfigInput = {
 	provider: ProviderId;
 	apiKey?: string | undefined;
 	model?: string | undefined;
-	baseUrl?: string | undefined;
+	baseUrl?: string | null | undefined;
 	activate?: boolean | undefined;
+	modelRouting?: ProviderModelRoutingInput | undefined;
 };
+
+export type ProviderTaskModelRef = {
+	provider: ProviderId;
+	model: string;
+};
+
+export type ProviderModelRouting = {
+	imageRecognition: ProviderTaskModelRef | null;
+	workflowPlanner: ProviderTaskModelRef | null;
+	sessionTitle: ProviderTaskModelRef | null;
+};
+
+export type ProviderModelRoutingInput = Partial<Record<keyof ProviderModelRouting, ProviderTaskModelRef | null | undefined>>;
 
 export type StoredProviderModelsCache = {
 	models: ProviderModelInfo[];
@@ -40,6 +55,7 @@ export type StoredProviderConfig = {
 	schemaVersion: 2;
 	activeProvider: ProviderId;
 	providers: Partial<Record<ProviderId, StoredProviderEntry>>;
+	modelRouting?: ProviderModelRouting | undefined;
 };
 
 export type ProviderConfigWithSecret = {
@@ -57,6 +73,8 @@ export type ProviderConfigProviderStatus = {
 	baseUrl: string | null;
 	defaultModel: string;
 	defaultBaseUrl: string;
+	modelsCache: ProviderModelInfo[];
+	fallbackModels: readonly ProviderModelInfo[];
 	apiKeyMasked: string | null;
 	keyStorage: "keytar";
 	updatedAt: string | null;
@@ -66,6 +84,7 @@ export type ProviderConfigProviderStatus = {
 export type ProviderConfigStatus = {
 	activeProvider: ProviderId;
 	providers: ProviderConfigProviderStatus[];
+	modelRouting: ProviderModelRouting;
 	provider: ProviderId;
 	configured: boolean;
 	model: string | null;
@@ -101,8 +120,81 @@ function createEmptyStoredConfig(activeProvider: ProviderId = DEFAULT_PROVIDER_I
 	return {
 		schemaVersion: 2,
 		activeProvider,
-		providers: {}
+		providers: {},
+		modelRouting: createEmptyModelRouting()
 	};
+}
+
+export function createEmptyModelRouting(): ProviderModelRouting {
+	return {
+		imageRecognition: null,
+		workflowPlanner: null,
+		sessionTitle: null
+	};
+}
+
+function parseTaskModelRef(value: unknown): ProviderTaskModelRef | null {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) {
+		return null;
+	}
+
+	const record: Record<string, unknown> = value as Record<string, unknown>;
+	const provider: unknown = record.provider;
+	const model: unknown = record.model;
+	if (!isProviderId(provider) || typeof model !== "string" || model.trim().length === 0) {
+		return null;
+	}
+
+	return {
+		provider,
+		model: model.trim()
+	};
+}
+
+function parseModelRouting(value: unknown): ProviderModelRouting {
+	const routing: ProviderModelRouting = createEmptyModelRouting();
+	if (typeof value !== "object" || value === null || Array.isArray(value)) {
+		return routing;
+	}
+
+	const record: Record<string, unknown> = value as Record<string, unknown>;
+	routing.imageRecognition = parseTaskModelRef(record.imageRecognition);
+	routing.workflowPlanner = parseTaskModelRef(record.workflowPlanner);
+	routing.sessionTitle = parseTaskModelRef(record.sessionTitle);
+	return routing;
+}
+
+function mergeModelRouting(existing: ProviderModelRouting | undefined, input: ProviderModelRoutingInput | undefined): ProviderModelRouting {
+	const routing: ProviderModelRouting = existing ?? createEmptyModelRouting();
+	if (input === undefined) {
+		return routing;
+	}
+
+	const next: ProviderModelRouting = { ...routing };
+	for (const key of ["imageRecognition", "workflowPlanner", "sessionTitle"] as const) {
+		if (!Object.prototype.hasOwnProperty.call(input, key)) {
+			continue;
+		}
+
+		const value: ProviderTaskModelRef | null | undefined = input[key];
+		if (value === null || value === undefined) {
+			next[key] = null;
+			continue;
+		}
+
+		if (!isProviderId(value.provider)) {
+			throw new Error(`Invalid task model provider for ${key}: ${String(value.provider)}`);
+		}
+		const model: string = value.model.trim();
+		if (model.length === 0) {
+			throw new Error(`Invalid task model for ${key}: model is required`);
+		}
+		next[key] = {
+			provider: value.provider,
+			model
+		};
+	}
+	return next;
 }
 
 function parseStoredEntry(value: unknown): StoredProviderEntry | undefined {
@@ -157,6 +249,7 @@ function parseStoredProviderConfig(parsed: unknown): StoredProviderConfig | null
 				}
 			}
 		}
+		config.modelRouting = parseModelRouting(record.modelRouting);
 
 		return config;
 	}
@@ -196,11 +289,11 @@ export async function saveProviderConfig(input: ProviderConfigInput): Promise<Pr
 	};
 
 	const model: string | undefined = normalizeOptionalString(input.model) ?? existing?.model;
-	const baseUrl: string | undefined = normalizeOptionalString(input.baseUrl) ?? existing?.baseUrl;
+	const baseUrl: string | undefined = input.baseUrl === null ? undefined : (normalizeOptionalString(input.baseUrl) ?? existing?.baseUrl);
 	if (model !== undefined) {
 		entry.model = model;
 	}
-	if (baseUrl !== undefined) {
+	if (baseUrl !== undefined && input.baseUrl !== null) {
 		entry.baseUrl = baseUrl;
 	}
 	if (existing?.modelsCache !== undefined) {
@@ -208,6 +301,7 @@ export async function saveProviderConfig(input: ProviderConfigInput): Promise<Pr
 	}
 
 	stored.providers[input.provider] = entry;
+	stored.modelRouting = mergeModelRouting(stored.modelRouting, input.modelRouting);
 	if (input.activate !== false) {
 		stored.activeProvider = input.provider;
 	}
@@ -249,6 +343,8 @@ export async function getProviderConfigStatus(): Promise<ProviderConfigStatus> {
 			baseUrl: entry?.baseUrl ?? null,
 			defaultModel: getProviderDefaultModel(provider),
 			defaultBaseUrl: getProviderDefaultBaseUrl(provider),
+			modelsCache: entry?.modelsCache?.models ?? [],
+			fallbackModels: getProviderFallbackModels(provider),
 			apiKeyMasked: maskApiKey(apiKey),
 			keyStorage: "keytar",
 			updatedAt: entry?.updatedAt ?? null,
@@ -262,6 +358,7 @@ export async function getProviderConfigStatus(): Promise<ProviderConfigStatus> {
 	return {
 		activeProvider: stored.activeProvider,
 		providers,
+		modelRouting: stored.modelRouting ?? createEmptyModelRouting(),
 		provider: activeStatus.provider,
 		configured: activeStatus.configured,
 		model: activeStatus.model,

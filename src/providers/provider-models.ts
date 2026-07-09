@@ -1,12 +1,12 @@
 import type { ProviderId } from "../protocol/types.js";
 import {
-	getProviderDefaultBaseUrl,
 	getProviderDefinition,
 	getProviderFallbackModels,
 	type ProviderModelCapabilities,
 	type ProviderModelInfo
 } from "./provider-registry.js";
 import { getProviderModelsCache, saveProviderModelsCache, type StoredProviderModelsCache } from "./provider-config-store.js";
+import { resolveProviderBaseUrl } from "./provider-base-url.js";
 
 export type ProviderModelsListResult = {
 	provider: ProviderId;
@@ -22,10 +22,6 @@ function createDisplayName(modelId: string): string {
 		.filter((part: string): boolean => part.length > 0)
 		.map((part: string): string => part.length <= 3 ? part.toUpperCase() : part[0]!.toUpperCase() + part.slice(1))
 		.join(" ");
-}
-
-function normalizeBaseUrl(baseUrl: string): string {
-	return baseUrl.replace(/\/+$/, "");
 }
 
 function inferContextLength(provider: ProviderId, modelId: string, rawContextLength: unknown): number {
@@ -132,7 +128,7 @@ function parseApiModels(provider: ProviderId, value: unknown): ProviderModelInfo
 }
 
 async function fetchProviderModels(provider: ProviderId, apiKey: string, baseUrl?: string | undefined): Promise<ProviderModelInfo[]> {
-	const endpoint: string = `${normalizeBaseUrl(baseUrl ?? getProviderDefaultBaseUrl(provider))}${getProviderDefinition(provider).modelsPath}`;
+	const endpoint: string = `${resolveProviderBaseUrl(provider, baseUrl)}${getProviderDefinition(provider).modelsPath}`;
 	const response: Response = await fetch(endpoint, {
 		method: "GET",
 		headers: {

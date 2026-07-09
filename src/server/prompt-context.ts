@@ -12,6 +12,7 @@ import {
 import type { OnToolEvent, ToolEvent } from "../tools/tool-dispatcher.js";
 import { parseToolResultSummary } from "../tools/tool-result-parser.js";
 import { chatWithDeepSeek, createDeepSeekClient, resolveChatModel, type ProviderChatOptions } from "../providers/deepseek-client.js";
+import { normalizeConfiguredProviderBaseUrl } from "../providers/provider-base-url.js";
 import { McpHost } from "../mcp/mcp-host.js";
 import type { CustomMcpServerRuntimeStatus } from "../mcp/mcp-host.js";
 import {
@@ -174,7 +175,7 @@ function applyProviderConfigToSession(session: ClientSession, config: ProviderCo
 	}
 
 	session.providerModel = config.model;
-	session.providerBaseUrl = config.baseUrl;
+	session.providerBaseUrl = normalizeConfiguredProviderBaseUrl(config.baseUrl);
 
 	session.modelProfile = resolveModelProfile(config.provider, config.model ?? getProviderDefaultModel(config.provider));
 }

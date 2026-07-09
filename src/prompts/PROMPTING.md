@@ -50,12 +50,11 @@ Chat Completions 映射：
 
 `composeSystemPrompt()` 当前按以下顺序组合：
 
-1. base 模板。
-2. Runtime 当前模型上下文。
-3. mode overlay，例如 Ask 模式。
-4. 工具调用沟通约定 fragment。
-5. 指令优先级 fragment。
-6. Settings 用户提示词边界 fragment。
-7. Settings 用户提示词正文。
+1. CORE 核心行为准则 fragment。
+2. base 模板。
+3. Runtime 当前模型上下文。
+4. mode overlay，例如 Ask 模式。
+5. Settings 用户提示词边界 fragment。
+6. Settings 用户提示词正文。
 
 Ask 模式等安全边界必须出现在 Settings 用户提示词之前，且不得被自定义提示词覆盖。

@@ -317,6 +317,17 @@ export class McpHost {
 		return resolvedWorkspaceId;
 	}
 
+	private selectDiagnosticsWorkspace(workspaceId?: string | undefined): WorkspaceConfig {
+		const resolvedWorkspaceId: string = this.getWorkspaceId(workspaceId);
+		const workspace: WorkspaceConfig | undefined = findWorkspace(resolvedWorkspaceId);
+		if (workspace === undefined) {
+			throw new Error(`MCP workspace is not registered: ${resolvedWorkspaceId}`);
+		}
+
+		this.diagnosticsBridge.setWorkspace(workspace);
+		return workspace;
+	}
+
 	private getActiveSessions(workspaceId?: string | undefined): Map<string, McpSession> {
 		const resolvedWorkspaceId: string = this.getWorkspaceId(workspaceId);
 		const sessions: Map<string, McpSession> | undefined = this.workspaceSessions.get(resolvedWorkspaceId);
@@ -428,6 +439,7 @@ export class McpHost {
 		}
 
 		if (serverId === GODOT_DIAGNOSTICS_SERVER_ID) {
+			this.selectDiagnosticsWorkspace(workspaceId);
 			return this.diagnosticsBridge.callTool(name, args);
 		}
 
@@ -440,6 +452,7 @@ export class McpHost {
 		}
 
 		if (serverId === GODOT_DIAGNOSTICS_SERVER_ID) {
+			this.selectDiagnosticsWorkspace(workspaceId);
 			return this.diagnosticsBridge.listResources();
 		}
 
@@ -452,6 +465,7 @@ export class McpHost {
 		}
 
 		if (serverId === GODOT_DIAGNOSTICS_SERVER_ID) {
+			this.selectDiagnosticsWorkspace(workspaceId);
 			return this.diagnosticsBridge.readResource(uri);
 		}
 

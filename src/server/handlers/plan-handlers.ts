@@ -6,6 +6,7 @@ import { sendJson } from "../send-json.js";
 import { ensureProviderConfigured } from "./provider-handlers.js";
 import { createProviderChatOptions } from "../provider-chat-options.js";
 import { getProviderDisplayName } from "../../providers/provider-registry.js";
+import { resolveProviderTaskModelOptions } from "../../providers/task-model-routing.js";
 import {
 	createPlanEventPayload,
 	createPlanGetResult,
@@ -101,10 +102,11 @@ export async function handlePlanRequest(socket: WebSocket, request: ClientReques
 					return;
 				}
 				const plan: StoredPlan = await readStoredPlan(sessionId, request.params.planId);
+				const options = (await resolveProviderTaskModelOptions("workflowPlanner", createProviderChatOptions(session, apiKey))).options;
 				const updatedPlan: StoredPlan = await applyPlanClarification(
 					plan,
 					request.params.reply,
-					createProviderChatOptions(session, apiKey),
+					options,
 					{
 						socket,
 						requestId: request.id,
@@ -129,10 +131,11 @@ export async function handlePlanRequest(socket: WebSocket, request: ClientReques
 					return;
 				}
 				const plan: StoredPlan = await readStoredPlan(sessionId, request.params.planId);
+				const options = (await resolveProviderTaskModelOptions("workflowPlanner", createProviderChatOptions(session, apiKey))).options;
 				const updatedPlan: StoredPlan = await applyPlanRevision(
 					plan,
 					request.params.feedback,
-					createProviderChatOptions(session, apiKey),
+					options,
 					{
 						socket,
 						requestId: request.id,

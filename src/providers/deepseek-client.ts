@@ -7,9 +7,10 @@ import type {
 	ChatCompletionMessageParam
 } from "openai/resources/chat/completions";
 import type { AiChatParams, ChatMessage, ProviderId } from "../protocol/types.js";
-import { getProviderDefaultBaseUrl, getProviderDefaultModel } from "./provider-registry.js";
+import { getProviderDefaultModel } from "./provider-registry.js";
 import { createProviderMessages } from "./provider-image-content.js";
 import { chatWithOpenAIResponses, streamChatWithOpenAIResponses } from "./openai-responses-client.js";
+import { normalizeConfiguredProviderBaseUrl, resolveProviderBaseUrl } from "./provider-base-url.js";
 
 export type ProviderChatOptions = {
 	provider: ProviderId;
@@ -24,8 +25,9 @@ export function createProviderClient(options: ProviderChatOptions): OpenAI {
 	const clientOptions: ConstructorParameters<typeof OpenAI>[0] = {
 		apiKey: options.apiKey
 	};
-	if (options.provider !== "openai" || options.baseUrl !== undefined) {
-		clientOptions.baseURL = options.baseUrl ?? getProviderDefaultBaseUrl(options.provider);
+	const normalizedBaseUrl: string | undefined = normalizeConfiguredProviderBaseUrl(options.baseUrl);
+	if (options.provider !== "openai" || normalizedBaseUrl !== undefined) {
+		clientOptions.baseURL = normalizedBaseUrl ?? resolveProviderBaseUrl(options.provider, undefined);
 	}
 	return new OpenAI(clientOptions);
 }

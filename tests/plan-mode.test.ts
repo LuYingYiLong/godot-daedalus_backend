@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createPlanDecision, createPlannerSystemPrompt } from "../src/server/plan-mode.js";
+import { createPlanDecision, createPlannerSystemPrompt, createPlanVisibleDeltaFilter } from "../src/server/plan-mode.js";
 import { createPlanMetadata } from "../src/server/plan-store.js";
 import type { ProviderChatOptions } from "../src/providers/deepseek-client.js";
 import { shouldPersistSessionEvent } from "../src/server/session-events.js";
@@ -40,14 +40,26 @@ test("plan metadata stores PLAN.md under the session plan directory", (): void =
 	assert.equal(metadata.previewMarkdown, "# 测试计划");
 });
 
-test("planner prompt anchors backend plans to actual repository conventions", (): void => {
-	const prompt = createPlannerSystemPrompt();
+test("planner prompt anchors backend plans to actual repository conventions", async (): Promise<void> => {
+	const prompt = await createPlannerSystemPrompt();
 
+	assert.match(prompt, /# CORE/);
+	assert.match(prompt, /调用工具前/);
+	assert.match(prompt, /澄清前/);
 	assert.match(prompt, /TypeScript WebSocket\/RPC/);
 	assert.match(prompt, /zod schema/);
 	assert.match(prompt, /Node 内置 test runner/);
 	assert.match(prompt, /不要.*Vitest/);
 	assert.match(prompt, /不要.*gRPC/);
+});
+
+test("plan visible delta filter forwards preludes but suppresses final json", (): void => {
+	const filter = createPlanVisibleDeltaFilter();
+
+	assert.equal(filter.push("我先读取项目结构，再判断计划边界。\n"), "我先读取项目结构，再判断计划边界。\n");
+	assert.equal(filter.push("\n"), "");
+	assert.equal(filter.push("{\"decision\":\"plan_ready\""), "");
+	assert.equal(filter.push(",\"title\":\"测试\"}"), "");
 });
 
 test("plan events are persisted for timeline recovery", (): void => {

@@ -100,3 +100,43 @@ test("mcp.config.update schema rejects invalid update payloads", (): void => {
 		}
 	}).success, false);
 });
+
+test("provider.config.set schema accepts task model routing", (): void => {
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "provider-routing",
+		method: "provider.config.set",
+		params: {
+			provider: "deepseek",
+			model: "deepseek-v4-flash",
+			baseUrl: "https://proxy.example/v1",
+			modelRouting: {
+				imageRecognition: { provider: "moonshot", model: "kimi-k2.6" },
+				workflowPlanner: { provider: "deepseek", model: "deepseek-v4-pro" },
+				sessionTitle: null
+			}
+		}
+	}).success, true);
+
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "provider-routing-bad-provider",
+		method: "provider.config.set",
+		params: {
+			provider: "deepseek",
+			modelRouting: {
+				imageRecognition: { provider: "unknown", model: "vision" }
+			}
+		}
+	}).success, false);
+
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "provider-routing-clear-base-url",
+		method: "provider.config.set",
+		params: {
+			provider: "deepseek",
+			baseUrl: null
+		}
+	}).success, true);
+});

@@ -12,13 +12,15 @@ import type { AiChatParams, ChatMessage } from "../protocol/types.js";
 import { getProviderDefaultModel } from "./provider-registry.js";
 import { getImageAttachments, type ProviderImageAttachment } from "./provider-image-content.js";
 import type { ProviderChatOptions } from "./deepseek-client.js";
+import { normalizeConfiguredProviderBaseUrl } from "./provider-base-url.js";
 
 export function createOpenAIResponsesClient(options: ProviderChatOptions): OpenAI {
 	const clientOptions: ConstructorParameters<typeof OpenAI>[0] = {
 		apiKey: options.apiKey
 	};
-	if (options.baseUrl !== undefined) {
-		clientOptions.baseURL = options.baseUrl;
+	const normalizedBaseUrl: string | undefined = normalizeConfiguredProviderBaseUrl(options.baseUrl);
+	if (normalizedBaseUrl !== undefined) {
+		clientOptions.baseURL = normalizedBaseUrl;
 	}
 	return new OpenAI(clientOptions);
 }

@@ -8,6 +8,7 @@ import { getDefaultModelProfile, resolveModelProfile } from "../../tokens/model-
 import { getProviderDefaultModel } from "../../providers/provider-registry.js";
 import { clearProviderConfig, getProviderConfigStatus, loadProviderConfigWithSecret, saveProviderConfig, type ProviderConfigWithSecret } from "../../providers/provider-config-store.js";
 import { listProviderModels } from "../../providers/provider-models.js";
+import { normalizeConfiguredProviderBaseUrl } from "../../providers/provider-base-url.js";
 import { logger } from "../../logger.js";
 
 export function applyProviderConfigToSession(session: ClientSession, config: ProviderConfigWithSecret): void {
@@ -17,7 +18,7 @@ export function applyProviderConfigToSession(session: ClientSession, config: Pro
 	}
 
 	session.providerModel = config.model;
-	session.providerBaseUrl = config.baseUrl;
+	session.providerBaseUrl = normalizeConfiguredProviderBaseUrl(config.baseUrl);
 
 	session.modelProfile = resolveModelProfile(config.provider, config.model ?? getProviderDefaultModel(config.provider));
 }
@@ -44,7 +45,7 @@ export async function handleProviderRequest(socket: WebSocket, request: ClientRe
 		session.activeProvider = request.params.provider;
 		session.providerApiKey = request.params.apiKey;
 		session.providerModel = request.params.model;
-		session.providerBaseUrl = request.params.baseUrl;
+		session.providerBaseUrl = normalizeConfiguredProviderBaseUrl(request.params.baseUrl);
 		session.modelProfile = resolveModelProfile(request.params.provider, request.params.model ?? getProviderDefaultModel(request.params.provider));
 		logger.info("provider", "configured_runtime", {
 			provider: request.params.provider,
@@ -180,9 +181,9 @@ export async function handleProviderRequest(socket: WebSocket, request: ClientRe
 			const apiKey: string | undefined = provider === session.activeProvider
 				? session.providerApiKey ?? config?.apiKey
 				: config?.apiKey;
-			const baseUrl: string | undefined = provider === session.activeProvider
+			const baseUrl: string | undefined = normalizeConfiguredProviderBaseUrl(provider === session.activeProvider
 				? session.providerBaseUrl ?? config?.baseUrl
-				: config?.baseUrl;
+				: config?.baseUrl);
 			const result = await listProviderModels(
 				provider,
 				apiKey,

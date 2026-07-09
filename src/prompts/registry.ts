@@ -46,8 +46,7 @@ export const promptModeTemplatePaths = [
 ] as const;
 
 export const promptFragmentPaths = [
-	"src/prompts/templates/fragments/tool-call-communication.md",
-	"src/prompts/templates/fragments/instruction-priority.md",
+	"src/prompts/templates/fragments/CORE.md",
 	"src/prompts/templates/fragments/custom-instructions-boundary.md"
 ] as const;
 
@@ -61,9 +60,8 @@ export const promptTemplatePaths: readonly string[] = [
 ];
 
 const ASK_MODE_PROMPT_PATH: string = promptModeTemplatePaths[0];
-const TOOL_CALL_COMMUNICATION_PROMPT_PATH: string = promptFragmentPaths[0];
-const INSTRUCTION_PRIORITY_PROMPT_PATH: string = promptFragmentPaths[1];
-const CUSTOM_INSTRUCTIONS_BOUNDARY_PROMPT_PATH: string = promptFragmentPaths[2];
+const CORE_PROMPT_PATH: string = promptFragmentPaths[0];
+const CUSTOM_INSTRUCTIONS_BOUNDARY_PROMPT_PATH: string = promptFragmentPaths[1];
 
 export function listPromptTemplates(): PromptTemplate[] {
 	return Object.values(promptTemplates);
@@ -113,11 +111,8 @@ export async function composeSystemPrompt(
 	const askModeSection: string = chatMode === "ask"
 		? `\n\n## Ask 模式\n\n${askModePrompt}`
 		: "";
-	const [toolCallCommunicationPrompt, instructionPriorityPrompt] = await Promise.all([
-		loadExtraPromptTemplate(TOOL_CALL_COMMUNICATION_PROMPT_PATH),
-		loadExtraPromptTemplate(INSTRUCTION_PRIORITY_PROMPT_PATH)
-	]);
-	const prioritizedTemplateContent: string = `${templateContent}${runtimeContextSection}${askModeSection}\n\n## 工具调用沟通约定\n\n${toolCallCommunicationPrompt}\n\n## 指令优先级\n\n${instructionPriorityPrompt}`;
+	const corePrompt: string = await loadCorePrompt();
+	const prioritizedTemplateContent: string = `${corePrompt}\n\n${templateContent}${runtimeContextSection}${askModeSection}`;
 
 	if (trimmedExtraPrompt.length === 0) {
 		return prioritizedTemplateContent;
@@ -125,4 +120,8 @@ export async function composeSystemPrompt(
 
 	const customInstructionsBoundaryPrompt: string = await loadExtraPromptTemplate(CUSTOM_INSTRUCTIONS_BOUNDARY_PROMPT_PATH);
 	return `${prioritizedTemplateContent}\n\n## Settings 用户提示词（本轮生效）\n\n${customInstructionsBoundaryPrompt}\n\n${trimmedExtraPrompt}`;
+}
+
+export async function loadCorePrompt(): Promise<string> {
+	return loadExtraPromptTemplate(CORE_PROMPT_PATH);
 }

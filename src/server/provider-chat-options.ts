@@ -1,4 +1,5 @@
 import type { ProviderChatOptions } from "../providers/deepseek-client.js";
+import { normalizeConfiguredProviderBaseUrl } from "../providers/provider-base-url.js";
 import type { ClientSession } from "./client-session.js";
 
 export function createProviderChatOptions(session: ClientSession, apiKey: string): ProviderChatOptions {
@@ -6,8 +7,9 @@ export function createProviderChatOptions(session: ClientSession, apiKey: string
 	if (session.providerModel !== undefined) {
 		options.model = session.providerModel;
 	}
-	if (session.providerBaseUrl !== undefined) {
-		options.baseUrl = session.providerBaseUrl;
+	const normalizedBaseUrl: string | undefined = normalizeConfiguredProviderBaseUrl(session.providerBaseUrl);
+	if (normalizedBaseUrl !== undefined) {
+		options.baseUrl = normalizedBaseUrl;
 	}
 
 	return options;

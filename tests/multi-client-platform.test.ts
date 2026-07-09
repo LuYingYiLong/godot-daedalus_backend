@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import WebSocket from "ws";
+import { GODOT_DIAGNOSTICS_SERVER_ID } from "../src/mcp/godot/bridges/diagnostics-bridge.js";
 import { GodotEditorBridge } from "../src/mcp/godot/bridges/editor-bridge.js";
+import { McpHost } from "../src/mcp/mcp-host.js";
 import { withMcpRequestContext } from "../src/mcp/request-context.js";
 import { createClientSession } from "../src/server/client-session.js";
 import { beginSessionRun, finishSessionRun, registerClientConnection, subscribeSocketToSession, updateClientConnection } from "../src/server/client-connections.js";
 import { sendSessionEvent } from "../src/server/session-events.js";
 import { clearDynamicMcpToolsForWorkspace, getDynamicMcpToolMapping, getDynamicMcpToolNames, replaceDynamicMcpToolsForWorkspace } from "../src/tools/dynamic-mcp-tools.js";
+import { createRuntimeWorkspace, upsertRuntimeWorkspace } from "../src/workspace/registry.js";
 
 type SocketMock = WebSocket & { sent: Array<Record<string, unknown>> };
 
@@ -115,6 +118,21 @@ test("filesystem refresh broadcasts to online Godot editors in the workspace", a
 		{ ok: true, editor: "a" },
 		{ ok: true, editor: "b" }
 	]);
+});
+
+test("diagnostics bridge uses request workspace context without global active workspace", async (): Promise<void> => {
+	const host = new McpHost();
+	const workspace = upsertRuntimeWorkspace(createRuntimeWorkspace("D:/DaedalusDiagnosticsWorkspace"));
+
+	const statusResource = await withMcpRequestContext({ workspaceId: workspace.id }, async (): Promise<unknown> => {
+		return await host.readResource(GODOT_DIAGNOSTICS_SERVER_ID, "godot-diagnostics://status");
+	});
+	assert.equal(typeof statusResource, "object");
+	assert.notEqual(statusResource, null);
+	const contents = (statusResource as { contents: Array<{ text: string }> }).contents;
+	const status = JSON.parse(contents[0]!.text) as Record<string, unknown>;
+	assert.equal(status.workspaceId, workspace.id);
+	assert.equal(status.workspaceRoot, workspace.rootPath);
 });
 
 test("session events broadcast to subscribed frontend sockets once", (): void => {

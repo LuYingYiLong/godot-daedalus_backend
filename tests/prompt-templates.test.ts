@@ -78,11 +78,11 @@ test("composed ask prompt includes mode and fragment boundaries before custom in
 	);
 
 	assert.match(prompt, /Ask 模式强制边界/);
-	assert.match(prompt, /工具调用沟通约定/);
+	assert.match(prompt, /# CORE/);
 	assert.match(prompt, /冲突处理优先级/);
 	assert.match(prompt, /Settings 用户提示词/);
-	assert.ok(prompt.indexOf("Ask 模式强制边界") < prompt.indexOf("Settings 用户提示词"));
-	assert.ok(prompt.indexOf("冲突处理优先级") < prompt.indexOf("Settings 用户提示词"));
+	assert.ok(prompt.indexOf("Ask 模式强制边界") < prompt.indexOf("## Settings 用户提示词（本轮生效）"));
+	assert.ok(prompt.indexOf("冲突处理优先级") < prompt.indexOf("## Settings 用户提示词（本轮生效）"));
 });
 
 test("agent prompt does not include ask mode constraints", async (): Promise<void> => {
@@ -94,6 +94,6 @@ test("agent prompt does not include ask mode constraints", async (): Promise<voi
 	);
 
 	assert.doesNotMatch(prompt, /Ask 模式强制边界/);
-	assert.match(prompt, /工具调用沟通约定/);
+	assert.match(prompt, /# CORE/);
 	assert.match(prompt, /冲突处理优先级/);
 });

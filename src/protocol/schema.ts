@@ -26,6 +26,17 @@ const imageContextDataSchema = z.object({
 	height: z.number().int().positive().optional()
 });
 
+const providerTaskModelRefSchema = z.object({
+	provider: providerIdSchema,
+	model: z.string().min(1)
+});
+
+const providerModelRoutingSchema = z.object({
+	imageRecognition: providerTaskModelRefSchema.nullable().optional(),
+	workflowPlanner: providerTaskModelRefSchema.nullable().optional(),
+	sessionTitle: providerTaskModelRefSchema.nullable().optional()
+});
+
 export const additionalContextItemSchema = z.object({
 	id: z.string().min(1).max(160),
 	kind: z.enum(["editor_selection", "scene", "node", "file", "folder", "script", "script_selection", "filesystem_selection", "image"]),
@@ -195,8 +206,9 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 			provider: providerIdSchema,
 			apiKey: z.string().optional(),
 			model: z.string().min(1).optional(),
-			baseUrl: z.string().min(1).optional(),
+			baseUrl: z.string().min(1).max(1000).nullable().optional(),
 			activate: z.boolean().optional(),
+			modelRouting: providerModelRoutingSchema.optional(),
 		}),
 	}),
 	z.object({

@@ -63,11 +63,11 @@ import { listProviderModels } from "../providers/provider-models.js";
 import { estimateProviderMessagesTokens, estimateProviderTextTokens } from "../providers/provider-token-estimator.js";
 import {
 	createCurrentUserMessage,
-	getImageAttachments,
 	hasImageAttachments,
-	modelSupportsImageInput,
 	ProviderImageInputError
 } from "../providers/provider-image-content.js";
+import { preprocessImageAttachmentsForTextModel, type ImageRecognitionPreprocessResult } from "../providers/image-recognition.js";
+import { resolveProviderTaskModelOptions } from "../providers/task-model-routing.js";
 import { getProviderDefaultBaseUrl, getProviderDefaultModel, getProviderDisplayName } from "../providers/provider-registry.js";
 import { classifyProviderError, createProviderStatusEvent } from "../providers/provider-error.js";
 import { generateSessionTitle, shouldApplyGeneratedSessionTitle } from "./session-title.js";
@@ -299,6 +299,15 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 
 			try {
 				const options: ProviderChatOptions = createProviderChatOptions(session, apiKey);
+				const imagePreprocess: ImageRecognitionPreprocessResult = await preprocessImageAttachmentsForTextModel(
+					socket,
+					request.id,
+					session,
+					params,
+					options,
+					abortController.signal
+				);
+				const effectiveParams: AiChatParams = imagePreprocess.params;
 				logger.info("ai", "chat_started", {
 					requestId: request.id,
 					sessionId: session.sessionId,
@@ -306,36 +315,22 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 					editorInstanceId: session.editorInstanceId,
 					provider: options.provider,
 					model: resolveChatModel(options),
-					mode: params.mode,
-					messageChars: params.message.length,
-					additionalContextCount: params.additionalContext?.length ?? 0,
-					hasImages: hasImageAttachments(params),
-					retryFromRequestId: params.retryFromRequestId
+					mode: effectiveParams.mode,
+					messageChars: effectiveParams.message.length,
+					additionalContextCount: effectiveParams.additionalContext?.length ?? 0,
+					hasImages: hasImageAttachments(effectiveParams),
+					imageRecognized: imagePreprocess.recognized,
+					retryFromRequestId: effectiveParams.retryFromRequestId
 				});
-				const requestHasImages: boolean = hasImageAttachments(params);
-				if (requestHasImages) {
-					getImageAttachments(params.additionalContext);
-					const activeModelId: string = resolveChatModel(options);
-					if (!await modelSupportsImageInput(options.provider, activeModelId)) {
-						sendJson(socket, {
-							type: "response",
-							id: request.id,
-							ok: false,
-							error: {
-								code: "model_does_not_support_images",
-								message: `${getProviderDisplayName(options.provider)} model ${activeModelId} does not support image input. Switch to a model with image capability.`
-							}
-						});
-						break;
-					}
-				}
-				if (params.mode === "plan") {
+				const requestHasImages: boolean = hasImageAttachments(effectiveParams);
+				if (effectiveParams.mode === "plan") {
+					const plannerOptions: ProviderChatOptions = (await resolveProviderTaskModelOptions("workflowPlanner", options)).options;
 					const plan: StoredPlan = await createInitialPlan(
 						socket,
 						request.id,
 						session,
-						params,
-						options,
+						effectiveParams,
+						plannerOptions,
 						mcpHost,
 						turnStartedAt,
 						abortController.signal
@@ -348,19 +343,19 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 					});
 					break;
 				}
-				const activeSkillId: SkillId | undefined = params.skillId ?? session.activeSkillId;
+				const activeSkillId: SkillId | undefined = effectiveParams.skillId ?? session.activeSkillId;
 				const activeSkill = activeSkillId !== undefined ? getSkill(activeSkillId) : undefined;
-				const allowedToolNames: readonly string[] | undefined = resolveAllowedToolsForChatParams(params, activeSkill?.allowedTools);
-				const promptId = params.promptId ?? (activeSkillId !== undefined ? getSkill(activeSkillId).defaultPromptId : undefined);
+				const allowedToolNames: readonly string[] | undefined = resolveAllowedToolsForChatParams(effectiveParams, activeSkill?.allowedTools);
+				const promptId = effectiveParams.promptId ?? (activeSkillId !== undefined ? getSkill(activeSkillId).defaultPromptId : undefined);
 				const systemPrompt: string = await composeSystemPrompt(
 					promptId,
-					params.systemPrompt,
+					effectiveParams.systemPrompt,
 					createProviderRuntimeContext(session),
-					params.mode
+					effectiveParams.mode
 				);
 				const skillPrompt: string = await composeSkillPrompt(activeSkillId);
 				const mcpSystemContext: string = await createMcpSystemContext(mcpHost, session);
-				const additionalContextSection: string = createAdditionalContextPromptSection(params.additionalContext);
+				const additionalContextSection: string = createAdditionalContextPromptSection(effectiveParams.additionalContext);
 				const guidePromptSection: string = consumePendingGuideSection(socket, request.id, session);
 				const fullSystemPrompt: string = systemPrompt
 					+ (skillPrompt.length > 0 ? `\n\n${skillPrompt}` : "")
@@ -371,7 +366,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 					requestId: request.id,
 					promptId,
 					skillId: activeSkillId,
-					customInstructions: params.systemPrompt,
+					customInstructions: effectiveParams.systemPrompt,
 					systemPrompt,
 					skillPrompt,
 					mcpSystemContext,
@@ -379,19 +374,19 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 					guidePromptSection,
 					fullSystemPrompt
 				});
-				if (params.retryFromRequestId !== undefined && session.sessionId !== undefined) {
+				if (effectiveParams.retryFromRequestId !== undefined && session.sessionId !== undefined) {
 					await waitForSessionEventPersistence(session);
-					const rewoundMessages: StoredMessage[] = await rewindSessionFromRequest(session.sessionId, params.retryFromRequestId);
+					const rewoundMessages: StoredMessage[] = await rewindSessionFromRequest(session.sessionId, effectiveParams.retryFromRequestId);
 					session.messages = rewoundMessages.map(toChatMessage);
 					session.fullSessionLoadPromise = undefined;
 					session.summaryMessage = undefined;
 					session.summaryCoveredMessageCount = undefined;
 				}
-				maybeScheduleSessionTitleGeneration(socket, request.id, session, params, options, session.messages.length === 0);
+				maybeScheduleSessionTitleGeneration(socket, request.id, session, effectiveParams, options, session.messages.length === 0);
 				const historyBudgetTokens: number = await computeHistoryBudget(
 					session.modelProfile,
 					options,
-					params,
+					effectiveParams,
 					systemPrompt,
 					skillPrompt + mcpSystemContext + additionalContextSection + guidePromptSection,
 					abortController.signal
@@ -399,31 +394,32 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				const history: ChatMessage[] = await selectHistoryForModel(session, historyBudgetTokens);
 				let workflowPlan: WorkflowPlan | null = null;
 				if (requestHasImages) {
-					workflowPlan = createSingleAnswerPlan(params, []);
+					workflowPlan = createSingleAnswerPlan(effectiveParams, []);
 				} else if (slashCommandResult.type === "none") {
-					if (params.options?.workflow !== "llm_planned") {
-						workflowPlan = createGodotTemplateWorkflowPlan(params);
+					if (effectiveParams.options?.workflow !== "llm_planned") {
+						workflowPlan = createGodotTemplateWorkflowPlan(effectiveParams);
 					}
 					if (workflowPlan === null) {
-						if (params.options?.workflow === "llm_planned") {
+						if (effectiveParams.options?.workflow === "llm_planned") {
 							try {
-								workflowPlan = await createLlmWorkflowPlan(params, options, history, mcpSystemContext + additionalContextSection + guidePromptSection, abortController.signal);
+								const plannerOptions: ProviderChatOptions = (await resolveProviderTaskModelOptions("workflowPlanner", options)).options;
+								workflowPlan = await createLlmWorkflowPlan(effectiveParams, plannerOptions, history, mcpSystemContext + additionalContextSection + guidePromptSection, abortController.signal);
 							} catch (error: unknown) {
 								logger.warn("ai", "llm_workflow_planner_failed_fallback", {
 									requestId: request.id,
 									sessionId: session.sessionId,
 									message: error instanceof Error ? error.message : "LLM planner failed"
 								});
-								workflowPlan = planWorkflowAfterLlmPlannerFailure(params);
+								workflowPlan = planWorkflowAfterLlmPlannerFailure(effectiveParams);
 							}
 						} else {
-							workflowPlan = planWorkflow(params);
+							workflowPlan = planWorkflow(effectiveParams);
 						}
 					}
 				}
 
 				if (workflowPlan === null) {
-					workflowPlan = createSingleAnswerPlan(params, allowedToolNames);
+					workflowPlan = createSingleAnswerPlan(effectiveParams, allowedToolNames);
 				}
 				logger.info("ai", "workflow_planned", {
 					requestId: request.id,
@@ -437,7 +433,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				});
 
 				const originalApprovalGateway: ApprovalGateway = session.approvalGateway;
-				if (params.mode === "ask") {
+				if (effectiveParams.mode === "ask") {
 					session.approvalGateway = new ReadOnlyToolApprovalGateway(allowedToolNames ?? []);
 				}
 				try {
@@ -448,7 +444,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 						mcpHost,
 						options,
 						workflowPlan,
-						params,
+						effectiveParams,
 						history,
 						historyBudgetTokens,
 						turnStartedAt,

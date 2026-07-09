@@ -22,6 +22,7 @@ import { ReadOnlyToolApprovalGateway } from "../tools/approval-gateway.js";
 import type { OnToolEvent, ToolEvent } from "../tools/tool-dispatcher.js";
 import { resolveAllowedToolsForChatParams } from "./chat-mode.js";
 import { createAgentToolEventForwarder } from "./workflow/tool-events.js";
+import { loadCorePrompt } from "../prompts/registry.js";
 
 const PLAN_PREVIEW_MAX_CHARS: number = 1600;
 const CLARIFICATION_REPLY_MAX_COUNT: number = 3;
@@ -66,6 +67,37 @@ export function sendPlanMessageDone(socket: WebSocket, requestId: string, sessio
 		mode: "plan",
 		planId: planId ?? null
 	});
+}
+
+export type PlanVisibleDeltaFilter = {
+	push(text: string): string;
+};
+
+export function createPlanVisibleDeltaFilter(): PlanVisibleDeltaFilter {
+	let pendingWhitespace: string = "";
+	let suppressFinalJson: boolean = false;
+	return {
+		push(text: string): string {
+			if (suppressFinalJson || text.length === 0) {
+				return "";
+			}
+
+			const combinedText: string = pendingWhitespace + text;
+			const trimmedStart: string = combinedText.trimStart();
+			if (trimmedStart.startsWith("{")) {
+				suppressFinalJson = true;
+				pendingWhitespace = "";
+				return "";
+			}
+			if (combinedText.trim().length === 0) {
+				pendingWhitespace = combinedText;
+				return "";
+			}
+
+			pendingWhitespace = "";
+			return combinedText;
+		}
+	};
 }
 
 function isBroadGodotPluginGoal(message: string): boolean {
@@ -154,9 +186,15 @@ function createPlanPreview(markdown: string): string {
 	return clipTextByChars(markdown.trim(), PLAN_PREVIEW_MAX_CHARS);
 }
 
-export function createPlannerSystemPrompt(): string {
+export async function createPlannerSystemPrompt(): Promise<string> {
+	const corePrompt: string = await loadCorePrompt();
 	return [
+		corePrompt,
+		"",
+		"## Plan 模式规划器",
 		"你是 Godot Daedalus 的 Plan 模式规划器。此阶段只能澄清和生成计划，不能执行、不能写文件、不能假装已经修改项目。",
+		"你必须遵循 CORE；尤其是调用工具前要先用用户可见正文给出一句简短预告，要求用户澄清前也要先说明为什么必须澄清。",
+		"最终决策必须是 JSON object。工具前预告和澄清前预告可以是普通正文，但最终 JSON 不要包在 markdown fence 中。",
 		"先判断用户目标是否足够明确；如果直接做容易偏离真实需求，必须要求澄清。",
 		"关键缺失信息会影响整体设计时必须问；不关键的信息可以写入 assumptions。",
 		"不要臆测技术栈、协议或测试框架；如果缺少关键信息，优先要求澄清，或把不关键的不确定点写为假设。",
@@ -303,6 +341,7 @@ async function runPlanAgentDecision(
 
 	const allowedToolNames: readonly string[] = resolveAllowedToolsForChatParams(plannerParams, undefined) ?? [];
 	const gateway = new ReadOnlyToolApprovalGateway(allowedToolNames);
+	const visibleDeltaFilter: PlanVisibleDeltaFilter = createPlanVisibleDeltaFilter();
 	const baseForwarder: OnToolEvent = createAgentToolEventForwarder(
 		runtime.socket,
 		runtime.requestId,
@@ -315,6 +354,10 @@ async function runPlanAgentDecision(
 	let toolCallCount: number = 0;
 	const onEvent: OnToolEvent = (event: ToolEvent): void => {
 		if (event.type === "ai.delta") {
+			const visibleText: string = visibleDeltaFilter.push(event.text);
+			if (visibleText.length > 0) {
+				sendPlanMessageDelta(runtime.socket, runtime.requestId, runtime.session, visibleText);
+			}
 			return;
 		}
 		if (event.type === "tool.call") {
@@ -326,7 +369,7 @@ async function runPlanAgentDecision(
 		plannerParams,
 		options,
 		[] satisfies ChatMessage[],
-		createPlannerSystemPrompt(),
+		await createPlannerSystemPrompt(),
 		runtime.mcpHost,
 		gateway,
 		allowedToolNames,
@@ -360,7 +403,6 @@ export async function createInitialPlan(
 	if (!session.sessionId) {
 		throw new Error("Plan mode requires an active session.");
 	}
-	sendPlanMessageDelta(socket, requestId, session, "我先判断这个目标是否足够明确，并只做计划分析，不会修改项目。\n\n");
 	const decision: PlanDecision = await createPlanDecision(params, options, [], [], undefined, {
 		socket,
 		requestId,
@@ -397,7 +439,6 @@ export async function createInitialPlan(
 		});
 		assistantMessage = metadata.previewMarkdown;
 		eventName = "plan.generated";
-		sendPlanMessageDelta(socket, requestId, session, "计划已经生成，请先预览并确认是否执行。\n");
 	}
 
 	const storedPlan: StoredPlan = await writeStoredPlan(metadata, markdown);

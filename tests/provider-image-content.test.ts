@@ -1,8 +1,27 @@
 import assert from "node:assert/strict";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import type { ChatCompletionUserMessageParam } from "openai/resources/chat/completions";
 import { aiChatParamsSchema } from "../src/protocol/schema.js";
 import { createCurrentUserMessage, getImageAttachments, ProviderImageInputError } from "../src/providers/provider-image-content.js";
+import { preprocessImageAttachmentsForTextModel } from "../src/providers/image-recognition.js";
+import { createClientSession } from "../src/server/client-session.js";
+
+async function withTempAppData(run: () => Promise<void>): Promise<void> {
+	const previousAppData: string | undefined = process.env.APPDATA;
+	process.env.APPDATA = await mkdtemp(join(tmpdir(), "daedalus-image-routing-"));
+	try {
+		await run();
+	} finally {
+		if (previousAppData === undefined) {
+			delete process.env.APPDATA;
+		} else {
+			process.env.APPDATA = previousAppData;
+		}
+	}
+}
 
 const VALID_IMAGE_CONTEXT = {
 	id: "img-1",
@@ -93,4 +112,51 @@ test("image attachment validation rejects invalid base64 and too many images", (
 		() => getImageAttachments([VALID_IMAGE_CONTEXT, VALID_IMAGE_CONTEXT, VALID_IMAGE_CONTEXT, VALID_IMAGE_CONTEXT]),
 		(error: unknown): boolean => error instanceof ProviderImageInputError && error.code === "too_many_image_attachments"
 	);
+});
+
+test("image preprocessing keeps direct multimodal input when current model supports images", async (): Promise<void> => {
+	const result = await preprocessImageAttachmentsForTextModel(
+		{ send(): void { /* test socket */ } } as never,
+		"request-image",
+		createClientSession(undefined),
+		{
+			message: "描述这张图",
+			additionalContext: [VALID_IMAGE_CONTEXT]
+		},
+		{
+			provider: "moonshot",
+			apiKey: "test-key",
+			model: "kimi-k2.6"
+		}
+	);
+
+	assert.equal(result.recognized, false);
+	assert.equal(result.params.additionalContext?.[0]?.kind, "image");
+});
+
+test("image preprocessing requires recognition model when current model lacks image support", async (): Promise<void> => {
+	await withTempAppData(async (): Promise<void> => {
+		await assert.rejects(
+			preprocessImageAttachmentsForTextModel(
+				{ send(): void { /* test socket */ } } as never,
+				"request-image-text-model",
+				createClientSession(undefined),
+				{
+					message: "描述这张图",
+					additionalContext: [VALID_IMAGE_CONTEXT]
+				},
+				{
+					provider: "deepseek",
+					apiKey: "test-key",
+					model: "deepseek-v4-flash"
+				}
+			),
+			(error: unknown): boolean => {
+				assert.equal(error instanceof ProviderImageInputError, true);
+				assert.equal((error as ProviderImageInputError).code, "model_does_not_support_images");
+				assert.match((error as Error).message, /Configure an image recognition model/);
+				return true;
+			}
+		);
+	});
 });
