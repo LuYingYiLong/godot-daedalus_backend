@@ -158,6 +158,7 @@ Useful scripts:
 - `npm run ping`: run the local ping client.
 - `npm run pack:check`: inspect the npm package contents without publishing.
 - `npm run smoke:beta`: start the backend and run the Windows/Godot public Beta smoke checks.
+- `npm run smoke:automation`: run the Automation WebSocket/RPC smoke matrix; add `use_llm scenario=plan_clarify` for a real provider Plan smoke.
 - `npm run smoke:llm -- use_llm model_id=deepseek-v4-pro`: start a temporary backend, run one real provider Agent write against a timestamped smoke file, auto-approve only that smoke write, and verify the persisted inline diff batch.
 - `npm run dev:llm -- model_id=deepseek-v4-pro`: development shortcut for the same real LLM inline diff smoke.
 

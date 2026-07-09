@@ -21,7 +21,8 @@ const TEXT_FILE_READ_TOOLS: string[] = [
 const SCENE_READ_TOOLS: string[] = [
 	"mcp_godot_list_scenes",
 	"mcp_godot_read_text_file",
-	"mcp_godot_inspect_scene_tree"
+	"mcp_godot_inspect_scene_tree",
+	"mcp_godot_editor_capture_scene_view"
 ];
 
 const SCRIPT_WRITE_TOOLS: string[] = [

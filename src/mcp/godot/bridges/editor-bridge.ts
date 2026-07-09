@@ -164,6 +164,23 @@ export class GodotEditorBridge {
 		return typeof scenePath === "string" && scenePath.trim().length > 0 ? scenePath : undefined;
 	}
 
+	supportsTool(toolName: string): boolean {
+		const connection: EditorConnection | null = this.selectConnection(undefined, undefined, false);
+		if (connection === null || !this.isConnectionOnline(connection)) {
+			return false;
+		}
+
+		if (toolName !== "capture_scene_view") {
+			return true;
+		}
+
+		const capabilities: unknown = connection.context.capabilities;
+		return capabilities !== null
+			&& typeof capabilities === "object"
+			&& !Array.isArray(capabilities)
+			&& (capabilities as Record<string, unknown>).sceneViewCapture === true;
+	}
+
 	async refreshFilesystem(changedPaths: string[]): Promise<unknown[] | null> {
 		const connections: EditorConnection[] = this.selectRefreshConnections();
 		if (connections.length === 0) {
@@ -192,8 +209,7 @@ export class GodotEditorBridge {
 	}
 
 	listTools() {
-		return {
-			tools: [
+		const tools = [
 				{
 					name: "get_context",
 					description: "返回 Godot 编辑器在线状态、当前场景、选择节点、脚本选区、文件系统选择和上下文新鲜度。",
@@ -228,6 +244,21 @@ export class GodotEditorBridge {
 							}
 						},
 						required: ["nodePath"]
+					}
+				},
+				{
+					name: "capture_scene_view",
+					description: "截取当前 Godot 2D 或 3D 编辑器场景视口。截图只读，供后端视觉模型解释。",
+					inputSchema: {
+						type: "object",
+						properties: {
+							view: {
+								type: "string",
+								enum: ["auto", "2d", "3d"],
+								description: "默认 auto；无法唯一确定视口时需指定 2d 或 3d。"
+							}
+						},
+						required: []
 					}
 				},
 				{
@@ -267,7 +298,11 @@ export class GodotEditorBridge {
 						required: ["operations"]
 					}
 				}
-			]
+		];
+		return {
+			tools: this.supportsTool("capture_scene_view")
+				? tools
+				: tools.filter((tool): boolean => tool.name !== "capture_scene_view")
 		};
 	}
 
@@ -317,7 +352,7 @@ export class GodotEditorBridge {
 			});
 		}
 
-		if (name !== "inspect_node" && name !== "apply_scene_patch") {
+		if (name !== "inspect_node" && name !== "apply_scene_patch" && name !== "capture_scene_view") {
 			throw new Error(`Unknown godot_editor tool: ${name}`);
 		}
 

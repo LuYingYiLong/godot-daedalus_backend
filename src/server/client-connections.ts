@@ -6,7 +6,7 @@ import { sendJson } from "./send-json.js";
 export type ClientType = "godot_plugin" | "studio" | "cli" | "smoke" | "legacy";
 
 export type ClientCapabilities = Partial<Record<
-	"editorTools" | "editorUndoRedo" | "inlineDiffUndo" | "inlineDiffView" | "sessionSubscribe" | "approval",
+	"editorTools" | "editorUndoRedo" | "sceneViewCapture" | "inlineDiffUndo" | "inlineDiffView" | "sessionSubscribe" | "approval",
 	boolean
 >>;
 

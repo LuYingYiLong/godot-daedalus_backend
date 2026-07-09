@@ -1,6 +1,8 @@
 import type { McpServerConfig } from "./types.js";
 import { getDefaultWorkspace } from "../workspace/registry.js";
 import type { WorkspaceConfig } from "../workspace/types.js";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 
 const defaultWs = getDefaultWorkspace();
 const DEFAULT_GODOT_PROJECT_PATH: string | undefined = process.env.GODOT_PROJECT_PATH ?? defaultWs?.rootPath;
@@ -23,8 +25,10 @@ export function buildMcpServerConfigs(workspace?: WorkspaceConfig): McpServerCon
 		terminalEnv.GODOT_EXECUTABLE_PATH = godotPath;
 	}
 
-	return [
-		{
+	const configs: McpServerConfig[] = [];
+	const isGodotProject: boolean = existsSync(join(projectPath, "project.godot"));
+	if (isGodotProject) {
+		configs.push({
 			id: "godot",
 			name: "Godot Project MCP",
 			transport: "stdio",
@@ -33,16 +37,18 @@ export function buildMcpServerConfigs(workspace?: WorkspaceConfig): McpServerCon
 			env: {
 				GODOT_PROJECT_PATH: projectPath
 			}
-		},
-		{
-			id: "terminal",
-			name: "Terminal MCP",
-			transport: "stdio",
-			command: "npx",
-			args: ["tsx", "src/mcp/terminal/server.ts"],
-			env: terminalEnv
-		}
-	];
+		});
+	}
+
+	configs.push({
+		id: "terminal",
+		name: "Terminal MCP",
+		transport: "stdio",
+		command: "npx",
+		args: ["tsx", "src/mcp/terminal/server.ts"],
+		env: terminalEnv
+	});
+	return configs;
 }
 
 export const mcpServerConfigs: McpServerConfig[] = buildMcpServerConfigs();

@@ -390,12 +390,12 @@ export class McpHost {
 
 		const sessions: Map<string, McpSession> | undefined = this.workspaceSessions.get(resolvedWorkspaceId);
 		if (!sessions) {
-			return this.editorBridge.isOnline() ? [GODOT_EDITOR_SERVER_ID] : [];
+			return this.editorBridge.isOnline(resolvedWorkspaceId) ? [GODOT_EDITOR_SERVER_ID] : [];
 		}
 
 		const serverIds: string[] = Array.from(sessions.keys());
 		serverIds.push(GODOT_DIAGNOSTICS_SERVER_ID);
-		if (this.editorBridge.isOnline()) {
+		if (this.editorBridge.isOnline(resolvedWorkspaceId)) {
 			serverIds.push(GODOT_EDITOR_SERVER_ID);
 		}
 		return serverIds.sort();

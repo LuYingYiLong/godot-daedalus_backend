@@ -119,6 +119,14 @@ function collectArtifactRefs(args: Record<string, unknown>, record: Record<strin
 			refs.add(recordValue);
 		}
 	}
+	const resultRefs: unknown = record?.artifactRefs;
+	if (Array.isArray(resultRefs)) {
+		for (const value of resultRefs) {
+			if (typeof value === "string" && value.length > 0) {
+				refs.add(value);
+			}
+		}
+	}
 
 	return [...refs];
 }

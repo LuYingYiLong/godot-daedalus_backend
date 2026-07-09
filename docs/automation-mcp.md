@@ -93,11 +93,13 @@ env = {
 ## 工具清单
 
 - `daedalus_backend_health`：读取 `backend.health`。
+- `daedalus_configure_environment`：调用 `environment.configure` 选择 runtime workspace；真实 Plan/Agent smoke 前建议先调用。
 - `daedalus_create_session`：创建会话。
 - `daedalus_open_session`：打开已有会话。
+- `daedalus_get_session_info`：读取 `session.info`，包括 provider、审批、workspace、editor 和 diagnostics 运行时状态。
 - `daedalus_send_chat`：发送 `ai.chat`，立即返回 `requestId`。
 - `daedalus_wait_for_event`：按 `eventName`、`requestId`、`planId` 或 sequence 等待事件。
-- `daedalus_get_session_events`：读取 `session.timeline`。
+- `daedalus_get_session_events`：读取 `session.timeline`；不传 `beforeOffset` 时返回最近一页，加载更早历史时传上一页返回的 `blockOffset`。
 - `daedalus_get_plan`：读取计划全文和 metadata。
 - `daedalus_submit_clarification`：提交 Plan 澄清。
 - `daedalus_revise_plan`：反馈并修订 Plan。
@@ -128,6 +130,40 @@ env = {
 7. 执行中用 `daedalus_list_pending_approvals` 和 `daedalus_approve_matching_tool` 只批准 smoke 白名单写入。
 8. 等待 `fileEditBatch`、`agent.message.done` 或 `agent.run.error`。
 9. `daedalus_assert_session_state` 和 `daedalus_get_file_edit_batch` 校验结果。
+
+## Smoke Matrix 脚本
+
+仓库内置 `npm run smoke:automation`，用于在不暴露 API key 的前提下通过公开 WebSocket/RPC 跑自动化 smoke。默认只跑无 LLM 场景：
+
+```powershell
+npm run smoke:automation -- backend_url=ws://localhost:38180
+```
+
+默认矩阵包含：
+
+- `health`：确认 `backend.health` 返回发布后端结构。
+- `runtime_status`：创建会话并断言 `session.info.godotRuntime` 可读，方便发现 workspace/editor/LSP 绑定问题。
+
+真实 Plan/澄清 smoke 需要显式允许调用已保存的 provider 配置：
+
+```powershell
+npm run smoke:automation -- use_llm scenario=plan_clarify backend_url=ws://localhost:38180
+```
+
+如果要让 Plan 模式读取当前后端仓库或 Godot 项目上下文，传入 `project=` 让脚本先配置 workspace。该路径可以是 Godot 项目，也可以是后端仓库；非 Godot 目录会跳过 Godot MCP，只连接可用的 workspace 工具并注入项目指令文件：
+
+```powershell
+npm run smoke:automation -- use_llm scenario=plan_clarify project=D:\godot-daedalus_backend backend_url=ws://localhost:38180
+```
+
+可选参数：
+
+- `scenario=health,runtime_status,plan_clarify`：指定矩阵项；不传时等同于 `health,runtime_status`。
+- `project=<path>`：先调用 `environment.configure` 选择 runtime workspace，避免 Plan 阶段出现 `MCP workspace is not selected`。
+- `godot=<path>`：可选 Godot 可执行文件路径，会随 `project=` 一起传给后端。
+- `workspace_id=<id>`：创建 smoke 会话时绑定指定 workspace。
+- `prompt=<text>`：覆盖 Plan smoke 的用户输入，默认是“帮我做一个 godot ai 插件”。
+- `timeout_ms=180000`：覆盖 RPC/事件等待超时。
 
 ## 安全边界
 

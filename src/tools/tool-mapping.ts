@@ -198,6 +198,10 @@ const TOOL_MAP: Record<string, ToolMapping> = {
 		serverId: "godot_editor",
 		toolName: "inspect_node"
 	},
+	"mcp_godot_editor_capture_scene_view": {
+		serverId: "godot_editor",
+		toolName: "capture_scene_view"
+	},
 	"mcp_godot_editor_apply_scene_patch": {
 		serverId: "godot_editor",
 		toolName: "apply_scene_patch"

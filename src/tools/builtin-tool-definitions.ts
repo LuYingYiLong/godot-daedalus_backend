@@ -611,6 +611,24 @@ const TOOL_DEFINITIONS: ChatCompletionTool[] = [
 	{
 		type: "function",
 		function: {
+			name: "mcp_godot_editor_capture_scene_view",
+			description: "只读截取当前 Godot 编辑器的 2D 或 3D 场景视口，并由后端视觉模型返回结构化观察。先调用此工具确认截图是否可用；若结果 analysis.status 为 unavailable，应依据文本上下文继续、向用户说明限制或请求辅助信息，不能声称已经看过场景。",
+			parameters: {
+				type: "object",
+				properties: {
+					view: {
+						type: "string",
+						enum: ["auto", "2d", "3d"],
+						description: "默认 auto；当多个编辑器视口同时可见时，使用 2d 或 3d 明确选择。"
+					}
+				},
+				required: []
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
 			name: "mcp_godot_editor_apply_scene_patch",
 			description: "在在线 Godot 编辑器中应用场景 patch，会使用 EditorUndoRedoManager 合并为一个可撤销动作，并默认保存当前场景。该工具会实际修改场景，必须经过用户审批；编辑器离线时回退到离线 mcp_godot_apply_scene_patch 或 headless 工具。",
 			parameters: {

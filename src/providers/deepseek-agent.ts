@@ -20,7 +20,7 @@ import {
 import type { McpHost } from "../mcp/mcp-host.js";
 import { getToolDefinitions, getToolDefinitionsForNames } from "../tools/builtin-tool-definitions.js";
 import { resolveToolBudget, MAX_TOTAL_TOOL_RESULT_CHARS } from "../tools/llm-tool-budget.js";
-import { dispatchToolCalls, ToolApprovalRequiredError, type OnToolEvent } from "../tools/tool-dispatcher.js";
+import { dispatchToolCalls, ToolApprovalRequiredError, type OnToolEvent, type ToolResultEnricher } from "../tools/tool-dispatcher.js";
 import { ApprovalGateway } from "../tools/approval-gateway.js";
 import { containsDsmlToolCalls } from "./deepseek-dsml-tools.js";
 import { containsLooseToolCalls, isKnownLooseToolTagName, isPotentialLooseToolTagName, normalizeKnownToolName } from "./deepseek-loose-tools.js";
@@ -615,7 +615,8 @@ async function runAgentLoop(
 	initialToolResultChars: number,
 	streamAssistant: boolean,
 	onEvent?: OnToolEvent,
-	abortSignal?: AbortSignal | undefined
+	abortSignal?: AbortSignal | undefined,
+	toolResultEnricher?: ToolResultEnricher | undefined
 ): Promise<DeepSeekAgentResult> {
 	let totalToolResultChars: number = initialToolResultChars;
 	const allowedToolNames: ReadonlySet<string> = getAllowedToolNames(tools);
@@ -718,7 +719,7 @@ async function runAgentLoop(
 			if (abortSignal?.aborted) {
 				throw new Error("Request cancelled");
 			}
-			toolResults = await dispatchToolCalls(mcpHost, toolCalls, step, gateway, onEvent);
+			toolResults = await dispatchToolCalls(mcpHost, toolCalls, step, gateway, onEvent, toolResultEnricher);
 		} catch (error: unknown) {
 			if (error instanceof ToolApprovalRequiredError) {
 				const pendingToolCall: ChatCompletionMessageToolCall | undefined = toolCalls.find(
@@ -809,7 +810,8 @@ export async function runDeepSeekAgent(
 	gateway: ApprovalGateway,
 	allowedToolNames?: readonly string[] | undefined,
 	onEvent?: OnToolEvent,
-	abortSignal?: AbortSignal | undefined
+	abortSignal?: AbortSignal | undefined,
+	toolResultEnricher?: ToolResultEnricher | undefined
 ): Promise<DeepSeekAgentResult> {
 	const client: OpenAI = createDeepSeekClient(options);
 	const tools = allowedToolNames !== undefined
@@ -823,7 +825,7 @@ export async function runDeepSeekAgent(
 
 	const messages: ChatCompletionMessageParam[] = createMessages(params, history, systemPrompt);
 
-	return runAgentLoop(client, params, options, messages, mcpHost, gateway, tools, 0, maxSteps, 0, false, onEvent, abortSignal);
+	return runAgentLoop(client, params, options, messages, mcpHost, gateway, tools, 0, maxSteps, 0, false, onEvent, abortSignal, toolResultEnricher);
 }
 
 export async function runDeepSeekAgentStreaming(
@@ -835,7 +837,8 @@ export async function runDeepSeekAgentStreaming(
 	gateway: ApprovalGateway,
 	allowedToolNames?: readonly string[] | undefined,
 	onEvent?: OnToolEvent,
-	abortSignal?: AbortSignal | undefined
+	abortSignal?: AbortSignal | undefined,
+	toolResultEnricher?: ToolResultEnricher | undefined
 ): Promise<DeepSeekAgentResult> {
 	const client: OpenAI = createDeepSeekClient(options);
 	const tools = allowedToolNames !== undefined
@@ -849,7 +852,7 @@ export async function runDeepSeekAgentStreaming(
 
 	const messages: ChatCompletionMessageParam[] = createMessages(params, history, systemPrompt);
 
-	return runAgentLoop(client, params, options, messages, mcpHost, gateway, tools, 0, maxSteps, 0, true, onEvent, abortSignal);
+	return runAgentLoop(client, params, options, messages, mcpHost, gateway, tools, 0, maxSteps, 0, true, onEvent, abortSignal, toolResultEnricher);
 }
 
 export async function continueDeepSeekAgent(
@@ -861,7 +864,8 @@ export async function continueDeepSeekAgent(
 	gateway: ApprovalGateway,
 	allowedToolNames?: readonly string[] | undefined,
 	onEvent?: OnToolEvent,
-	abortSignal?: AbortSignal | undefined
+	abortSignal?: AbortSignal | undefined,
+	toolResultEnricher?: ToolResultEnricher | undefined
 ): Promise<DeepSeekAgentResult> {
 	const client: OpenAI = createDeepSeekClient(options);
 	const tools = allowedToolNames !== undefined
@@ -910,7 +914,8 @@ export async function continueDeepSeekAgent(
 		totalToolResultChars,
 		false,
 		onEvent,
-		abortSignal
+		abortSignal,
+		toolResultEnricher
 	);
 }
 
@@ -923,7 +928,8 @@ export async function continueDeepSeekAgentStreaming(
 	gateway: ApprovalGateway,
 	allowedToolNames?: readonly string[] | undefined,
 	onEvent?: OnToolEvent,
-	abortSignal?: AbortSignal | undefined
+	abortSignal?: AbortSignal | undefined,
+	toolResultEnricher?: ToolResultEnricher | undefined
 ): Promise<DeepSeekAgentResult> {
 	const client: OpenAI = createDeepSeekClient(options);
 	const tools = allowedToolNames !== undefined
@@ -975,6 +981,7 @@ export async function continueDeepSeekAgentStreaming(
 		totalToolResultChars,
 		true,
 		onEvent,
-		abortSignal
+		abortSignal,
+		toolResultEnricher
 	);
 }

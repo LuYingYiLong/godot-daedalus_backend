@@ -7,6 +7,7 @@ import { McpHost } from "../src/mcp/mcp-host.js";
 import { withMcpRequestContext } from "../src/mcp/request-context.js";
 import { createClientSession } from "../src/server/client-session.js";
 import { beginSessionRun, finishSessionRun, registerClientConnection, subscribeSocketToSession, updateClientConnection } from "../src/server/client-connections.js";
+import { createGodotRuntimeStatus } from "../src/server/godot-runtime-status.js";
 import { sendSessionEvent } from "../src/server/session-events.js";
 import { clearDynamicMcpToolsForWorkspace, getDynamicMcpToolMapping, getDynamicMcpToolNames, replaceDynamicMcpToolsForWorkspace } from "../src/tools/dynamic-mcp-tools.js";
 import { createRuntimeWorkspace, upsertRuntimeWorkspace } from "../src/workspace/registry.js";
@@ -133,6 +134,51 @@ test("diagnostics bridge uses request workspace context without global active wo
 	const status = JSON.parse(contents[0]!.text) as Record<string, unknown>;
 	assert.equal(status.workspaceId, workspace.id);
 	assert.equal(status.workspaceRoot, workspace.rootPath);
+});
+
+test("connected server ids keep Godot editor scoped to the requested workspace", (): void => {
+	const host = new McpHost();
+	const socket = createSocket();
+	host.getEditorBridge().updateInstanceContext(socket, "workspace-b", "editor-b", {}, "Godot B");
+
+	assert.deepEqual(host.getConnectedServerIds("workspace-a"), []);
+	assert.deepEqual(host.getConnectedServerIds("workspace-b"), ["godot_editor"]);
+});
+
+test("scene view capture is exposed only to editor clients that advertise support", (): void => {
+	const bridge = new GodotEditorBridge();
+	const socket = createSocket();
+	bridge.updateInstanceContext(socket, "workspace-a", "editor-a", {
+		capabilities: { sceneViewCapture: true }
+	}, "Godot A");
+	assert.equal(bridge.supportsTool("capture_scene_view"), true);
+	assert.equal(bridge.listTools().tools.some((tool: { name: string }): boolean => tool.name === "capture_scene_view"), true);
+
+	const legacyBridge = new GodotEditorBridge();
+	legacyBridge.updateInstanceContext(createSocket(), "workspace-a", "editor-legacy", {}, "Godot Legacy");
+	assert.equal(legacyBridge.supportsTool("capture_scene_view"), false);
+	assert.equal(legacyBridge.listTools().tools.some((tool: { name: string }): boolean => tool.name === "capture_scene_view"), false);
+});
+
+test("Godot runtime status reports editor and diagnostics workspace mismatches", (): void => {
+	const host = new McpHost();
+	const workspaceA = upsertRuntimeWorkspace(createRuntimeWorkspace("D:/DaedalusRuntimeWorkspaceA"));
+	const workspaceB = upsertRuntimeWorkspace(createRuntimeWorkspace("D:/DaedalusRuntimeWorkspaceB"));
+	const socket = createSocket();
+	host.getEditorBridge().updateInstanceContext(socket, workspaceB.id, "editor-b", {}, "Godot B");
+	host.getDiagnosticsBridge().setWorkspace(workspaceB);
+
+	const session = createClientSession(workspaceA);
+	session.editorInstanceId = "editor-a";
+	const status = createGodotRuntimeStatus(session, host);
+	const warnings = status.warnings as Array<{ code: string }>;
+
+	assert.equal(status.sessionWorkspaceId, workspaceA.id);
+	assert.equal((status.editor as Record<string, unknown>).onlineForSession, false);
+	assert.equal((status.diagnostics as Record<string, unknown>).workspaceMatchesSession, false);
+	assert.ok(warnings.some((warning: { code: string }): boolean => warning.code === "editor_instance_missing"));
+	assert.ok(warnings.some((warning: { code: string }): boolean => warning.code === "bound_editor_offline"));
+	assert.ok(warnings.some((warning: { code: string }): boolean => warning.code === "diagnostics_workspace_mismatch"));
 });
 
 test("session events broadcast to subscribed frontend sockets once", (): void => {

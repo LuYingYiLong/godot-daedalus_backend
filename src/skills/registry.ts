@@ -43,6 +43,7 @@ const READ_TOOLS: string[] = [
 	"mcp_godot_editor_get_context",
 	"mcp_godot_editor_get_selected_nodes",
 	"mcp_godot_editor_inspect_node",
+	"mcp_godot_editor_capture_scene_view",
 	"mcp_godot_lsp_get_status",
 	"mcp_godot_lsp_get_file_diagnostics",
 	"mcp_godot_lsp_get_document_symbols",

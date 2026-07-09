@@ -18,8 +18,10 @@ import { resolveToolMapping } from "../src/tools/tool-mapping.js";
 
 const EXPECTED_AUTOMATION_TOOLS = [
 	"daedalus_backend_health",
+	"daedalus_configure_environment",
 	"daedalus_create_session",
 	"daedalus_open_session",
+	"daedalus_get_session_info",
 	"daedalus_send_chat",
 	"daedalus_wait_for_event",
 	"daedalus_get_session_events",

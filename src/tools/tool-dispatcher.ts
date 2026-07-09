@@ -3,6 +3,7 @@ import type { McpHost } from "../mcp/mcp-host.js";
 import { type ApprovalGateway, type PendingApproval } from "./approval-gateway.js";
 import { describeToolEvent, type ToolEventDisplay } from "./tool-event-describer.js";
 import { executeLlmToolWithIdempotency } from "./tool-idempotency.js";
+import type { IdempotentToolExecutionResult } from "./tool-idempotency.js";
 import { parseToolResultSummary, type ParsedToolResultSummary } from "./tool-result-parser.js";
 import type { FileEditBatchDraft } from "./file-edit-snapshots.js";
 import { logger } from "../logger.js";
@@ -17,6 +18,12 @@ export type ToolEvent =
 	| ({ type: "tool.approval_required"; step: number; toolCallId: string; toolName: string; approvalId: string; reason: string; args: Record<string, unknown> } & ToolEventDisplay);
 
 export type OnToolEvent = (event: ToolEvent) => void;
+
+export type ToolResultEnricher = (input: {
+	toolName: string;
+	args: Record<string, unknown>;
+	result: IdempotentToolExecutionResult;
+}) => Promise<IdempotentToolExecutionResult>;
 
 export class ToolApprovalRequiredError extends Error {
 	readonly pendingApproval: PendingApproval;
@@ -33,7 +40,8 @@ async function executeSingleToolCall(
 	toolCall: ChatCompletionMessageToolCall,
 	step: number,
 	gateway: ApprovalGateway,
-	onEvent?: OnToolEvent
+	onEvent?: OnToolEvent,
+	enricher?: ToolResultEnricher | undefined
 ): Promise<ChatCompletionToolMessageParam> {
 	if (toolCall.type !== "function") {
 		return {
@@ -134,7 +142,10 @@ async function executeSingleToolCall(
 		args: argsParsed
 	});
 	try {
-		const result = await executeLlmToolWithIdempotency(mcpHost, functionName, argsParsed);
+		const rawResult = await executeLlmToolWithIdempotency(mcpHost, functionName, argsParsed);
+		const result: IdempotentToolExecutionResult = enricher === undefined
+			? rawResult
+			: await enricher({ toolName: functionName, args: argsParsed, result: rawResult });
 		const parsedSummary: ParsedToolResultSummary = parseToolResultSummary(functionName, argsParsed, result.content);
 		logger.info("tool", "call_finished", {
 			toolCallId: toolCall.id,
@@ -197,12 +208,13 @@ export async function dispatchToolCalls(
 	toolCalls: ChatCompletionMessageToolCall[],
 	step: number,
 	gateway: ApprovalGateway,
-	onEvent?: OnToolEvent
+	onEvent?: OnToolEvent,
+	enricher?: ToolResultEnricher | undefined
 ): Promise<ChatCompletionToolMessageParam[]> {
 	const results: ChatCompletionToolMessageParam[] = [];
 
 	for (const toolCall of toolCalls) {
-		const result = await executeSingleToolCall(mcpHost, toolCall, step, gateway, onEvent);
+		const result = await executeSingleToolCall(mcpHost, toolCall, step, gateway, onEvent, enricher);
 		results.push(result);
 	}
 

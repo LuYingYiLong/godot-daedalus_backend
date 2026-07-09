@@ -1,4 +1,5 @@
 import type { ProviderAgentResult } from "../../providers/agent-types.js";
+import type { AdditionalContextItem } from "../../protocol/types.js";
 import type { WorkflowToolObservation } from "../../workflow/types.js";
 
 export type WorkflowPhaseToolStats = {
@@ -12,4 +13,5 @@ export type WorkflowPhaseRunResult = {
 	agentResult: ProviderAgentResult;
 	toolStats: WorkflowPhaseToolStats;
 	toolObservations: WorkflowToolObservation[];
+	capturedAttachments: AdditionalContextItem[];
 };

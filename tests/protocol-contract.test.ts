@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
+import { clientRequestSchema } from "../src/protocol/schema.js";
 import { REQUEST_HANDLER_METHODS, REQUEST_HANDLERS } from "../src/server/request-dispatcher.js";
 
 const pluginDir: string = process.env.GODOT_DAEDALUS_PLUGIN_DIR ?? "D:/GodotProjects/example/addons/godot_daedalus";
@@ -45,4 +46,16 @@ test("frontend RPC constants match backend protocol schema", async (): Promise<v
 
 	assert.deepEqual(difference(schemaMethods, frontendMethods), [], "schema methods missing frontend RPC constant");
 	assert.deepEqual(difference(frontendMethods, schemaMethods), [], "frontend RPC constants missing schema method");
+});
+
+test("session.timeline accepts omitted beforeOffset as latest page request", (): void => {
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "timeline-latest",
+		method: "session.timeline",
+		params: {
+			sessionId: "session-test",
+			limit: 20
+		}
+	}).success, true);
 });

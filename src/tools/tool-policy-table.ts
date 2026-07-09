@@ -43,6 +43,7 @@ export const TOOL_POLICIES: Record<string, ToolPolicy> = {
 	"mcp_godot_editor_get_context": { risk: "read" },
 	"mcp_godot_editor_get_selected_nodes": { risk: "read" },
 	"mcp_godot_editor_inspect_node": { risk: "read" },
+	"mcp_godot_editor_capture_scene_view": { risk: "read" },
 	"mcp_godot_editor_apply_scene_patch": { risk: "write" },
 	"mcp_godot_lsp_get_status": { risk: "read" },
 	"mcp_godot_lsp_get_file_diagnostics": { risk: "read" },

@@ -17,6 +17,20 @@ import { createMcpSystemContext, createProviderRuntimeContext } from "../prompt-
 import { createAgentToolEventForwarder, createEmptyWorkflowPhaseToolStats, updateWorkflowPhaseToolStats } from "./tool-events.js";
 import type { WorkflowPhaseRunResult, WorkflowPhaseToolStats } from "./shared-types.js";
 import { isEmptyProviderResponseError } from "./provider-errors.js";
+import { createSceneViewToolResultEnricher } from "./scene-view-enricher.js";
+
+const SCENE_VIEW_CAPTURE_TOOL: string = "mcp_godot_editor_capture_scene_view";
+
+export function createRuntimeWorkflowPhase(phase: WorkflowPhase, mcpHost: McpHost): WorkflowPhase {
+	if (!phase.allowedTools.includes(SCENE_VIEW_CAPTURE_TOOL) || mcpHost.getEditorBridge().supportsTool("capture_scene_view")) {
+		return phase;
+	}
+
+	return {
+		...phase,
+		allowedTools: phase.allowedTools.filter((toolName: string): boolean => toolName !== SCENE_VIEW_CAPTURE_TOOL)
+	};
+}
 
 export async function runWorkflowPhase(
 	socket: WebSocket,
@@ -34,6 +48,15 @@ export async function runWorkflowPhase(
 	streamPhase: boolean,
 	abortSignal?: AbortSignal | undefined
 ): Promise<WorkflowPhaseRunResult> {
+	const runtimePhase: WorkflowPhase = createRuntimeWorkflowPhase(phase, mcpHost);
+	const sceneViewEnricher = createSceneViewToolResultEnricher({
+		socket,
+		requestId,
+		session,
+		options,
+		phaseInstruction: runtimePhase.instruction,
+		abortSignal
+	});
 	const toolStats: WorkflowPhaseToolStats = createEmptyWorkflowPhaseToolStats();
 	let toolObservations: WorkflowToolObservation[] = [];
 	const forwardToolEvent: OnToolEvent = createAgentToolEventForwarder(socket, requestId, session, runId, stepRunId, persistRequestId, mcpHost);
@@ -45,8 +68,8 @@ export async function runWorkflowPhase(
 	let agentResult: ProviderAgentResult;
 	try {
 		agentResult = streamPhase
-			? await runProviderAgentStreaming(params, options, history, fullSystemPrompt, mcpHost, session.approvalGateway, phase.allowedTools, onToolEvent, abortSignal)
-			: await runProviderAgent(params, options, history, fullSystemPrompt, mcpHost, session.approvalGateway, phase.allowedTools, onToolEvent, abortSignal);
+			? await runProviderAgentStreaming(params, options, history, fullSystemPrompt, mcpHost, session.approvalGateway, runtimePhase.allowedTools, onToolEvent, abortSignal, sceneViewEnricher.enricher)
+			: await runProviderAgent(params, options, history, fullSystemPrompt, mcpHost, session.approvalGateway, runtimePhase.allowedTools, onToolEvent, abortSignal, sceneViewEnricher.enricher);
 	} catch (error: unknown) {
 		if (phase.toolGroup === "write" && isEmptyProviderResponseError(error)) {
 			agentResult = {
@@ -60,7 +83,8 @@ export async function runWorkflowPhase(
 	return {
 		agentResult,
 		toolStats,
-		toolObservations
+		toolObservations,
+		capturedAttachments: sceneViewEnricher.getCapturedAttachments()
 	};
 }
 

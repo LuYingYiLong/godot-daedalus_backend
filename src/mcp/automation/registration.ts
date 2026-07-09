@@ -68,6 +68,28 @@ export function registerAutomationTools(server: McpServer, config: AutomationCon
 		};
 	}));
 
+	server.registerTool("daedalus_configure_environment", {
+		title: "Configure Daedalus environment",
+		description: "Configure the active runtime workspace through environment.configure before creating or opening smoke sessions.",
+		inputSchema: z.object({
+			godotProjectPath: z.string().min(1),
+			godotExecutablePath: z.string().min(1).optional(),
+			timeoutMs: z.number().int().positive().max(300000).optional()
+		})
+	}, async (input: {
+		godotProjectPath: string;
+		godotExecutablePath?: string | undefined;
+		timeoutMs?: number | undefined;
+	}): Promise<ToolResult> => runTool(async (): Promise<unknown> => {
+		const params: Record<string, unknown> = {
+			godotProjectPath: input.godotProjectPath
+		};
+		if (input.godotExecutablePath !== undefined) {
+			params.godotExecutablePath = input.godotExecutablePath;
+		}
+		return getClient(config).sendRequest("environment.configure", params, input.timeoutMs);
+	}));
+
 	server.registerTool("daedalus_create_session", {
 		title: "Create Daedalus session",
 		description: "Create a backend session for smoke or automation testing.",
@@ -90,6 +112,21 @@ export function registerAutomationTools(server: McpServer, config: AutomationCon
 	}, async (input: { sessionId: string; limit?: number | undefined }): Promise<ToolResult> => runTool(async (): Promise<unknown> =>
 		getClient(config).sendRequest("session.open", input)
 	));
+
+	server.registerTool("daedalus_get_session_info", {
+		title: "Get Daedalus session info",
+		description: "Read provider, approval, workspace, editor and diagnostics runtime state through session.info.",
+		inputSchema: z.object({
+			sessionId: z.string().min(1).optional(),
+			timeoutMs: z.number().int().positive().max(300000).optional()
+		})
+	}, async (input: { sessionId?: string | undefined; timeoutMs?: number | undefined }): Promise<ToolResult> => runTool(async (): Promise<unknown> => {
+		const client = getClient(config);
+		if (input.sessionId !== undefined) {
+			await client.sendRequest("session.open", { sessionId: input.sessionId, limit: 100 }, input.timeoutMs);
+		}
+		return client.sendRequest("session.info", {}, input.timeoutMs);
+	}));
 
 	server.registerTool("daedalus_send_chat", {
 		title: "Send Daedalus chat",
@@ -146,13 +183,13 @@ export function registerAutomationTools(server: McpServer, config: AutomationCon
 		description: "Read a session timeline page through session.timeline.",
 		inputSchema: z.object({
 			sessionId: z.string().min(1),
-			beforeOffset: z.number().int().min(0).default(0),
+			beforeOffset: z.number().int().min(0).optional(),
 			limit: z.number().int().positive().max(500).optional()
 		})
 	}, async (input: { sessionId: string; beforeOffset?: number | undefined; limit?: number | undefined }): Promise<ToolResult> => runTool(async (): Promise<unknown> =>
 		getClient(config).sendRequest("session.timeline", {
 			sessionId: input.sessionId,
-			beforeOffset: input.beforeOffset ?? 0,
+			...(input.beforeOffset === undefined ? {} : { beforeOffset: input.beforeOffset }),
 			limit: input.limit
 		})
 	));

@@ -1,4 +1,4 @@
-import type { AiChatParams, ChatMessage, PromptId } from "../protocol/types.js";
+import type { AdditionalContextItem, AiChatParams, ChatMessage, PromptId } from "../protocol/types.js";
 import type { SkillId } from "../skills/registry.js";
 import type { ToolBudgetLevel } from "../tools/llm-tool-budget.js";
 
@@ -90,6 +90,7 @@ export type WorkflowRunState = {
 	planningContext?: string | undefined;
 	guidePromptSection?: string | undefined;
 	activePhaseRunId?: string | undefined;
+	capturedAttachments?: AdditionalContextItem[] | undefined;
 };
 
 export type WorkflowTodoSnapshot = {

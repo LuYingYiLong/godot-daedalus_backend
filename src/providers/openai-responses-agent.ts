@@ -13,7 +13,7 @@ import type {
 import type { AiChatParams, ChatMessage } from "../protocol/types.js";
 import type { McpHost } from "../mcp/mcp-host.js";
 import { ApprovalGateway } from "../tools/approval-gateway.js";
-import { dispatchToolCalls, ToolApprovalRequiredError, type OnToolEvent } from "../tools/tool-dispatcher.js";
+import { dispatchToolCalls, ToolApprovalRequiredError, type OnToolEvent, type ToolResultEnricher } from "../tools/tool-dispatcher.js";
 import { getToolDefinitions, getToolDefinitionsForNames } from "../tools/builtin-tool-definitions.js";
 import { MAX_TOTAL_TOOL_RESULT_CHARS, resolveToolBudget } from "../tools/llm-tool-budget.js";
 import type { ApprovedToolResult, ProviderAgentResult, ResponsesAgentContinuation } from "./agent-types.js";
@@ -256,7 +256,8 @@ async function runResponsesAgentLoop(
 	initialToolResultChars: number,
 	streamAssistant: boolean,
 	onEvent?: OnToolEvent,
-	abortSignal?: AbortSignal | undefined
+	abortSignal?: AbortSignal | undefined,
+	toolResultEnricher?: ToolResultEnricher | undefined
 ): Promise<ProviderAgentResult> {
 	let totalToolResultChars: number = initialToolResultChars;
 	const tools: Tool[] = convertToolDefinitions(chatTools);
@@ -294,7 +295,7 @@ async function runResponsesAgentLoop(
 		appendResponseOutputItems(inputItems, assistantMessage.outputItems);
 
 		try {
-			const toolResults = await dispatchToolCalls(mcpHost, toolCalls, step, gateway, onEvent);
+			const toolResults = await dispatchToolCalls(mcpHost, toolCalls, step, gateway, onEvent, toolResultEnricher);
 			const appendResult: AppendToolResultItemsResult = appendToolResultItems(inputItems, toolResults, totalToolResultChars);
 			totalToolResultChars += appendResult.addedChars;
 			if (appendResult.limitReached || totalToolResultChars >= MAX_TOTAL_TOOL_RESULT_CHARS) {
@@ -372,7 +373,8 @@ export async function runOpenAIResponsesAgent(
 	gateway: ApprovalGateway,
 	allowedToolNames?: readonly string[] | undefined,
 	onEvent?: OnToolEvent,
-	abortSignal?: AbortSignal | undefined
+	abortSignal?: AbortSignal | undefined,
+	toolResultEnricher?: ToolResultEnricher | undefined
 ): Promise<ProviderAgentResult> {
 	const tools = allowedToolNames !== undefined
 		? getToolDefinitionsForNames(allowedToolNames)
@@ -395,7 +397,8 @@ export async function runOpenAIResponsesAgent(
 		0,
 		false,
 		onEvent,
-		abortSignal
+		abortSignal,
+		toolResultEnricher
 	);
 }
 
@@ -408,7 +411,8 @@ export async function runOpenAIResponsesAgentStreaming(
 	gateway: ApprovalGateway,
 	allowedToolNames?: readonly string[] | undefined,
 	onEvent?: OnToolEvent,
-	abortSignal?: AbortSignal | undefined
+	abortSignal?: AbortSignal | undefined,
+	toolResultEnricher?: ToolResultEnricher | undefined
 ): Promise<ProviderAgentResult> {
 	const tools = allowedToolNames !== undefined
 		? getToolDefinitionsForNames(allowedToolNames)
@@ -431,7 +435,8 @@ export async function runOpenAIResponsesAgentStreaming(
 		0,
 		true,
 		onEvent,
-		abortSignal
+		abortSignal,
+		toolResultEnricher
 	);
 }
 
@@ -444,7 +449,8 @@ export async function continueOpenAIResponsesAgent(
 	gateway: ApprovalGateway,
 	allowedToolNames?: readonly string[] | undefined,
 	onEvent?: OnToolEvent,
-	abortSignal?: AbortSignal | undefined
+	abortSignal?: AbortSignal | undefined,
+	toolResultEnricher?: ToolResultEnricher | undefined
 ): Promise<ProviderAgentResult> {
 	const tools = allowedToolNames !== undefined
 		? getToolDefinitionsForNames(allowedToolNames)
@@ -489,7 +495,8 @@ export async function continueOpenAIResponsesAgent(
 		totalToolResultChars,
 		false,
 		onEvent,
-		abortSignal
+		abortSignal,
+		toolResultEnricher
 	);
 }
 
@@ -502,7 +509,8 @@ export async function continueOpenAIResponsesAgentStreaming(
 	gateway: ApprovalGateway,
 	allowedToolNames?: readonly string[] | undefined,
 	onEvent?: OnToolEvent,
-	abortSignal?: AbortSignal | undefined
+	abortSignal?: AbortSignal | undefined,
+	toolResultEnricher?: ToolResultEnricher | undefined
 ): Promise<ProviderAgentResult> {
 	const tools = allowedToolNames !== undefined
 		? getToolDefinitionsForNames(allowedToolNames)
@@ -546,6 +554,7 @@ export async function continueOpenAIResponsesAgentStreaming(
 		totalToolResultChars,
 		true,
 		onEvent,
-		abortSignal
+		abortSignal,
+		toolResultEnricher
 	);
 }

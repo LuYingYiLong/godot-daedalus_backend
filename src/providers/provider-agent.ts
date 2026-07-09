@@ -1,7 +1,7 @@
 import type { AiChatParams, ChatMessage } from "../protocol/types.js";
 import type { McpHost } from "../mcp/mcp-host.js";
 import type { ApprovalGateway } from "../tools/approval-gateway.js";
-import type { OnToolEvent } from "../tools/tool-dispatcher.js";
+import type { OnToolEvent, ToolResultEnricher } from "../tools/tool-dispatcher.js";
 import {
 	continueDeepSeekAgent,
 	continueDeepSeekAgentStreaming,
@@ -26,13 +26,14 @@ export async function runProviderAgent(
 	gateway: ApprovalGateway,
 	allowedToolNames?: readonly string[] | undefined,
 	onEvent?: OnToolEvent,
-	abortSignal?: AbortSignal | undefined
+	abortSignal?: AbortSignal | undefined,
+	toolResultEnricher?: ToolResultEnricher | undefined
 ): Promise<ProviderAgentResult> {
 	if (options.provider === "openai") {
-		return runOpenAIResponsesAgent(params, options, history, systemPrompt, mcpHost, gateway, allowedToolNames, onEvent, abortSignal);
+		return runOpenAIResponsesAgent(params, options, history, systemPrompt, mcpHost, gateway, allowedToolNames, onEvent, abortSignal, toolResultEnricher);
 	}
 
-	return runDeepSeekAgent(params, options, history, systemPrompt, mcpHost, gateway, allowedToolNames, onEvent, abortSignal);
+	return runDeepSeekAgent(params, options, history, systemPrompt, mcpHost, gateway, allowedToolNames, onEvent, abortSignal, toolResultEnricher);
 }
 
 export async function runProviderAgentStreaming(
@@ -44,13 +45,14 @@ export async function runProviderAgentStreaming(
 	gateway: ApprovalGateway,
 	allowedToolNames?: readonly string[] | undefined,
 	onEvent?: OnToolEvent,
-	abortSignal?: AbortSignal | undefined
+	abortSignal?: AbortSignal | undefined,
+	toolResultEnricher?: ToolResultEnricher | undefined
 ): Promise<ProviderAgentResult> {
 	if (options.provider === "openai") {
-		return runOpenAIResponsesAgentStreaming(params, options, history, systemPrompt, mcpHost, gateway, allowedToolNames, onEvent, abortSignal);
+		return runOpenAIResponsesAgentStreaming(params, options, history, systemPrompt, mcpHost, gateway, allowedToolNames, onEvent, abortSignal, toolResultEnricher);
 	}
 
-	return runDeepSeekAgentStreaming(params, options, history, systemPrompt, mcpHost, gateway, allowedToolNames, onEvent, abortSignal);
+	return runDeepSeekAgentStreaming(params, options, history, systemPrompt, mcpHost, gateway, allowedToolNames, onEvent, abortSignal, toolResultEnricher);
 }
 
 export async function continueProviderAgent(

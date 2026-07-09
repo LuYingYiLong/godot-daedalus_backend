@@ -122,6 +122,7 @@ import { isCancellationError, sendAgentCancelled, sendAiCancelled, beginRequestE
 import { estimateTextTokens, estimateMessagesTokens, computeHistoryBudget, appendChatTurnToSession, selectHistoryForModel, createSummaryMessage, loadSessionCompressorPrompt, filterLlmContextMessages } from "./token-budget.js";
 import { getSessionProjectPath, toChatMessage, clampSessionOpenMessageLimit, createPreviewValue, createTimelinePageResult, startFullSessionLoad, waitForFullSessionLoad } from "./session-preview.js";
 import { createProviderChatOptions } from "./provider-chat-options.js";
+import { createGodotRuntimeStatus } from "./godot-runtime-status.js";
 import { clipTextByChars, cloneAdditionalContextItems, getAdditionalContextDataRecord, getContextNumber, getContextString, createLineColumnRangeText, appendScriptSelectionPromptLines, appendFilesystemSelectionPromptLines, createAdditionalContextPromptSection } from "./additional-context.js";
 import { MAX_GUIDE_TEXT_CHARS, createGuideId, createPendingGuide, serializePendingGuide, findPendingGuideIndexById, findPendingGuideByClientId, readEventDataObject, hydratePendingGuides, persistGuideEvent, formatGuidePromptSection, consumePendingGuideSection } from "./pending-guides.js";
 import { DEFAULT_NEXT_STEP_HINT_COUNT, MAX_NEXT_STEP_HINT_COUNT, parseJsonObjectLoose, normalizeNextStepHints, createNextStepHintPrompt, createNextStepHints } from "./next-step-hints.js";
@@ -190,6 +191,7 @@ function createSessionInfoResult(session: ClientSession, mcpHost: McpHost, histo
 		mcpServers: mcpHost.getConnectedServerIds(session.activeWorkspace?.id),
 		customMcpServerStatus: mcpHost.getCustomServerStatusesForWorkspace(session.activeWorkspace?.id),
 		godotDiagnostics: mcpHost.getDiagnosticsBridge().getCachedStatus(),
+		godotRuntime: createGodotRuntimeStatus(session, mcpHost),
 		godotExecutablePath: session.activeWorkspace?.godotExecutablePath ?? session.godotExecutablePath ?? null,
 		godotProjectPath: getSessionProjectPath(session) || null,
 		activeWorkspace: session.activeWorkspace ? {
@@ -229,6 +231,7 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 
 		case "session.info":
 			await waitForFullSessionLoad(session);
+			await ensureProviderConfigured(session);
 			await loadHydratedPendingApprovalStates(session);
 			sendJson(socket, {
 				type: "response",
@@ -463,7 +466,9 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 
 			try {
 				const limit: number = clampSessionOpenMessageLimit(request.params.limit);
-				const timeline = await openSessionTimelinePage(sessionId, request.params.beforeOffset, limit);
+				const timeline = request.params.beforeOffset === undefined
+					? await openSessionRecentTimeline(sessionId, limit)
+					: await openSessionTimelinePage(sessionId, request.params.beforeOffset, limit);
 				sendJson(socket, {
 					type: "response",
 					id: request.id,

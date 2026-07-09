@@ -15,6 +15,8 @@ export type SaveImageAttachmentInput = {
 	width?: number | undefined;
 	height?: number | undefined;
 	title?: string | undefined;
+	source?: "editor" | "manual" | undefined;
+	summary?: string | undefined;
 };
 
 export type ImageAttachmentMetadata = {
@@ -24,6 +26,8 @@ export type ImageAttachmentMetadata = {
 	width?: number | undefined;
 	height?: number | undefined;
 	title: string;
+	source: "editor" | "manual";
+	summary: string;
 	createdAt: string;
 	fileName: string;
 };
@@ -96,8 +100,8 @@ function createImageAttachmentContext(metadata: ImageAttachmentMetadata, thumbna
 		title: metadata.title,
 		subtitle: `${metadata.mimeType} · ${formatByteSize(metadata.byteSize)} · ${dimensionText}`,
 		pinned: false,
-		source: "manual",
-		summary: "用户为本轮消息附加了一张剪贴板图片；图片内容保存在当前会话附件中。",
+		source: metadata.source,
+		summary: metadata.summary,
 		data
 	};
 }
@@ -123,6 +127,8 @@ export async function saveImageAttachment(input: SaveImageAttachmentInput): Prom
 		mimeType: input.mimeType,
 		byteSize: input.byteSize,
 		title: input.title?.trim() || `Clipboard image ${createdAt.replace("T", " ").slice(0, 19)}`,
+		source: input.source ?? "manual",
+		summary: input.summary?.trim() || "用户为本轮消息附加了一张剪贴板图片；图片内容保存在当前会话附件中。",
 		createdAt,
 		fileName: `${attachmentId}.png`
 	};

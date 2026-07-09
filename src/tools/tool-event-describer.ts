@@ -106,6 +106,14 @@ export function describeToolEvent(toolName: string, args: Record<string, unknown
 			});
 		}
 
+		if (toolName.includes("capture_scene_view")) {
+			const view: string = getStringArg(args, "view") ?? "auto";
+			return createDisplay("godot_editor", "Godot Editor", "read", "截取场景视图", `截取 ${view} 编辑器场景视口供视觉分析`, {
+				kind: "scene",
+				label: `scene view (${view})`
+			});
+		}
+
 		if (toolName.includes("apply_scene_patch")) {
 			const target: ToolEventTarget = scenePath === undefined ? {
 				kind: "scene",

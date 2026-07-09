@@ -1,12 +1,11 @@
 import WebSocket from "ws";
-import type { AiChatParams } from "../../protocol/types.js";
+import type { AdditionalContextItem, AiChatParams } from "../../protocol/types.js";
 import type { ProviderAgentResult } from "../../providers/agent-types.js";
 import type { ProviderChatOptions } from "../../providers/deepseek-client.js";
 import { McpHost } from "../../mcp/mcp-host.js";
 import { sendJson } from "../send-json.js";
-import { createWorkflowPhaseRunId, applyDeterministicVerificationGate, createWorkflowPhaseOutcome, findBlockingOutcomeBeforeSummarize } from "../../workflow/outcome.js";
+import { createWorkflowPhaseRunId, applyDeterministicVerificationGate, createWorkflowPhaseOutcome } from "../../workflow/outcome.js";
 import { appendPhaseOutput, createPhaseMessage, createPhaseParams, updateWorkflowPhaseStatus } from "../../workflow/runner.js";
-import { countWorkflowAutoRepairRounds, insertWorkflowAutoRepairPhases } from "../../workflow/repair.js";
 import type { WorkflowPhase, WorkflowPhaseOutput, WorkflowPlan, WorkflowRunState, WorkflowToolObservation } from "../../workflow/types.js";
 import type { ClientSession, PendingAiContinuation } from "../client-session.js";
 import { appendChatTurnToSession } from "../token-budget.js";
@@ -25,10 +24,28 @@ import {
 	shouldRequireWorkflowWriteTool
 } from "./tool-events.js";
 import { sendWorkflowEvent, sendWorkflowTodoSnapshot } from "./events.js";
-import { createWorkflowPhasePrompt, runWorkflowPhase } from "./phase-runner.js";
+import { createRuntimeWorkflowPhase, createWorkflowPhasePrompt, runWorkflowPhase } from "./phase-runner.js";
+import { scheduleWorkflowApproval, scheduleWorkflowPhaseOutcome, scheduleWorkflowPhaseStart } from "../../workflow/scheduler.js";
 import { logger } from "../../logger.js";
 
 const MAX_WORKFLOW_WRITE_GUARD_RETRY_ATTEMPTS: number = 2;
+
+function appendCapturedAttachments(state: WorkflowRunState, attachments: AdditionalContextItem[]): WorkflowRunState {
+	if (attachments.length === 0) {
+		return state;
+	}
+
+	const existing: AdditionalContextItem[] = state.capturedAttachments ?? [];
+	const ids: Set<string> = new Set(existing.map((attachment: AdditionalContextItem): string => attachment.id));
+	const next: AdditionalContextItem[] = [...existing];
+	for (const attachment of attachments) {
+		if (!ids.has(attachment.id)) {
+			next.push(attachment);
+			ids.add(attachment.id);
+		}
+	}
+	return { ...state, capturedAttachments: next };
+}
 
 export function createWorkflowPendingContinuation(
 	phaseParams: AiChatParams,
@@ -75,46 +92,33 @@ export async function continueWorkflowExecution(
 	const planningContext: string = state.planningContext ?? "";
 
 	for (let index: number = state.phaseIndex; index < plan.phases.length; index += 1) {
-		const phase: WorkflowPhase | undefined = plan.phases[index];
-		if (phase === undefined) {
+		const candidatePhase: WorkflowPhase | undefined = plan.phases[index];
+		if (candidatePhase === undefined) {
 			break;
 		}
-
-		const phaseRunId: string = createWorkflowPhaseRunId(phase.id);
-		if (phase.toolGroup === "summarize") {
-			const blockingOutcome: WorkflowPhaseOutput | null = findBlockingOutcomeBeforeSummarize(phaseOutputs, phase.id);
-			if (blockingOutcome !== null) {
-				const guardMessage: string = `总结阶段被阻止：阶段「${blockingOutcome.title}」仍处于 ${blockingOutcome.status}，不能交付完成总结。`;
-				const blockedOutcome: WorkflowPhaseOutput = {
-					phaseId: phase.id,
-					phaseRunId,
-					title: phase.title,
-					status: "blocked",
-					summary: guardMessage,
-					evidence: [],
-					failedChecks: blockingOutcome.failedChecks,
-					requiredFixes: blockingOutcome.requiredFixes,
-					modifiedArtifacts: [],
-					verifiedArtifacts: [],
-					toolObservations: [],
-					sourcePhaseId: blockingOutcome.phaseId,
-					blockedReason: guardMessage
-				};
-				phaseOutputs = appendPhaseOutput(phaseOutputs, phase, blockedOutcome);
-				plan = updateWorkflowPhaseStatus(plan, phase.id, "failed");
-				sendWorkflowEvent(socket, requestId, session, "workflow.phase.outcome", {
-					workflowId: plan.id,
-					phaseId: phase.id,
-					phaseRunId,
-					outcome: blockedOutcome
-				}, persistRequestId);
-				sendWorkflowTodoSnapshot(socket, requestId, session, plan, persistRequestId, phaseOutputs, phaseRunId);
-				throw new WorkflowExecutionError(guardMessage, plan, new Error(guardMessage), phaseOutputs);
-			}
+		const phaseRunId: string = createWorkflowPhaseRunId(candidatePhase.id);
+		const startCommand = scheduleWorkflowPhaseStart({ ...state, plan, phaseIndex: index, phaseOutputs }, phaseRunId);
+		if (startCommand.type === "finish") {
+			break;
+		}
+		if (startCommand.type === "blocked_before_start") {
+			state = startCommand.state;
+			plan = state.plan;
+			phaseOutputs = state.phaseOutputs;
+			sendWorkflowEvent(socket, requestId, session, "workflow.phase.outcome", {
+				workflowId: plan.id,
+				phaseId: startCommand.phase.id,
+				phaseRunId,
+				outcome: startCommand.outcome
+			}, persistRequestId);
+			sendWorkflowTodoSnapshot(socket, requestId, session, plan, persistRequestId, phaseOutputs, phaseRunId);
+			throw new WorkflowExecutionError(startCommand.outcome.summary, plan, new Error(startCommand.outcome.summary), phaseOutputs);
 		}
 
-		plan = updateWorkflowPhaseStatus(plan, phase.id, "running");
-		state = { ...state, plan, phaseIndex: index, phaseOutputs, activePhaseRunId: phaseRunId };
+		const phase: WorkflowPhase = startCommand.phase;
+		state = startCommand.state;
+		plan = state.plan;
+		phaseOutputs = state.phaseOutputs;
 		sendWorkflowEvent(socket, requestId, session, "workflow.phase.started", {
 			workflowId: plan.id,
 			phaseId: phase.id,
@@ -139,7 +143,8 @@ export async function continueWorkflowExecution(
 			carriedGuidePromptSection,
 			pendingGuidePromptSection
 		].filter((section: string): boolean => section.length > 0).join("\n\n");
-		const fullSystemPrompt: string = await createWorkflowPhasePrompt(phase, phaseParams, mcpHost, session, requestId, guidePromptSection);
+		const runtimePhase: WorkflowPhase = createRuntimeWorkflowPhase(phase, mcpHost);
+		const fullSystemPrompt: string = await createWorkflowPhasePrompt(runtimePhase, phaseParams, mcpHost, session, requestId, guidePromptSection);
 		let agentResult: ProviderAgentResult;
 		let phaseToolStats: WorkflowPhaseToolStats = createEmptyWorkflowPhaseToolStats();
 		let phaseToolObservations: WorkflowToolObservation[] = [];
@@ -168,7 +173,7 @@ export async function continueWorkflowExecution(
 					options,
 					state.history,
 					fullSystemPrompt,
-					phase,
+					runtimePhase,
 					mcpHost,
 					session,
 					requestId,
@@ -181,6 +186,7 @@ export async function continueWorkflowExecution(
 				agentResult = phaseRunResult.agentResult;
 				phaseToolStats = phaseRunResult.toolStats;
 				phaseToolObservations = phaseRunResult.toolObservations;
+				state = appendCapturedAttachments(state, phaseRunResult.capturedAttachments);
 
 				let writeGuardRetryAttempt: number = 0;
 				while (
@@ -223,6 +229,7 @@ export async function continueWorkflowExecution(
 					agentResult = phaseRunResult.agentResult;
 					phaseToolStats = phaseRunResult.toolStats;
 					phaseToolObservations = phaseRunResult.toolObservations;
+					state = appendCapturedAttachments(state, phaseRunResult.capturedAttachments);
 				}
 			}
 		} catch (error: unknown) {
@@ -231,10 +238,12 @@ export async function continueWorkflowExecution(
 		agentResultOverride = undefined;
 
 		if (agentResult.status === "approval_required") {
-			plan = updateWorkflowPhaseStatus(plan, phase.id, "paused");
 			const approvalOutcome: WorkflowPhaseOutput = createWorkflowPhaseOutcome(phase, phaseRunId, "", phaseToolObservations);
-			phaseOutputs = appendPhaseOutput(phaseOutputs, phase, approvalOutcome);
-			const pausedState: WorkflowRunState = { ...state, plan, phaseIndex: index, phaseOutputs, activePhaseRunId: phaseRunId };
+			const approvalCommand = scheduleWorkflowApproval({ ...state, plan, phaseIndex: index, phaseOutputs }, phase, approvalOutcome, phaseRunId);
+			state = approvalCommand.state;
+			plan = state.plan;
+			phaseOutputs = state.phaseOutputs;
+			const pausedState: WorkflowRunState = state;
 			const pendingContinuation: PendingAiContinuation = createWorkflowPendingContinuation(
 				phaseParams,
 				options,
@@ -250,7 +259,7 @@ export async function continueWorkflowExecution(
 				workflowId: plan.id,
 				phaseId: phase.id,
 				phaseRunId,
-				outcome: approvalOutcome
+				outcome: approvalCommand.outcome
 			}, persistRequestId);
 			sendWorkflowTodoSnapshot(socket, requestId, session, plan, persistRequestId, phaseOutputs, phaseRunId);
 			sendAgentPaused(socket, requestId, session, plan.id, agentResult, persistRequestId);
@@ -302,67 +311,43 @@ export async function continueWorkflowExecution(
 			createWorkflowPhaseOutcome(phase, phaseRunId, agentResult.text, phaseToolObservations),
 			phaseOutputs
 		);
-		if (phaseOutcome.status === "needs_fix") {
-			if (countWorkflowAutoRepairRounds(plan) >= MAX_WORKFLOW_AUTO_REPAIR_ROUNDS) {
-				const guardMessage: string = `验证阶段「${phase.title}」仍发现需要修复的问题，已达到自动修复次数上限。`;
-				const blockedOutcome: WorkflowPhaseOutput = {
-					...phaseOutcome,
-					status: "blocked",
-					summary: guardMessage,
-					blockedReason: guardMessage
-				};
-				phaseOutputs = appendPhaseOutput(phaseOutputs, phase, blockedOutcome);
-				plan = updateWorkflowPhaseStatus(plan, phase.id, "failed");
-				sendWorkflowEvent(socket, requestId, session, "workflow.phase.outcome", {
-					workflowId: plan.id,
-					phaseId: phase.id,
-					phaseRunId,
-					outcome: blockedOutcome
-				}, persistRequestId);
-				sendWorkflowTodoSnapshot(socket, requestId, session, plan, persistRequestId, phaseOutputs);
-				throw new WorkflowExecutionError(
-					guardMessage,
-					plan,
-					new Error(`${guardMessage}\n\n${phaseOutcome.requiredFixes.join("\n")}`),
-					phaseOutputs
-				);
-			}
-
-			phaseOutputs = appendPhaseOutput(phaseOutputs, phase, phaseOutcome);
-			plan = updateWorkflowPhaseStatus(plan, phase.id, "failed");
+		const outcomeCommand = scheduleWorkflowPhaseOutcome(state, phase, phaseOutcome, MAX_WORKFLOW_AUTO_REPAIR_ROUNDS);
+		state = outcomeCommand.state;
+		plan = state.plan;
+		phaseOutputs = state.phaseOutputs;
+		if (outcomeCommand.type === "repair") {
 			sendWorkflowEvent(socket, requestId, session, "workflow.phase.outcome", {
 				workflowId: plan.id,
 				phaseId: phase.id,
 				phaseRunId,
-				outcome: phaseOutcome
+				outcome: outcomeCommand.outcome
 			}, persistRequestId);
-			plan = insertWorkflowAutoRepairPhases(plan, index + 1, phase, phaseOutcome.summary, phaseOutcome.failedChecks);
-			state = { ...state, plan, phaseIndex: index + 1, phaseOutputs };
 			sendWorkflowTodoSnapshot(socket, requestId, session, plan, persistRequestId, phaseOutputs);
 			continue;
 		}
-
-		if (phaseOutcome.status === "blocked" || phaseOutcome.status === "failed") {
-			phaseOutputs = appendPhaseOutput(phaseOutputs, phase, phaseOutcome);
-			plan = updateWorkflowPhaseStatus(plan, phase.id, "failed");
+		if (outcomeCommand.type === "failed") {
 			sendWorkflowEvent(socket, requestId, session, "workflow.phase.outcome", {
 				workflowId: plan.id,
 				phaseId: phase.id,
 				phaseRunId,
-				outcome: phaseOutcome
+				outcome: outcomeCommand.outcome
 			}, persistRequestId);
 			sendWorkflowTodoSnapshot(socket, requestId, session, plan, persistRequestId, phaseOutputs);
-			throw new WorkflowExecutionError(phaseOutcome.summary, plan, new Error(phaseOutcome.summary), phaseOutputs);
+			throw new WorkflowExecutionError(
+				outcomeCommand.outcome.summary,
+				plan,
+				new Error(`${outcomeCommand.outcome.summary}\n\n${outcomeCommand.outcome.requiredFixes.join("\n")}`),
+				phaseOutputs
+			);
 		}
-
-		phaseOutputs = appendPhaseOutput(phaseOutputs, phase, phaseOutcome);
-		plan = updateWorkflowPhaseStatus(plan, phase.id, "done");
-		state = { ...state, plan, phaseIndex: index + 1, phaseOutputs };
+		if (outcomeCommand.type !== "complete_phase") {
+			throw new WorkflowExecutionError("Workflow scheduler returned an unexpected command", plan, new Error("workflow_scheduler_unexpected_command"), phaseOutputs);
+		}
 		sendWorkflowEvent(socket, requestId, session, "workflow.phase.outcome", {
 			workflowId: plan.id,
 			phaseId: phase.id,
 			phaseRunId,
-			outcome: phaseOutcome
+			outcome: outcomeCommand.outcome
 		}, persistRequestId);
 		sendWorkflowEvent(socket, requestId, session, "workflow.phase.done", {
 			workflowId: plan.id,
@@ -381,7 +366,10 @@ export async function continueWorkflowExecution(
 				persistRequestId,
 				userCreatedAt,
 				undefined,
-				state.originalParams.additionalContext
+				[
+					...(state.originalParams.additionalContext ?? []),
+					...(state.capturedAttachments ?? [])
+				]
 			);
 			sendWorkflowEvent(socket, requestId, session, "workflow.done", {
 				workflowId: plan.id,
