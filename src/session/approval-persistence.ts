@@ -5,6 +5,7 @@ import type { PendingAiContinuation } from "../server/client-session.js";
 import type { PendingApproval } from "../tools/approval-gateway.js";
 import type { WorkflowRunState } from "../workflow/types.js";
 import type { StoredApprovalEvent } from "./session-store.js";
+import { cloneAdditionalContextItems } from "../server/additional-context.js";
 
 export type PersistedProviderChatOptions = {
 	provider?: ProviderId | undefined;
@@ -216,7 +217,7 @@ function createPersistedPendingContinuation(continuation: PendingAiContinuation)
 	}
 
 	const persisted: PersistedPendingAiContinuation = {
-		params: continuation.params,
+		params: sanitizeAiChatParamsForPersistence(continuation.params),
 		options,
 		continuation: continuation.continuation,
 		userMessage: continuation.userMessage,
@@ -230,10 +231,22 @@ function createPersistedPendingContinuation(continuation: PendingAiContinuation)
 	}
 	const runState: WorkflowRunState | undefined = continuation.agentRunState ?? continuation.workflowState;
 	if (runState !== undefined) {
-		persisted.agentRunState = runState;
+		persisted.agentRunState = {
+			...runState,
+			originalParams: sanitizeAiChatParamsForPersistence(runState.originalParams)
+		};
 	}
 
 	return persisted;
+}
+
+function sanitizeAiChatParamsForPersistence(params: AiChatParams): AiChatParams {
+	const sanitized: AiChatParams = { ...params };
+	const additionalContext = cloneAdditionalContextItems(params.additionalContext);
+	if (additionalContext !== undefined) {
+		sanitized.additionalContext = additionalContext;
+	}
+	return sanitized;
 }
 
 function parseRequestedData(value: unknown): PersistedApprovalRequestedData | null {

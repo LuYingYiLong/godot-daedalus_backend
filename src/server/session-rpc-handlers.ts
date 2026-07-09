@@ -373,7 +373,7 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 					result: {
 						opened: true,
 						metadata: timeline.metadata,
-						...createTimelinePageResult(timeline, openMessageLimit),
+						...await createTimelinePageResult(timeline, openMessageLimit),
 						pendingGuides: session.pendingGuides.map(serializePendingGuide),
 						workspaceWarning: workspaceWarning ?? null
 					}
@@ -471,7 +471,7 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 					result: {
 						timeline: true,
 						sessionId,
-						...createTimelinePageResult(timeline, limit)
+						...await createTimelinePageResult(timeline, limit)
 					}
 				});
 			} catch (error: unknown) {

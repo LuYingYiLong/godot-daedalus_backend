@@ -20,7 +20,9 @@ export const providerIdSchema = z.enum(["deepseek", "moonshot", "openai"]);
 
 const imageContextDataSchema = z.object({
 	mimeType: z.enum(SUPPORTED_IMAGE_MIME_TYPES as [string, ...string[]]),
-	dataUrl: z.string().min(1).max(1_500_000),
+	dataUrl: z.string().min(1).max(1_500_000).optional(),
+	attachmentId: z.string().min(1).max(160).optional(),
+	thumbnailDataUrl: z.string().min(1).max(1_500_000).optional(),
 	byteSize: z.number().int().positive().max(MAX_IMAGE_BYTES),
 	width: z.number().int().positive().optional(),
 	height: z.number().int().positive().optional()
@@ -65,7 +67,16 @@ export const additionalContextItemSchema = z.object({
 		return;
 	}
 
-	if (!parsed.data.dataUrl.startsWith(`data:${parsed.data.mimeType};base64,`)) {
+	if (parsed.data.dataUrl === undefined && parsed.data.attachmentId === undefined) {
+		context.addIssue({
+			code: "custom",
+			path: ["data"],
+			message: "Image context data must contain dataUrl or attachmentId."
+		});
+		return;
+	}
+
+	if (parsed.data.dataUrl !== undefined && !parsed.data.dataUrl.startsWith(`data:${parsed.data.mimeType};base64,`)) {
 		context.addIssue({
 			code: "custom",
 			path: ["data", "dataUrl"],
@@ -542,6 +553,20 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		params: z.object({
 			sessionId: z.string().min(1),
 			batchId: z.string().min(1),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("attachment.image.save"),
+		params: z.object({
+			sessionId: z.string().min(1),
+			mimeType: z.enum(SUPPORTED_IMAGE_MIME_TYPES as [string, ...string[]]),
+			dataUrl: z.string().min(1).max(1_500_000),
+			byteSize: z.number().int().positive().max(MAX_IMAGE_BYTES),
+			width: z.number().int().positive().optional(),
+			height: z.number().int().positive().optional(),
+			title: z.string().min(1).max(200).optional(),
 		}),
 	}),
 	z.object({

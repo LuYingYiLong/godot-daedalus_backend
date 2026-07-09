@@ -67,6 +67,7 @@ import {
 	ProviderImageInputError
 } from "../providers/provider-image-content.js";
 import { preprocessImageAttachmentsForTextModel, type ImageRecognitionPreprocessResult } from "../providers/image-recognition.js";
+import { hydrateImageAttachmentContexts } from "../session/session-attachments.js";
 import { resolveProviderTaskModelOptions } from "../providers/task-model-routing.js";
 import { getProviderDefaultBaseUrl, getProviderDefaultModel, getProviderDisplayName } from "../providers/provider-registry.js";
 import { classifyProviderError, createProviderStatusEvent } from "../providers/provider-error.js";
@@ -299,11 +300,12 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 
 			try {
 				const options: ProviderChatOptions = createProviderChatOptions(session, apiKey);
+				const hydratedParams: AiChatParams = await hydrateImageAttachmentContexts(session.sessionId, params);
 				const imagePreprocess: ImageRecognitionPreprocessResult = await preprocessImageAttachmentsForTextModel(
 					socket,
 					request.id,
 					session,
-					params,
+					hydratedParams,
 					options,
 					abortController.signal
 				);

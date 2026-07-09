@@ -57,6 +57,10 @@ const handleFileEditRequest: RequestHandler = createLazyHandler(async (): Promis
 	return (await import("./handlers/file-edit-handlers.js")).handleFileEditRequest;
 });
 
+const handleAttachmentRequest: RequestHandler = createLazyHandler(async (): Promise<RequestHandler> => {
+	return (await import("./handlers/attachment-handlers.js")).handleAttachmentRequest;
+});
+
 const handlePlanRequest: RequestHandler = createLazyHandler(async (): Promise<RequestHandler> => {
 	return (await import("./handlers/plan-handlers.js")).handlePlanRequest;
 });
@@ -128,6 +132,7 @@ export const REQUEST_HANDLER_METHODS: readonly ClientRequest["method"][] = [
 	"fileChange.overwrite",
 	"fileChange.delete",
 	"fileEdit.batch.get",
+	"attachment.image.save",
 	"plan.get",
 	"plan.clarify",
 	"plan.revise",
@@ -196,6 +201,7 @@ export const REQUEST_HANDLERS: ReadonlyMap<ClientRequest["method"], RequestHandl
 	["fileChange.overwrite", handleFileChangeRequest],
 	["fileChange.delete", handleFileChangeRequest],
 	["fileEdit.batch.get", handleFileEditRequest],
+	["attachment.image.save", handleAttachmentRequest],
 	["plan.get", handlePlanRequest],
 	["plan.clarify", handlePlanRequest],
 	["plan.revise", handlePlanRequest],

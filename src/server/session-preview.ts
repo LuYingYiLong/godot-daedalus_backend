@@ -4,6 +4,8 @@ import {
 	type StoredMessage,
 	type StoredSessionTimelinePage
 } from "../session/session-store.js";
+import { readImageAttachmentDataUrl } from "../session/session-attachments.js";
+import type { TimelineBlock } from "../session/timeline-blocks.js";
 import type { ClientSession } from "./client-session.js";
 import { hydratePendingGuides } from "./pending-guides.js";
 import { logger } from "../logger.js";
@@ -111,14 +113,56 @@ export function createPreviewValue(value: unknown, depth: number = 0): unknown {
 	return preview;
 }
 
-export function createTimelinePageResult(page: StoredSessionTimelinePage, limit: number): Record<string, unknown> {
+async function hydrateTimelineImageThumbnails(sessionId: string, blocks: TimelineBlock[]): Promise<TimelineBlock[]> {
+	const hydratedBlocks: TimelineBlock[] = [];
+	for (const block of blocks) {
+		if (block.type !== "user" || block.additionalContext === undefined || block.additionalContext.length === 0) {
+			hydratedBlocks.push(block);
+			continue;
+		}
+
+		let changed: boolean = false;
+		const additionalContext: AdditionalContextItem[] = [];
+		for (const item of block.additionalContext) {
+			if (item.kind !== "image" || item.data === undefined || typeof item.data !== "object" || item.data === null || Array.isArray(item.data)) {
+				additionalContext.push(item);
+				continue;
+			}
+
+			const data: Record<string, unknown> = item.data as Record<string, unknown>;
+			if (typeof data.thumbnailDataUrl === "string" || typeof data.dataUrl === "string" || typeof data.attachmentId !== "string") {
+				additionalContext.push(item);
+				continue;
+			}
+
+			try {
+				additionalContext.push({
+					...item,
+					data: {
+						...data,
+						thumbnailDataUrl: await readImageAttachmentDataUrl(sessionId, data.attachmentId)
+					}
+				});
+				changed = true;
+			} catch {
+				additionalContext.push(item);
+			}
+		}
+
+		hydratedBlocks.push(changed ? { ...block, additionalContext } : block);
+	}
+
+	return hydratedBlocks;
+}
+
+export async function createTimelinePageResult(page: StoredSessionTimelinePage, limit: number): Promise<Record<string, unknown>> {
 	return {
 		blockCount: page.blockCount,
 		blockOffset: page.blockOffset,
 		eventCount: page.eventCount,
 		limit,
 		hasMoreBefore: page.hasMoreBefore,
-		timelineBlocks: page.timelineBlocks,
+		timelineBlocks: await hydrateTimelineImageThumbnails(page.metadata.id, page.timelineBlocks),
 		latestWorkflowSnapshot: page.latestWorkflowSnapshot === null ? null : createPreviewValue(page.latestWorkflowSnapshot),
 		latestAgentSnapshot: page.latestAgentSnapshot === null ? null : createPreviewValue(page.latestAgentSnapshot)
 	};

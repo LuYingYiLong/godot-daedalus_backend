@@ -14,7 +14,18 @@ export function cloneAdditionalContextItems(items: readonly AdditionalContextIte
 		return undefined;
 	}
 
-	return items.map((item: AdditionalContextItem): AdditionalContextItem => ({ ...item }));
+	return items.map((item: AdditionalContextItem): AdditionalContextItem => {
+		const clonedItem: AdditionalContextItem = { ...item };
+		if (item.kind === "image" && item.data !== undefined && typeof item.data === "object" && item.data !== null && !Array.isArray(item.data)) {
+			const data: Record<string, unknown> = { ...(item.data as Record<string, unknown>) };
+			if (typeof data.attachmentId === "string" && data.attachmentId.length > 0) {
+				delete data.dataUrl;
+				delete data.thumbnailDataUrl;
+			}
+			clonedItem.data = data;
+		}
+		return clonedItem;
+	});
 }
 
 export function getAdditionalContextDataRecord(item: AdditionalContextItem): Record<string, unknown> | undefined {

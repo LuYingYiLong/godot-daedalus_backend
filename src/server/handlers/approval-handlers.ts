@@ -23,6 +23,7 @@ import { getDefaultModelProfile, resolveModelProfile } from "../../tokens/model-
 import { type TokenCounter } from "../../tokens/token-counter.js";
 import { createTokenCounter } from "../../tokens/token-counter-factory.js";
 import { computeInputBudget, selectMessagesWithinBudget } from "../../session/session-compressor.js";
+import { hydrateImageAttachmentContexts } from "../../session/session-attachments.js";
 import { composeSkillPrompt, getSkill, isSkillId, listSkills } from "../../skills/registry.js";
 import type { SkillId } from "../../skills/registry.js";
 import {
@@ -374,9 +375,16 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 				pendingContinuation.requestId,
 				mcpHost
 			);
+			const continuationParams: AiChatParams = await hydrateImageAttachmentContexts(session.sessionId, pendingContinuation.params);
+			const continuationWorkflowState = pendingContinuation.workflowState !== undefined
+				? {
+					...pendingContinuation.workflowState,
+					originalParams: continuationParams
+				}
+				: undefined;
 			const agentResult: ProviderAgentResult = pendingContinuation.stream
 				? await continueProviderAgentStreaming(
-					pendingContinuation.params,
+					continuationParams,
 					pendingContinuation.options,
 					pendingContinuation.continuation,
 					{
@@ -390,7 +398,7 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 					abortController.signal
 				)
 				: await continueProviderAgent(
-					pendingContinuation.params,
+					continuationParams,
 					pendingContinuation.options,
 					pendingContinuation.continuation,
 					{
@@ -404,14 +412,14 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 					abortController.signal
 				);
 
-			if (pendingContinuation.workflowState !== undefined) {
+			if (continuationWorkflowState !== undefined) {
 				await continueWorkflowExecution(
 					socket,
 					request.id,
 					session,
 					mcpHost,
 					pendingContinuation.options,
-					pendingContinuation.workflowState,
+					continuationWorkflowState,
 					pendingContinuation.userCreatedAt,
 					agentResult,
 					pendingContinuation.requestId,
