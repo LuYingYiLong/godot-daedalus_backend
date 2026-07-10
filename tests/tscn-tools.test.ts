@@ -130,3 +130,29 @@ test("scene script reference validation accepts unique names, paths, and signal 
 	assert.equal(result.ok, true);
 	assert.deepEqual(result.errors, []);
 });
+
+test("scene script reference validation ignores GDScript strings and comments", (): void => {
+	const scene: string = [
+		"[gd_scene format=3]",
+		"",
+		"[node name=\"Main\" type=\"Control\"]",
+		"",
+		"[node name=\"TitleLabel\" type=\"Label\" parent=\".\"]",
+		"unique_name_in_owner = true",
+		""
+	].join("\n");
+	const result = validateSceneScriptReferences(scene, {
+		".": [
+			"extends Control",
+			"",
+			"func _ready() -> void:",
+			"\tvar format_text: String = \"%s %d %dx %MissingLabel $MissingPath\"",
+			"\t# %MissingComment",
+			"\t%TitleLabel.text = format_text",
+			"\tvar description: String = \"\"\"%MissingMultiline\"\"\""
+		].join("\n")
+	});
+
+	assert.equal(result.ok, true);
+	assert.deepEqual(result.missingUniqueNames, []);
+});

@@ -52,6 +52,15 @@ export function createAgentToolEventForwarder(
 			}, persistRequestId);
 			return;
 		}
+		if (event.type === "tool.progress") {
+			sendSessionEvent(socket, requestId, session, "agent.tool.progress", {
+				...event,
+				type: "agent.tool.progress",
+				runId,
+				stepRunId
+			}, persistRequestId);
+			return;
+		}
 		if (event.type === "tool.result") {
 			const { fileEditDraft, ...publicEvent } = event;
 			const fileEditBatch = persistFileEditBatch(
@@ -126,7 +135,7 @@ export function createEmptyWorkflowPhaseToolStats(): WorkflowPhaseToolStats {
 }
 
 export function updateWorkflowPhaseToolStats(stats: WorkflowPhaseToolStats, event: ToolEvent): void {
-	if (!event.type.startsWith("tool.")) {
+	if (event.type !== "tool.call" && event.type !== "tool.result" && event.type !== "tool.error" && event.type !== "tool.approval_required") {
 		return;
 	}
 

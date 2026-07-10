@@ -174,6 +174,43 @@ test("canonical timeline keeps plan execution as independent blocks with tools a
 	});
 });
 
+test("canonical timeline groups tool progress with its tool call", (): void => {
+	const stored: StoredSession = session(
+		[
+			{ role: "user", requestId: "request-scene-view", content: "查看场景", createdAt: "2026-07-09T00:06:00.000Z" },
+			{ role: "assistant", requestId: "request-scene-view", content: "", createdAt: "2026-07-09T00:06:03.000Z" }
+		],
+		[
+			event("event-call", "request-scene-view", "agent.tool.call", "2026-07-09T00:06:00.000Z", {
+				toolCallId: "scene-view-1",
+				toolName: "mcp_godot_editor_capture_scene_view"
+			}),
+			event("event-progress", "request-scene-view", "agent.tool.progress", "2026-07-09T00:06:01.000Z", {
+				toolCallId: "scene-view-1",
+				toolName: "mcp_godot_editor_capture_scene_view",
+				status: "message",
+				title: "保存场景视图",
+				details: "正在保存当前编辑器视口截图。",
+				code: "scene_view.capture.started"
+			}),
+			event("event-result", "request-scene-view", "agent.tool.result", "2026-07-09T00:06:02.000Z", {
+				toolCallId: "scene-view-1",
+				toolName: "mcp_godot_editor_capture_scene_view",
+				resultChars: 42,
+				truncated: false
+			})
+		]
+	);
+
+	const assistant = assistantBlock(buildCanonicalTimelineBlocks(stored).blocks[1]);
+	assert.equal(assistant.bodyParts.length, 1);
+	const toolPart = assistant.bodyParts[0];
+	assert.equal(toolPart?.type, "tool");
+	assert.equal(toolPart?.events.length, 3);
+	assert.equal(toolPart?.events[1]?.type, "tool.progress");
+	assert.equal(toolPart?.events[1]?.title, "保存场景视图");
+});
+
 test("canonical timeline restores failed transcript-only turn with tool, error and inline diff", (): void => {
 	const fileEditBatch = {
 		batchId: "edit-failed",

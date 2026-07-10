@@ -634,6 +634,72 @@ function collectRegexMatches(text: string, pattern: RegExp): string[] {
 	return [...new Set(values)];
 }
 
+function stripGdscriptStringsAndComments(scriptContent: string): string {
+	let result: string = "";
+	let index: number = 0;
+	let isInString: boolean = false;
+	let isTripleQuoted: boolean = false;
+
+	while (index < scriptContent.length) {
+		const character: string = scriptContent[index] ?? "";
+		const nextThreeCharacters: string = scriptContent.slice(index, index + 3);
+
+		if (isInString) {
+			if (isTripleQuoted && nextThreeCharacters === '\"\"\"') {
+				result += "   ";
+				index += 3;
+				isInString = false;
+				isTripleQuoted = false;
+				continue;
+			}
+			if (!isTripleQuoted && character === "\\") {
+				result += " ";
+				index += 1;
+				if (index < scriptContent.length) {
+					result += scriptContent[index] === "\n" ? "\n" : " ";
+					index += 1;
+				}
+				continue;
+			}
+			if (!isTripleQuoted && character === '\"') {
+				result += " ";
+				index += 1;
+				isInString = false;
+				continue;
+			}
+			result += character === "\n" ? "\n" : " ";
+			index += 1;
+			continue;
+		}
+
+		if (character === "#") {
+			while (index < scriptContent.length && scriptContent[index] !== "\n") {
+				result += " ";
+				index += 1;
+			}
+			continue;
+		}
+		if (nextThreeCharacters === '\"\"\"') {
+			result += "   ";
+			index += 3;
+			isInString = true;
+			isTripleQuoted = true;
+			continue;
+		}
+		if (character === '\"') {
+			result += " ";
+			index += 1;
+			isInString = true;
+			continue;
+		}
+
+		result += character;
+		index += 1;
+	}
+
+	return result;
+}
+
 function hasGdscriptFunction(scriptContent: string, method: string): boolean {
 	const escapedMethod: string = method.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 	return new RegExp(`(^|\\n)\\s*func\\s+${escapedMethod}\\s*\\(`).test(scriptContent);
@@ -655,13 +721,14 @@ export function validateSceneScriptReferences(
 	const missingSignalMethods: string[] = [];
 
 	for (const [nodePath, scriptContent] of Object.entries(scriptContentByNodePath)) {
-		for (const nodeName of collectRegexMatches(scriptContent, /%([A-Za-z_][A-Za-z0-9_]*)/g)) {
+		const referenceContent: string = stripGdscriptStringsAndComments(scriptContent);
+		for (const nodeName of collectRegexMatches(referenceContent, /%([A-Za-z_][A-Za-z0-9_]*)/g)) {
 			if (!uniqueNodeNames.has(nodeName)) {
 				missingUniqueNames.push(`${nodePath}: %${nodeName}`);
 			}
 		}
 
-		for (const referencedPath of collectRegexMatches(scriptContent, /\$([A-Za-z_][A-Za-z0-9_\/]*)/g)) {
+		for (const referencedPath of collectRegexMatches(referenceContent, /\$([A-Za-z_][A-Za-z0-9_\/]*)/g)) {
 			if (findNodeInTscn(data, referencedPath) === null) {
 				missingNodePaths.push(`${nodePath}: $${referencedPath}`);
 			}

@@ -1,4 +1,3 @@
-import type WebSocket from "ws";
 import type { AdditionalContextItem } from "../../protocol/types.js";
 import type { ProviderChatOptions } from "../../providers/deepseek-client.js";
 import { chatWithProvider } from "../../providers/deepseek-client.js";
@@ -9,7 +8,6 @@ import { saveImageAttachment } from "../../session/session-attachments.js";
 import type { IdempotentToolExecutionResult } from "../../tools/tool-idempotency.js";
 import type { ToolResultEnricher } from "../../tools/tool-dispatcher.js";
 import type { ClientSession } from "../client-session.js";
-import { sendSessionEvent } from "../session-events.js";
 
 const SCENE_VIEW_TOOL: string = "mcp_godot_editor_capture_scene_view";
 const MAX_OBSERVATION_CHARS: number = 2400;
@@ -78,8 +76,6 @@ export type SceneViewToolResultEnricher = {
 };
 
 export function createSceneViewToolResultEnricher(params: {
-	socket: WebSocket;
-	requestId: string;
 	session: ClientSession;
 	options: ProviderChatOptions;
 	phaseInstruction: string;
@@ -103,7 +99,7 @@ export function createSceneViewToolResultEnricher(params: {
 			throw new Error("scene_view_capture_invalid_image");
 		}
 
-		sendSessionEvent(params.socket, params.requestId, params.session, "ai.status", {
+		input.onProgress?.({
 			status: "message",
 			title: "保存场景视图",
 			details: "正在保存当前编辑器视口截图。",
@@ -122,7 +118,7 @@ export function createSceneViewToolResultEnricher(params: {
 			summary: "工作流在本轮按需截取的 Godot 编辑器场景视图。"
 		});
 		capturedAttachments.push(attachment);
-		sendSessionEvent(params.socket, params.requestId, params.session, "ai.status", {
+		input.onProgress?.({
 			status: "success",
 			title: "场景视图已保存",
 			details: "截图已作为当前会话附件保存。",
@@ -132,10 +128,16 @@ export function createSceneViewToolResultEnricher(params: {
 		try {
 			const imageModel = await resolveProviderTaskModelOptions("imageRecognition", params.options);
 			if (!await modelSupportsImageInput(imageModel.provider, imageModel.model)) {
+				input.onProgress?.({
+					status: "error",
+					title: "场景视图解释不可用",
+					details: "当前未配置可用的图片识别模型。",
+					code: "scene_view.analysis.unavailable"
+				});
 				return createUnavailableResult(attachment, capture, "当前未配置可用的图片识别模型。");
 			}
 
-			sendSessionEvent(params.socket, params.requestId, params.session, "ai.status", {
+			input.onProgress?.({
 				status: "message",
 				title: "解释场景视图",
 				details: `使用 ${getProviderDisplayName(imageModel.provider)} / ${imageModel.model} 分析截图。`,
@@ -157,7 +159,7 @@ export function createSceneViewToolResultEnricher(params: {
 				}],
 				options: { temperature: 0.1, maxTokens: MAX_OBSERVATION_CHARS, workflow: "single" }
 			}, imageModel.options, [], "你是严谨的 Godot 编辑器视觉观察助手。", params.abortSignal));
-			sendSessionEvent(params.socket, params.requestId, params.session, "ai.status", {
+			input.onProgress?.({
 				status: "success",
 				title: "场景视图解释完成",
 				details: clipText(observation).slice(0, 500),
@@ -186,7 +188,7 @@ export function createSceneViewToolResultEnricher(params: {
 				throw error;
 			}
 			const reason: string = error instanceof Error ? error.message : "图片识别失败";
-			sendSessionEvent(params.socket, params.requestId, params.session, "ai.status", {
+			input.onProgress?.({
 				status: "error",
 				title: "场景视图解释不可用",
 				details: reason,

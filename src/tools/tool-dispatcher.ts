@@ -13,16 +13,25 @@ export type ToolEvent =
 	| { type: "ai.thinking.delta"; text: string }
 	| { type: "ai.thinking.done" }
 	| ({ type: "tool.call"; step: number; toolCallId: string; toolName: string; args: Record<string, unknown> } & ToolEventDisplay)
+	| ({ type: "tool.progress"; step: number; toolCallId: string; toolName: string } & ToolProgressUpdate)
 	| ({ type: "tool.result"; step: number; toolCallId: string; toolName: string; resultChars: number; truncated: boolean; cached?: boolean; fileEditDraft?: FileEditBatchDraft | undefined } & ParsedToolResultSummary)
 	| { type: "tool.error"; step: number; toolCallId: string; toolName: string; message: string }
 	| ({ type: "tool.approval_required"; step: number; toolCallId: string; toolName: string; approvalId: string; reason: string; args: Record<string, unknown> } & ToolEventDisplay);
 
 export type OnToolEvent = (event: ToolEvent) => void;
 
+export type ToolProgressUpdate = {
+	status: "message" | "success" | "error";
+	title: string;
+	details: string;
+	code: string;
+};
+
 export type ToolResultEnricher = (input: {
 	toolName: string;
 	args: Record<string, unknown>;
 	result: IdempotentToolExecutionResult;
+	onProgress?: ((progress: ToolProgressUpdate) => void) | undefined;
 }) => Promise<IdempotentToolExecutionResult>;
 
 export class ToolApprovalRequiredError extends Error {
@@ -145,7 +154,22 @@ async function executeSingleToolCall(
 		const rawResult = await executeLlmToolWithIdempotency(mcpHost, functionName, argsParsed);
 		const result: IdempotentToolExecutionResult = enricher === undefined
 			? rawResult
-			: await enricher({ toolName: functionName, args: argsParsed, result: rawResult });
+			: await enricher({
+				toolName: functionName,
+				args: argsParsed,
+				result: rawResult,
+				onProgress: onEvent === undefined
+					? undefined
+					: (progress: ToolProgressUpdate): void => {
+						onEvent({
+							type: "tool.progress",
+							step,
+							toolCallId: toolCall.id,
+							toolName: functionName,
+							...progress
+						});
+					}
+			});
 		const parsedSummary: ParsedToolResultSummary = parseToolResultSummary(functionName, argsParsed, result.content);
 		logger.info("tool", "call_finished", {
 			toolCallId: toolCall.id,

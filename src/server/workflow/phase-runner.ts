@@ -50,8 +50,6 @@ export async function runWorkflowPhase(
 ): Promise<WorkflowPhaseRunResult> {
 	const runtimePhase: WorkflowPhase = createRuntimeWorkflowPhase(phase, mcpHost);
 	const sceneViewEnricher = createSceneViewToolResultEnricher({
-		socket,
-		requestId,
 		session,
 		options,
 		phaseInstruction: runtimePhase.instruction,

@@ -26,18 +26,19 @@ test("scene view enrich stores the image and hides base64 when vision is unavail
 		const metadata = await sessions.createSession("Scene view");
 		const session = createClientSession(undefined);
 		session.sessionId = metadata.id;
-		const socket = { send(): void { /* status events are not relevant to this assertion */ } } as never;
 		const sceneView = createSceneViewToolResultEnricher({
-			socket,
-			requestId: "request-scene-view",
 			session,
 			options: { provider: "deepseek", apiKey: "test-key", model: "deepseek-v4-flash" },
 			phaseInstruction: "检查场景布局"
 		});
 
+		const progressCodes: string[] = [];
 		const result = await sceneView.enricher({
 			toolName: "mcp_godot_editor_capture_scene_view",
 			args: {},
+			onProgress: (progress): void => {
+				progressCodes.push(progress.code);
+			},
 			result: {
 				content: JSON.stringify({
 					ok: true,
@@ -61,5 +62,10 @@ test("scene view enrich stores the image and hides base64 when vision is unavail
 		const payload = JSON.parse(result.content) as Record<string, unknown>;
 		assert.equal((payload.analysis as Record<string, unknown>).status, "unavailable");
 		assert.equal(sceneView.getCapturedAttachments()[0]?.source, "editor");
+		assert.deepEqual(progressCodes, [
+			"scene_view.capture.started",
+			"scene_view.capture.completed",
+			"scene_view.analysis.unavailable"
+		]);
 	});
 });
