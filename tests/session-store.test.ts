@@ -86,6 +86,34 @@ test("session store creates, opens, pages, rewinds, archives, restores, and dele
 	});
 });
 
+test("session store persists workspace metadata snapshot", async (): Promise<void> => {
+	await withTempAppData(async (store): Promise<void> => {
+		const metadata = await store.createSession("Workspace session", undefined, undefined, {
+			id: "workspace-a",
+			name: "Project A",
+			kind: "godot",
+			rootPath: "D:/GodotProjects/project-a",
+			godotExecutablePath: "D:/Godot/Godot.exe"
+		});
+
+		assert.equal(metadata.workspaceId, "workspace-a");
+		assert.equal(metadata.workspaceName, "Project A");
+		assert.equal(metadata.workspaceKind, "godot");
+		assert.equal(metadata.workspaceRoot, "D:/GodotProjects/project-a");
+		assert.equal(metadata.godotExecutablePath, "D:/Godot/Godot.exe");
+
+		await store.saveSession(metadata.id, [], {
+			workspaceId: undefined,
+			activeSkillId: undefined
+		});
+
+		const opened = await store.openSession(metadata.id);
+		assert.equal(opened.metadata.workspaceId, "workspace-a");
+		assert.equal(opened.metadata.workspaceRoot, "D:/GodotProjects/project-a");
+		assert.equal(opened.metadata.godotExecutablePath, "D:/Godot/Godot.exe");
+	});
+});
+
 test("session store rejects unsafe session ids", async (): Promise<void> => {
 	await withTempAppData(async (store): Promise<void> => {
 		await assert.rejects(() => store.openSession("../session-escape"), /Invalid session id/);

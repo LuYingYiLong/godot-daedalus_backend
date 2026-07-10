@@ -3,7 +3,7 @@ import { clientRequestSchema } from "../protocol/schema.js";
 import type { ClientRequest } from "../protocol/types.js";
 import type { McpHost } from "../mcp/mcp-host.js";
 import { getDefaultWorkspace } from "../workspace/registry.js";
-import { saveSession } from "../session/session-store.js";
+import { createWorkspaceMetadataSnapshot, saveSession } from "../session/session-store.js";
 import { createClientSession, type ClientSession } from "./client-session.js";
 import { dispatchRequest } from "./request-dispatcher.js";
 import { sendJson } from "./send-json.js";
@@ -109,7 +109,7 @@ async function saveSessionOnDisconnect(session: ClientSession): Promise<void> {
 	}
 
 	await saveSession(sessionId, session.messages, {
-		workspaceId: session.activeWorkspace?.id,
+		...createWorkspaceMetadataSnapshot(session.activeWorkspace),
 		activeSkillId: session.activeSkillId
 	});
 }

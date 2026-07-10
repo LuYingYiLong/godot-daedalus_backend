@@ -26,13 +26,13 @@ If Python or tokenizer files are unavailable, the backend can still run; token c
 Global install:
 
 ```powershell
-npm install -g godot-daedalus_backend
+npm install -g daedalus-backend
 ```
 
 Local project install:
 
 ```powershell
-npm install godot-daedalus_backend
+npm install daedalus-backend
 ```
 
 ## Run The WebSocket Backend

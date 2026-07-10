@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
-import { basename, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, dirname, resolve } from "node:path";
 import { getDefaultWorkspaceConfigPath } from "../app-paths.js";
 import type { WorkspaceConfig } from "./types.js";
 import { logger } from "../logger.js";
@@ -34,6 +34,56 @@ function loadConfiguredWorkspaces(): WorkspaceConfig[] {
 	return configuredWorkspaceCache;
 }
 
+function saveConfiguredWorkspaces(workspaces: WorkspaceConfig[]): void {
+	const configPath: string = getDefaultWorkspaceConfigPath();
+	mkdirSync(dirname(configPath), { recursive: true });
+	writeFileSync(configPath, `${JSON.stringify(workspaces, null, 2)}\n`, "utf8");
+	configuredWorkspaceCache = workspaces;
+}
+
+function sameWorkspace(left: WorkspaceConfig, right: WorkspaceConfig): boolean {
+	return left.id === right.id
+		&& left.name === right.name
+		&& left.kind === right.kind
+		&& left.rootPath === right.rootPath
+		&& left.godotExecutablePath === right.godotExecutablePath;
+}
+
+function persistRuntimeWorkspace(workspace: WorkspaceConfig): void {
+	try {
+		const currentWorkspaces: WorkspaceConfig[] = [...loadConfiguredWorkspaces()];
+		const existingIndex: number = currentWorkspaces.findIndex((item: WorkspaceConfig): boolean => item.id === workspace.id);
+		const existingWorkspace: WorkspaceConfig | undefined = existingIndex >= 0 ? currentWorkspaces[existingIndex] : undefined;
+		const persistedWorkspace: WorkspaceConfig = {
+			...existingWorkspace,
+			...workspace,
+			godotExecutablePath: workspace.godotExecutablePath ?? existingWorkspace?.godotExecutablePath
+		};
+
+		if (existingWorkspace !== undefined && sameWorkspace(existingWorkspace, persistedWorkspace)) {
+			return;
+		}
+
+		if (existingIndex >= 0) {
+			currentWorkspaces[existingIndex] = persistedWorkspace;
+		} else {
+			currentWorkspaces.push(persistedWorkspace);
+		}
+
+		saveConfiguredWorkspaces(currentWorkspaces);
+		logger.info("workspace", "runtime_persisted", {
+			workspaceId: persistedWorkspace.id,
+			rootPath: persistedWorkspace.rootPath
+		});
+	} catch (error: unknown) {
+		logger.warn("workspace", "runtime_persist_failed", {
+			workspaceId: workspace.id,
+			rootPath: workspace.rootPath,
+			error: error instanceof Error ? error.message : String(error)
+		});
+	}
+}
+
 export function createRuntimeWorkspace(rootPath: string, godotExecutablePath?: string | undefined): WorkspaceConfig {
 	const normalizedRootPath: string = resolve(rootPath);
 	const hash: string = createHash("sha1").update(normalizedRootPath.toLowerCase()).digest("hex").slice(0, 10);
@@ -56,6 +106,7 @@ export function upsertRuntimeWorkspace(workspace: WorkspaceConfig): WorkspaceCon
 		godotExecutablePath: workspace.godotExecutablePath ?? existing?.godotExecutablePath
 	};
 	runtimeWorkspaces.set(next.id, next);
+	persistRuntimeWorkspace(next);
 	return next;
 }
 
@@ -77,6 +128,7 @@ export function loadWorkspaces(): WorkspaceConfig[] {
 	const environmentWorkspace: WorkspaceConfig | undefined = getEnvironmentWorkspace();
 	if (environmentWorkspace && !byId.has(environmentWorkspace.id)) {
 		byId.set(environmentWorkspace.id, environmentWorkspace);
+		persistRuntimeWorkspace(environmentWorkspace);
 	}
 
 	for (const workspace of runtimeWorkspaces.values()) {

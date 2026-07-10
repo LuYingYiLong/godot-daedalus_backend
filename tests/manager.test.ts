@@ -228,7 +228,8 @@ test("frontend apply-wait retries locked plugin directory and then succeeds", as
 		await writePendingFrontendUpdate(root, stagedDir, "1.0.9");
 		let attempts: number = 0;
 		const result = await applyFrontendUpdateWait(root, {
-			timeoutMs: 100,
+			// Windows 上并行测试的日志落盘可能超过 100ms，避免重试断言受调度影响。
+			timeoutMs: 2_000,
 			intervalMs: 1,
 			applyUpdate: async (): Promise<{ applied: boolean; version: string | null }> => {
 				attempts += 1;
@@ -304,7 +305,7 @@ async function createFakeBackendPackage(root: string, version: string): Promise<
 	await writeFile(
 		join(packageDir, "package.json"),
 		JSON.stringify({
-			name: "godot-daedalus_backend",
+			name: "daedalus-backend",
 			version,
 			type: "module",
 			bin: {

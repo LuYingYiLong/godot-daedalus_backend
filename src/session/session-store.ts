@@ -2,6 +2,7 @@ import { access, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs
 import { join } from "node:path";
 import { getDefaultArchivedSessionsDir, getDefaultSessionsDir } from "../app-paths.js";
 import type { ChatMessage } from "../protocol/types.js";
+import type { WorkspaceConfig } from "../workspace/types.js";
 import { buildCanonicalTimelineBlocks, type TimelineBlock } from "./timeline-blocks.js";
 
 const SESSIONS_DIR: string = getDefaultSessionsDir();
@@ -15,6 +16,10 @@ export type SessionMetadata = {
 	id: string;
 	title: string;
 	workspaceId?: string | undefined;
+	workspaceName?: string | undefined;
+	workspaceKind?: "godot" | undefined;
+	workspaceRoot?: string | undefined;
+	godotExecutablePath?: string | undefined;
 	activeSkillId?: string | undefined;
 	provider?: string | undefined;
 	model?: string | undefined;
@@ -161,7 +166,45 @@ function agentEventsPath(sessionId: string): string {
 	return join(getSessionDir(sessionId), "agent-events.jsonl");
 }
 
-export async function createSession(title: string, workspaceId?: string, skillId?: string): Promise<SessionMetadata> {
+export function createWorkspaceMetadataSnapshot(workspace: WorkspaceConfig | undefined): Partial<SessionMetadata> {
+	if (workspace === undefined) {
+		return {};
+	}
+
+	const metadata: Partial<SessionMetadata> = {
+		workspaceId: workspace.id,
+		workspaceName: workspace.name,
+		workspaceKind: workspace.kind,
+		workspaceRoot: workspace.rootPath
+	};
+
+	if (workspace.godotExecutablePath !== undefined) {
+		metadata.godotExecutablePath = workspace.godotExecutablePath;
+	}
+
+	return metadata;
+}
+
+function mergeSessionMetadata(existing: SessionMetadata, metadata?: Partial<SessionMetadata>): SessionMetadata {
+	const updated: SessionMetadata = {
+		...existing,
+		updatedAt: new Date().toISOString()
+	};
+
+	if (metadata === undefined) {
+		return updated;
+	}
+
+	for (const [key, value] of Object.entries(metadata) as [keyof SessionMetadata, SessionMetadata[keyof SessionMetadata]][]) {
+		if (value !== undefined) {
+			updated[key] = value as never;
+		}
+	}
+
+	return updated;
+}
+
+export async function createSession(title: string, workspaceId?: string, skillId?: string, workspaceSnapshot?: WorkspaceConfig | undefined): Promise<SessionMetadata> {
 	const timestamp: string = new Date().toISOString();
 	const dateStr: string = timestamp.slice(0, 10).replace(/-/g, "");
 	const id: string = `session-${dateStr}-${Date.now().toString(36)}`;
@@ -170,6 +213,7 @@ export async function createSession(title: string, workspaceId?: string, skillId
 		id,
 		title,
 		workspaceId,
+		...createWorkspaceMetadataSnapshot(workspaceSnapshot),
 		activeSkillId: skillId,
 		createdAt: timestamp,
 		updatedAt: timestamp
@@ -322,11 +366,7 @@ export async function saveSession(sessionId: string, messages: ChatMessage[], me
 	const msgFile: string = messagesPath(sessionId);
 
 	const existing: StoredSession = await openSession(sessionId);
-	const updated: SessionMetadata = {
-		...existing.metadata,
-		...(metadata ?? {}),
-		updatedAt: new Date().toISOString()
-	};
+	const updated: SessionMetadata = mergeSessionMetadata(existing.metadata, metadata);
 	await writeFile(metaFile, JSON.stringify(updated, null, 2), "utf8");
 
 	const timestamp: string = new Date().toISOString();

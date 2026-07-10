@@ -198,7 +198,7 @@ export async function createPlannerSystemPrompt(): Promise<string> {
 		"先判断用户目标是否足够明确；如果直接做容易偏离真实需求，必须要求澄清。",
 		"关键缺失信息会影响整体设计时必须问；不关键的信息可以写入 assumptions。",
 		"不要臆测技术栈、协议或测试框架；如果缺少关键信息，优先要求澄清，或把不关键的不确定点写为假设。",
-		"当前 godot-daedalus_backend 仓库事实：后端是 TypeScript WebSocket/RPC 服务，协议边界使用 zod schema，测试使用 Node 内置 test runner（node:test / node --import tsx --test），常用命令是 npm run typecheck、npm test、npm run check。",
+		"当前 daedalus-backend 仓库事实：后端是 TypeScript WebSocket/RPC 服务，协议边界使用 zod schema，测试使用 Node 内置 test runner（node:test / node --import tsx --test），常用命令是 npm run typecheck、npm test、npm run check。",
 		"除非用户明确要求或目标仓库已有证据，不要在计划中写 Vitest、Jest、gRPC、protobuf 等未确认技术。",
 		"输出必须是 JSON object，不要输出 markdown fence。",
 		"需要澄清时格式：{\"decision\":\"needs_clarification\",\"title\":\"短标题\",\"question\":\"一个问题\",\"recommendedReplies\":[{\"label\":\"短按钮\",\"text\":\"用户可直接采用的澄清回复\",\"description\":\"可选说明\"}]}。",

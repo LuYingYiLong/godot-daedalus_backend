@@ -1,5 +1,5 @@
 export const DEFAULT_BACKEND_PORT: number = 38180;
-export const BACKEND_PACKAGE_NAME: string = "godot-daedalus_backend";
+export const BACKEND_PACKAGE_NAME: string = "daedalus-backend";
 export const BACKEND_BIN_NAME: string = "godot-daedalus-backend";
 export const FRONTEND_REPOSITORY: string = "LuYingYiLong/godot-daedalus";
 export const FRONTEND_ADDON_DIR_NAME: string = "godot_daedalus";

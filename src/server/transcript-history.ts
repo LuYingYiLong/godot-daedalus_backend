@@ -1,5 +1,5 @@
 import type { AdditionalContextItem, ChatMessage } from "../protocol/types.js";
-import { saveSession } from "../session/session-store.js";
+import { createWorkspaceMetadataSnapshot, saveSession } from "../session/session-store.js";
 import type { ClientSession } from "./client-session.js";
 import { cloneAdditionalContextItems } from "./additional-context.js";
 
@@ -59,7 +59,7 @@ export async function appendFailedChatTurnToSession(
 		assistantChatMessage
 	];
 	await saveSession(session.sessionId, session.messages, {
-		workspaceId: session.activeWorkspace?.id,
+		...createWorkspaceMetadataSnapshot(session.activeWorkspace),
 		activeSkillId: session.activeSkillId
 	});
 	return true;
@@ -105,7 +105,7 @@ export async function appendTranscriptOnlyChatTurnToSession(
 		}
 	];
 	await saveSession(session.sessionId, session.messages, {
-		workspaceId: session.activeWorkspace?.id,
+		...createWorkspaceMetadataSnapshot(session.activeWorkspace),
 		activeSkillId: session.activeSkillId
 	});
 	return true;

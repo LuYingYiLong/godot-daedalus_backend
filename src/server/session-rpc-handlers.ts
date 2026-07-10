@@ -45,6 +45,7 @@ import {
 	rewindSessionFromRequest,
 	readSummary, writeSummary,
 	appendSessionEvent, appendApprovalEvent, appendWorkflowEvent, appendAgentEvent, clearSessionEvents, readApprovalEvents,
+	createWorkspaceMetadataSnapshot,
 	openSessionRecentTimeline, openSessionTimelinePage,
 	type SessionMetadata,
 	type SessionSummary,
@@ -170,6 +171,21 @@ import { ensureProviderConfigured } from "./handlers/provider-handlers.js";
 import { getSessionSubscriberInfos, subscribeSocketToSession, unsubscribeSocketFromSession } from "./client-connections.js";
 import { logger } from "../logger.js";
 
+function restoreWorkspaceFromSessionMetadata(metadata: SessionMetadata): WorkspaceConfig | undefined {
+	if (metadata.workspaceId === undefined || metadata.workspaceRoot === undefined) {
+		return undefined;
+	}
+
+	const fallbackName: string = path.basename(metadata.workspaceRoot) || metadata.workspaceRoot;
+	return upsertRuntimeWorkspace({
+		id: metadata.workspaceId,
+		name: metadata.workspaceName ?? fallbackName,
+		kind: metadata.workspaceKind ?? "godot",
+		rootPath: metadata.workspaceRoot,
+		godotExecutablePath: metadata.godotExecutablePath
+	});
+}
+
 function createSessionInfoResult(session: ClientSession, mcpHost: McpHost, historyTokensStored: number | null = null): Record<string, unknown> {
 	return {
 		provider: session.activeProvider,
@@ -281,7 +297,8 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 			const metadata: SessionMetadata = await createSession(
 				request.params.title,
 				workspaceId,
-				skillId
+				skillId,
+				workspace
 			);
 			session.sessionId = metadata.id;
 			session.sessionTitle = metadata.title;
@@ -322,7 +339,8 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 				let workspaceWarning: string | undefined;
 
 				if (timeline.metadata.workspaceId) {
-					workspace = findWorkspace(timeline.metadata.workspaceId);
+					workspace = findWorkspace(timeline.metadata.workspaceId)
+						?? restoreWorkspaceFromSessionMetadata(timeline.metadata);
 
 					if (!workspace) {
 						workspaceWarning = `Session workspace not found: ${timeline.metadata.workspaceId}`;
@@ -564,7 +582,7 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 			}
 			await waitForSessionEventPersistence(session);
 			await saveSession(session.sessionId, session.messages, {
-				workspaceId: session.activeWorkspace?.id,
+				...createWorkspaceMetadataSnapshot(session.activeWorkspace),
 				activeSkillId: session.activeSkillId
 			});
 			sendJson(socket, {
