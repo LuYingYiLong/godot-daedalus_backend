@@ -1,5 +1,5 @@
 import WebSocket, { WebSocketServer } from "ws";
-import { clientRequestSchema } from "../protocol/schema.js";
+import { clientRequestEnvelopeSchema } from "../protocol/schema.js";
 import type { ClientRequest } from "../protocol/types.js";
 import type { McpHost } from "../mcp/mcp-host.js";
 import { getDefaultWorkspace } from "../workspace/registry.js";
@@ -16,7 +16,7 @@ import { waitForFullSessionLoad } from "./session-preview.js";
 import {
 	waitForSessionEventPersistence
 } from "./session-events.js";
-import { registerClientConnection, unregisterClientConnection } from "./client-connections.js";
+import { getClientConnection, getConnectionSession, hasOtherConnectionsForSession, registerClientConnection, unregisterClientConnection } from "./client-connections.js";
 import { withMcpRequestContext } from "../mcp/request-context.js";
 import { logger } from "../logger.js";
 
@@ -30,6 +30,19 @@ function sendProtocolError(socket: WebSocket, code: string, message: string, req
 			message
 		}
 	});
+}
+
+export function isUnsupportedProtocolEnvelope(value: unknown): value is { id?: unknown } {
+	if (value === null || typeof value !== "object" || Array.isArray(value)) {
+		return false;
+	}
+
+	const record: Record<string, unknown> = value as Record<string, unknown>;
+	if (record.type !== "request") {
+		return false;
+	}
+
+	return record.protocolVersion !== 2;
 }
 
 function parseClientRequest(socket: WebSocket, data: WebSocket.RawData, isBinary: boolean): ClientRequest | null {
@@ -46,8 +59,17 @@ function parseClientRequest(socket: WebSocket, data: WebSocket.RawData, isBinary
 		sendProtocolError(socket, "parse_error", error instanceof Error ? error.message : "Invalid message");
 		return null;
 	}
+	if (isUnsupportedProtocolEnvelope(parsedMessage)) {
+		sendProtocolError(
+			socket,
+			"protocol_version_unsupported",
+			"Daedalus backend requires protocolVersion: 2 on every request envelope.",
+			typeof parsedMessage.id === "string" ? parsedMessage.id : ""
+		);
+		return null;
+	}
 
-	const validationResult = clientRequestSchema.safeParse(parsedMessage);
+	const validationResult = clientRequestEnvelopeSchema.safeParse(parsedMessage);
 	if (!validationResult.success) {
 		logger.warn("rpc", "invalid_request", {
 			code: "invalid_request",
@@ -147,16 +169,17 @@ function handleSocketMessage(
 	session: ClientSession,
 	mcpHost: McpHost
 ): void {
+	const connectionSession: ClientSession = getConnectionSession(socket) ?? session;
 	const requestData: ClientRequest | null = parseClientRequest(socket, data, isBinary);
 	if (requestData === null) {
 		return;
 	}
-	if (!beginRequestExecution(socket, requestData, session)) {
+	if (!beginRequestExecution(socket, requestData, connectionSession)) {
 		logger.debug("rpc", "duplicate_request_ignored", {
 			requestId: requestData.id,
 			method: requestData.method,
-			sessionId: session.sessionId,
-			workspaceId: session.activeWorkspace?.id
+			sessionId: connectionSession.sessionId,
+			workspaceId: connectionSession.activeWorkspace?.id
 		});
 		return;
 	}
@@ -165,17 +188,17 @@ function handleSocketMessage(
 	logger.debug("rpc", "request_started", {
 		requestId: requestData.id,
 		method: requestData.method,
-		sessionId: session.sessionId,
-		workspaceId: session.activeWorkspace?.id,
-		editorInstanceId: session.editorInstanceId,
-		clientType: session.clientType
+		sessionId: connectionSession.sessionId,
+		workspaceId: connectionSession.activeWorkspace?.id,
+		editorInstanceId: getClientConnection(socket)?.editorInstanceId,
+		clientType: getClientConnection(socket)?.clientType
 	});
 	let failed: boolean = false;
 	withMcpRequestContext({
-		workspaceId: session.activeWorkspace?.id,
-		editorInstanceId: session.editorInstanceId
+		workspaceId: connectionSession.activeWorkspace?.id,
+		editorInstanceId: connectionSession.editorInstanceId
 	}, async (): Promise<void> => {
-		await dispatchRequest(socket, requestData, session, mcpHost);
+		await dispatchRequest(socket, requestData, connectionSession, mcpHost);
 	}).catch((error: unknown): void => {
 		failed = true;
 		sendUnhandledRequestError(socket, requestData, error);
@@ -183,27 +206,30 @@ function handleSocketMessage(
 		logger.info("rpc", "request_finished", {
 			requestId: requestData.id,
 			method: requestData.method,
-			sessionId: session.sessionId,
-			workspaceId: session.activeWorkspace?.id,
-			editorInstanceId: session.editorInstanceId,
-			clientType: session.clientType,
+			sessionId: connectionSession.sessionId,
+			workspaceId: connectionSession.activeWorkspace?.id,
+			editorInstanceId: getClientConnection(socket)?.editorInstanceId,
+			clientType: getClientConnection(socket)?.clientType,
 			durationMs: Date.now() - startedAtMs,
 			failed
 		});
-		finishRequestExecution(requestData, session);
+		finishRequestExecution(requestData, connectionSession);
 	});
 }
 
 function handleSocketClose(socket: WebSocket, session: ClientSession, mcpHost: McpHost, remoteAddress: string): void {
+	const connectionSession: ClientSession = getConnectionSession(socket) ?? session;
+	const hasOtherConnections: boolean = hasOtherConnectionsForSession(socket, connectionSession.sessionId);
 	detachEditorBridgeSocket(socket, mcpHost);
 	unregisterClientConnection(socket);
-	abortActiveRequests(session);
-	scheduleSessionSaveOnDisconnect(session);
+	if (!hasOtherConnections) {
+		abortActiveRequests(connectionSession);
+		scheduleSessionSaveOnDisconnect(connectionSession);
+	}
 	logger.info("websocket", "client_disconnected", {
 		remoteAddress,
-		sessionId: session.sessionId,
-		workspaceId: session.activeWorkspace?.id,
-		clientType: session.clientType
+		sessionId: connectionSession.sessionId,
+		workspaceId: connectionSession.activeWorkspace?.id
 	});
 }
 

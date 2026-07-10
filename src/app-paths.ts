@@ -1,6 +1,7 @@
 import { join } from "node:path";
 
 const APP_DIR_NAME: string = ".godot_daedalus";
+const DATA_V2_DIR_NAME: string = "v2";
 
 export function getAppDataDir(): string {
 	const windowsAppData: string | undefined = process.env.APPDATA;
@@ -24,13 +25,13 @@ export function getMcpServersConfigPath(): string {
 }
 
 export function getDefaultSessionsDir(): string {
-	return join(getAppDataDir(), "data", "sessions");
+	return join(getAppDataDir(), "data", DATA_V2_DIR_NAME, "sessions");
 }
 
 export function getDefaultArchivedSessionsDir(): string {
-	return join(getAppDataDir(), "data", "archived_sessions");
+	return join(getAppDataDir(), "data", DATA_V2_DIR_NAME, "archived_sessions");
 }
 
 export function getToolExecutionLedgerPath(): string {
-	return join(getAppDataDir(), "data", "tool-executions.jsonl");
+	return join(getAppDataDir(), "data", DATA_V2_DIR_NAME, "tool-executions.jsonl");
 }

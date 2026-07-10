@@ -6,6 +6,7 @@ import { executeLlmToolWithIdempotency } from "./tool-idempotency.js";
 import type { IdempotentToolExecutionResult } from "./tool-idempotency.js";
 import { parseToolResultSummary, type ParsedToolResultSummary } from "./tool-result-parser.js";
 import type { FileEditBatchDraft } from "./file-edit-snapshots.js";
+import type { ToolExecutionContext } from "./tool-catalog.js";
 import { logger } from "../logger.js";
 
 export type ToolEvent =
@@ -50,7 +51,8 @@ async function executeSingleToolCall(
 	step: number,
 	gateway: ApprovalGateway,
 	onEvent?: OnToolEvent,
-	enricher?: ToolResultEnricher | undefined
+	enricher?: ToolResultEnricher | undefined,
+	toolContext?: ToolExecutionContext | undefined
 ): Promise<ChatCompletionToolMessageParam> {
 	if (toolCall.type !== "function") {
 		return {
@@ -81,7 +83,8 @@ async function executeSingleToolCall(
 		};
 	}
 
-	const decision = await gateway.evaluate(functionName, argsParsed, toolCall.id);
+	const workspaceId: string | undefined = toolContext?.workspaceId ?? mcpHost.getActiveWorkspaceId();
+	const decision = await gateway.evaluate(functionName, argsParsed, toolCall.id, workspaceId);
 	logger.debug("tool", "policy_evaluated", {
 		toolCallId: toolCall.id,
 		toolName: functionName,
@@ -107,13 +110,13 @@ async function executeSingleToolCall(
 	}
 
 	if (decision.action === "request_approval") {
-		const pending = gateway.requestApproval(functionName, argsParsed, toolCall.id, decision.reason, mcpHost.getActiveWorkspaceId());
+		const pending = gateway.requestApproval(functionName, argsParsed, toolCall.id, decision.reason, workspaceId, toolContext?.editorInstanceId);
 		logger.info("tool", "approval_required", {
 			toolCallId: toolCall.id,
 			toolName: functionName,
 			step,
 			approvalId: pending.approvalId,
-			workspaceId: mcpHost.getActiveWorkspaceId(),
+			workspaceId,
 			reason: decision.reason,
 			args: argsParsed
 		});
@@ -125,7 +128,7 @@ async function executeSingleToolCall(
 			approvalId: pending.approvalId,
 			reason: decision.reason,
 			args: argsParsed,
-			...describeToolEvent(functionName, argsParsed)
+			...describeToolEvent(functionName, argsParsed, workspaceId)
 		});
 
 		throw new ToolApprovalRequiredError(pending);
@@ -138,7 +141,7 @@ async function executeSingleToolCall(
 			toolCallId: toolCall.id,
 			toolName: functionName,
 			args: argsParsed,
-			...describeToolEvent(functionName, argsParsed)
+			...describeToolEvent(functionName, argsParsed, workspaceId)
 		});
 	}
 
@@ -147,11 +150,11 @@ async function executeSingleToolCall(
 		toolCallId: toolCall.id,
 		toolName: functionName,
 		step,
-		workspaceId: mcpHost.getActiveWorkspaceId(),
+		workspaceId,
 		args: argsParsed
 	});
 	try {
-		const rawResult = await executeLlmToolWithIdempotency(mcpHost, functionName, argsParsed);
+		const rawResult = await executeLlmToolWithIdempotency(mcpHost, functionName, argsParsed, workspaceId, toolContext?.editorInstanceId);
 		const result: IdempotentToolExecutionResult = enricher === undefined
 			? rawResult
 			: await enricher({
@@ -175,7 +178,7 @@ async function executeSingleToolCall(
 			toolCallId: toolCall.id,
 			toolName: functionName,
 			step,
-			workspaceId: mcpHost.getActiveWorkspaceId(),
+			workspaceId,
 			durationMs: Date.now() - startedAtMs,
 			resultChars: result.rawContentLength,
 			truncated: result.truncated,
@@ -211,7 +214,7 @@ async function executeSingleToolCall(
 			toolCallId: toolCall.id,
 			toolName: functionName,
 			step,
-			workspaceId: mcpHost.getActiveWorkspaceId(),
+			workspaceId,
 			durationMs: Date.now() - startedAtMs
 		});
 
@@ -233,12 +236,13 @@ export async function dispatchToolCalls(
 	step: number,
 	gateway: ApprovalGateway,
 	onEvent?: OnToolEvent,
-	enricher?: ToolResultEnricher | undefined
+	enricher?: ToolResultEnricher | undefined,
+	toolContext?: ToolExecutionContext | undefined
 ): Promise<ChatCompletionToolMessageParam[]> {
 	const results: ChatCompletionToolMessageParam[] = [];
 
 	for (const toolCall of toolCalls) {
-		const result = await executeSingleToolCall(mcpHost, toolCall, step, gateway, onEvent, enricher);
+		const result = await executeSingleToolCall(mcpHost, toolCall, step, gateway, onEvent, enricher, toolContext);
 		results.push(result);
 	}
 

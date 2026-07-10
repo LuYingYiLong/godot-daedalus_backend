@@ -18,7 +18,7 @@ const TERMINAL_PRESET_RISKS: Record<string, ToolRisk> = {
 	"godot.validate_scene": "verify"
 };
 
-export function getToolPolicy(toolName: string): ToolPolicy | undefined {
+export function getToolPolicy(toolName: string, _workspaceId?: string | undefined): ToolPolicy | undefined {
 	if (isDynamicMcpToolName(toolName)) {
 		return { risk: "write" };
 	}
@@ -26,8 +26,8 @@ export function getToolPolicy(toolName: string): ToolPolicy | undefined {
 	return TOOL_POLICIES[toolName];
 }
 
-export function getEffectiveToolPolicy(toolName: string, args: Record<string, unknown>): ToolPolicy | undefined {
-	const policy: ToolPolicy | undefined = getToolPolicy(toolName);
+export function getEffectiveToolPolicy(toolName: string, args: Record<string, unknown>, workspaceId?: string | undefined): ToolPolicy | undefined {
+	const policy: ToolPolicy | undefined = getToolPolicy(toolName, workspaceId);
 	if (policy === undefined) {
 		return undefined;
 	}
@@ -61,9 +61,10 @@ export type ApprovalDecision =
 export function evaluateToolCall(
 	mode: ApprovalMode,
 	toolName: string,
-	args: Record<string, unknown>
+	args: Record<string, unknown>,
+	workspaceId?: string | undefined
 ): ApprovalDecision {
-	const policy: ToolPolicy | undefined = getEffectiveToolPolicy(toolName, args);
+	const policy: ToolPolicy | undefined = getEffectiveToolPolicy(toolName, args, workspaceId);
 
 	if (!policy) {
 		return { action: "deny", reason: `未知工具: ${toolName}` };

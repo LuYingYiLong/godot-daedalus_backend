@@ -205,21 +205,22 @@ function enqueueLedgerWrite(record: ToolExecutionRecord): Promise<void> {
 	return ledgerWriteQueue;
 }
 
-export function shouldDedupeLlmToolExecution(llmToolName: string): boolean {
-	const policy = getToolPolicy(llmToolName);
+export function shouldDedupeLlmToolExecution(llmToolName: string, workspaceId?: string | undefined): boolean {
+	const policy = getToolPolicy(llmToolName, workspaceId);
 	return policy?.risk === "write" || policy?.risk === "destructive";
 }
 
 export function getLlmToolExecutionIdentity(
 	llmToolName: string,
 	args: Record<string, unknown>,
-	scope: string = "workspace:none"
+	scope: string = "workspace:none",
+	workspaceId?: string | undefined
 ): ToolExecutionIdentity | undefined {
-	if (!shouldDedupeLlmToolExecution(llmToolName)) {
+	if (!shouldDedupeLlmToolExecution(llmToolName, workspaceId)) {
 		return undefined;
 	}
 
-	const mapping = resolveToolMapping(llmToolName);
+	const mapping = resolveToolMapping(llmToolName, workspaceId);
 	const argsHash: string = sha256(stableJson(args));
 	const fingerprintHash: string = sha256(`${scope}\n${mapping.serverId}\n${mapping.toolName}\n${argsHash}`);
 	return {
@@ -231,8 +232,8 @@ export function getLlmToolExecutionIdentity(
 	};
 }
 
-function getMcpExecutionScope(mcpHost: McpHost): string {
-	return mcpHost.getActiveWorkspaceId() ?? "workspace:none";
+function getMcpExecutionScope(mcpHost: McpHost, workspaceId?: string | undefined): string {
+	return workspaceId ?? mcpHost.getActiveWorkspaceId() ?? "workspace:none";
 }
 
 function addRefreshPath(paths: Set<string>, value: unknown): void {
@@ -281,14 +282,15 @@ export function collectGodotRefreshPaths(llmToolName: string, args: Record<strin
 function refreshEditorFilesystemAfterGodotMutation(
 	mcpHost: McpHost,
 	llmToolName: string,
-	args: Record<string, unknown>
+	args: Record<string, unknown>,
+	workspaceId?: string | undefined
 ): void {
 	if (!GODOT_PROJECT_MUTATION_TOOLS.has(llmToolName)) {
 		return;
 	}
 
 	const changedPaths: string[] = collectGodotRefreshPaths(llmToolName, args);
-	void mcpHost.getEditorBridge().refreshFilesystem(changedPaths).catch((error: unknown): void => {
+	void mcpHost.getEditorBridge().refreshFilesystem(changedPaths, workspaceId).catch((error: unknown): void => {
 		logger.warn("godot_editor", "filesystem_refresh_failed", {
 			llmToolName,
 			changedPaths,
@@ -302,9 +304,11 @@ async function executeMappedTool(
 	serverId: string,
 	toolName: string,
 	args: Record<string, unknown>,
-	fingerprint?: string | undefined
+	fingerprint?: string | undefined,
+	workspaceId?: string | undefined,
+	editorInstanceId?: string | undefined
 ): Promise<IdempotentToolExecutionResult> {
-	const result = await mcpHost.callTool(serverId, toolName, args) as ToolResultContent;
+	const result = await mcpHost.callTool(serverId, toolName, args, workspaceId, editorInstanceId) as ToolResultContent;
 	const textResult: string = extractTextContent(result);
 	const truncated: boolean = textResult.length > MAX_TOOL_RESULT_CHARS;
 	return {
@@ -319,18 +323,20 @@ async function executeMappedTool(
 export async function executeLlmToolWithIdempotency(
 	mcpHost: McpHost,
 	llmToolName: string,
-	args: Record<string, unknown>
+	args: Record<string, unknown>,
+	workspaceId?: string | undefined,
+	editorInstanceId?: string | undefined
 ): Promise<IdempotentToolExecutionResult> {
-	const identity: ToolExecutionIdentity | undefined = getLlmToolExecutionIdentity(llmToolName, args, getMcpExecutionScope(mcpHost));
+	const identity: ToolExecutionIdentity | undefined = getLlmToolExecutionIdentity(llmToolName, args, getMcpExecutionScope(mcpHost, workspaceId), workspaceId);
 	if (identity === undefined) {
-		const mapping = resolveToolMapping(llmToolName);
+		const mapping = resolveToolMapping(llmToolName, workspaceId);
 		const result: IdempotentToolExecutionResult = await captureFileEditBatchDraft(
 			mcpHost,
 			llmToolName,
 			args,
-			(): Promise<IdempotentToolExecutionResult> => executeMappedTool(mcpHost, mapping.serverId, mapping.toolName, args)
+			(): Promise<IdempotentToolExecutionResult> => executeMappedTool(mcpHost, mapping.serverId, mapping.toolName, args, undefined, workspaceId, editorInstanceId)
 		);
-		refreshEditorFilesystemAfterGodotMutation(mcpHost, llmToolName, args);
+		refreshEditorFilesystemAfterGodotMutation(mcpHost, llmToolName, args, workspaceId);
 		return result;
 	}
 
@@ -339,7 +345,7 @@ export async function executeLlmToolWithIdempotency(
 
 	const existingRecord: ToolExecutionRecord | undefined = completedToolExecutions.get(identity.fingerprint);
 	if (existingRecord !== undefined && !isRecordExpired(existingRecord)) {
-		refreshEditorFilesystemAfterGodotMutation(mcpHost, llmToolName, args);
+		refreshEditorFilesystemAfterGodotMutation(mcpHost, llmToolName, args, workspaceId);
 		return {
 			content: existingRecord.content,
 			rawContentLength: existingRecord.rawContentLength,
@@ -352,7 +358,7 @@ export async function executeLlmToolWithIdempotency(
 	const existingInFlight: Promise<IdempotentToolExecutionResult> | undefined = inFlightToolExecutions.get(identity.fingerprint);
 	if (existingInFlight !== undefined) {
 		const result: IdempotentToolExecutionResult = await existingInFlight;
-		refreshEditorFilesystemAfterGodotMutation(mcpHost, llmToolName, args);
+		refreshEditorFilesystemAfterGodotMutation(mcpHost, llmToolName, args, workspaceId);
 		return { ...result, reused: true };
 	}
 
@@ -366,10 +372,12 @@ export async function executeLlmToolWithIdempotency(
 				identity.serverId,
 				identity.toolName,
 				args,
-				identity.fingerprint
+				identity.fingerprint,
+				workspaceId,
+				editorInstanceId
 			)
 		);
-		refreshEditorFilesystemAfterGodotMutation(mcpHost, llmToolName, args);
+		refreshEditorFilesystemAfterGodotMutation(mcpHost, llmToolName, args, workspaceId);
 		const createdAt: string = new Date().toISOString();
 		const record: ToolExecutionRecord = {
 			fingerprint: identity.fingerprint,

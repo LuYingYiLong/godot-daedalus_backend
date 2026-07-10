@@ -7,7 +7,6 @@ import type { ChatCompletionUserMessageParam } from "openai/resources/chat/compl
 import { aiChatParamsSchema } from "../src/protocol/schema.js";
 import { createCurrentUserMessage, getImageAttachments, ProviderImageInputError } from "../src/providers/provider-image-content.js";
 import { preprocessImageAttachmentsForTextModel } from "../src/providers/image-recognition.js";
-import { createClientSession } from "../src/server/client-session.js";
 
 async function withTempAppData(run: () => Promise<void>): Promise<void> {
 	const previousAppData: string | undefined = process.env.APPDATA;
@@ -116,9 +115,6 @@ test("image attachment validation rejects invalid base64 and too many images", (
 
 test("image preprocessing keeps direct multimodal input when current model supports images", async (): Promise<void> => {
 	const result = await preprocessImageAttachmentsForTextModel(
-		{ send(): void { /* test socket */ } } as never,
-		"request-image",
-		createClientSession(undefined),
 		{
 			message: "描述这张图",
 			additionalContext: [VALID_IMAGE_CONTEXT]
@@ -138,9 +134,6 @@ test("image preprocessing requires recognition model when current model lacks im
 	await withTempAppData(async (): Promise<void> => {
 		await assert.rejects(
 			preprocessImageAttachmentsForTextModel(
-				{ send(): void { /* test socket */ } } as never,
-				"request-image-text-model",
-				createClientSession(undefined),
 				{
 					message: "描述这张图",
 					additionalContext: [VALID_IMAGE_CONTEXT]

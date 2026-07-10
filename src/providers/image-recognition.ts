@@ -1,11 +1,7 @@
-import type WebSocket from "ws";
 import type { AdditionalContextItem, AiChatParams } from "../protocol/types.js";
 import { chatWithProvider, resolveChatModel, type ProviderChatOptions } from "./deepseek-client.js";
 import { getImageAttachments, hasImageAttachments, modelSupportsImageInput, ProviderImageInputError } from "./provider-image-content.js";
 import { resolveProviderTaskModelOptions, type ResolvedProviderTaskModel } from "./task-model-routing.js";
-import { sendSessionEvent } from "../server/session-events.js";
-import type { ClientSession } from "../server/client-session.js";
-import { clipTextByChars } from "../server/additional-context.js";
 import { getProviderDisplayName } from "./provider-registry.js";
 import { logger } from "../logger.js";
 
@@ -20,6 +16,17 @@ export type ImageRecognitionPreprocessResult = {
 	} | undefined;
 	observation?: string | undefined;
 };
+
+export type ImageRecognitionProgress = {
+	status: "message" | "success" | "error";
+	title: string;
+	details: string;
+	code: string;
+};
+
+function clipTextByChars(value: string, maxChars: number): string {
+	return value.length <= maxChars ? value : value.slice(0, maxChars);
+}
 
 function removeImageContext(items: readonly AdditionalContextItem[] | undefined): AdditionalContextItem[] | undefined {
 	if (items === undefined) {
@@ -66,12 +73,10 @@ function createRecognitionPrompt(params: AiChatParams): AiChatParams {
 }
 
 export async function preprocessImageAttachmentsForTextModel(
-	socket: WebSocket,
-	requestId: string,
-	session: ClientSession,
 	params: AiChatParams,
 	currentOptions: ProviderChatOptions,
-	abortSignal?: AbortSignal | undefined
+	abortSignal?: AbortSignal | undefined,
+	onProgress?: ((progress: ImageRecognitionProgress) => void) | undefined
 ): Promise<ImageRecognitionPreprocessResult> {
 	if (!hasImageAttachments(params)) {
 		return { params, recognized: false };
@@ -98,7 +103,7 @@ export async function preprocessImageAttachmentsForTextModel(
 	}
 
 	const imageCount: number = getImageAttachments(params.additionalContext).length;
-	sendSessionEvent(socket, requestId, session, "ai.status", {
+	onProgress?.({
 		status: "message",
 		title: "识别图片",
 		details: `使用 ${getProviderDisplayName(imageModel.provider)} / ${imageModel.model} 识别 ${imageCount} 张图片。`,
@@ -109,15 +114,13 @@ export async function preprocessImageAttachmentsForTextModel(
 			await chatWithProvider(createRecognitionPrompt(params), imageModel.options, [], "你是图像内容识别助手，只输出图片观察结果。", abortSignal),
 			IMAGE_RECOGNITION_MAX_CHARS
 		);
-		sendSessionEvent(socket, requestId, session, "ai.status", {
+		onProgress?.({
 			status: "success",
 			title: "图片识别完成",
 			details: clipTextByChars(observation, 500),
 			code: "image.recognition.completed"
 		});
 		logger.info("ai", "image_recognition_completed", {
-			requestId,
-			sessionId: session.sessionId,
 			provider: imageModel.provider,
 			model: imageModel.model,
 			imageCount,
@@ -141,7 +144,7 @@ export async function preprocessImageAttachmentsForTextModel(
 			observation
 		};
 	} catch (error: unknown) {
-		sendSessionEvent(socket, requestId, session, "ai.status", {
+		onProgress?.({
 			status: "error",
 			title: "图片识别失败",
 			details: error instanceof Error ? error.message : "Image recognition failed",

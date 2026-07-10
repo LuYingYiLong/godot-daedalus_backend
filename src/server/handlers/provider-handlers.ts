@@ -4,40 +4,15 @@ import type { McpHost } from "../../mcp/mcp-host.js";
 import type { ClientSession } from "../client-session.js";
 import { sendJson } from "../send-json.js";
 import type { ProviderId } from "../../protocol/types.js";
-import { getDefaultModelProfile, resolveModelProfile } from "../../tokens/model-profiles.js";
+import { resolveModelProfile } from "../../tokens/model-profiles.js";
 import { getProviderDefaultModel } from "../../providers/provider-registry.js";
 import { clearProviderConfig, getProviderConfigStatus, loadProviderConfigWithSecret, saveProviderConfig, type ProviderConfigWithSecret } from "../../providers/provider-config-store.js";
 import { listProviderModels } from "../../providers/provider-models.js";
 import { normalizeConfiguredProviderBaseUrl } from "../../providers/provider-base-url.js";
+import { applyProviderConfigToRuntime, ensureProviderConfigured, resetProviderRuntime } from "../../application/provider-session-service.js";
 import { logger } from "../../logger.js";
 
-export function applyProviderConfigToSession(session: ClientSession, config: ProviderConfigWithSecret): void {
-	session.activeProvider = config.provider;
-	if (config.apiKey !== undefined) {
-		session.providerApiKey = config.apiKey;
-	}
-
-	session.providerModel = config.model;
-	session.providerBaseUrl = normalizeConfiguredProviderBaseUrl(config.baseUrl);
-
-	session.modelProfile = resolveModelProfile(config.provider, config.model ?? getProviderDefaultModel(config.provider));
-}
-
-export async function ensureProviderConfigured(session: ClientSession): Promise<string | undefined> {
-	if (session.providerApiKey !== undefined) {
-		return session.providerApiKey;
-	}
-
-	const config: ProviderConfigWithSecret | null = await loadProviderConfigWithSecret();
-	if (config === null || config.apiKey === undefined) {
-		return undefined;
-	}
-
-	applyProviderConfigToSession(session, config);
-	return session.providerApiKey;
-}
-
-
+export { ensureProviderConfigured } from "../../application/provider-session-service.js";
 
 export async function handleProviderRequest(socket: WebSocket, request: ClientRequest, session: ClientSession, mcpHost: McpHost): Promise<void> {
 	switch (request.method) {
@@ -72,7 +47,7 @@ export async function handleProviderRequest(socket: WebSocket, request: ClientRe
 		try {
 			const config: ProviderConfigWithSecret | null = await loadProviderConfigWithSecret();
 			if (config !== null && config.apiKey !== undefined) {
-				applyProviderConfigToSession(session, config);
+			applyProviderConfigToRuntime(session, config);
 			}
 
 			sendJson(socket, {
@@ -99,7 +74,7 @@ export async function handleProviderRequest(socket: WebSocket, request: ClientRe
 			await saveProviderConfig(request.params);
 			const config: ProviderConfigWithSecret | null = await loadProviderConfigWithSecret();
 			if (config !== null && config.apiKey !== undefined) {
-				applyProviderConfigToSession(session, config);
+				applyProviderConfigToRuntime(session, config);
 			}
 			logger.info("provider", "config_saved", {
 				provider: request.params.provider,
@@ -138,11 +113,7 @@ export async function handleProviderRequest(socket: WebSocket, request: ClientRe
 			const clearedActiveProvider: boolean = providerToClear === undefined || providerToClear === session.activeProvider;
 			const status = await clearProviderConfig(providerToClear);
 			if (clearedActiveProvider) {
-				session.activeProvider = status.activeProvider;
-				session.providerApiKey = undefined;
-				session.providerModel = undefined;
-				session.providerBaseUrl = undefined;
-				session.modelProfile = getDefaultModelProfile(status.activeProvider);
+				resetProviderRuntime(session, status.activeProvider);
 			}
 			logger.info("provider", "config_cleared", {
 				provider: providerToClear ?? "all",

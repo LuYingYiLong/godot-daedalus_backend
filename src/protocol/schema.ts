@@ -178,13 +178,14 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		id: z.string(),
 		method: z.literal("client.hello"),
 		params: z.object({
+			protocolVersion: z.literal(2),
 			clientType: z.enum(["godot_plugin", "studio", "cli", "smoke"]).optional(),
 			clientName: z.string().min(1).max(120).optional(),
 			workspaceRoot: z.string().min(1).optional(),
 			workspaceId: z.string().min(1).optional(),
 			editorInstanceId: z.string().min(1).max(160).optional(),
 			capabilities: z.record(z.string().min(1), z.boolean()).optional(),
-		}).optional(),
+		}),
 	}),
 	z.object({
 		type: z.literal("request"),
@@ -689,6 +690,14 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		params: z.object({}).optional(),
 	})
 ]);
+
+// WebSocket 边界使用该 envelope；内部 handler 继续接收不含传输字段的 ClientRequest。
+export const clientRequestEnvelopeSchema = z.intersection(
+	z.object({
+		protocolVersion: z.literal(2)
+	}),
+	clientRequestSchema
+);
 
 export const serverResponseSchema = z.discriminatedUnion("ok", [
 	z.object({

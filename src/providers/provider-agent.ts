@@ -16,6 +16,7 @@ import {
 } from "./openai-responses-agent.js";
 import type { AgentContinuation, ApprovedToolResult, ProviderAgentResult, ResponsesAgentContinuation } from "./agent-types.js";
 import type { ProviderChatOptions } from "./deepseek-client.js";
+import type { ToolExecutionContext } from "../tools/tool-catalog.js";
 
 export async function runProviderAgent(
 	params: AiChatParams,
@@ -27,13 +28,14 @@ export async function runProviderAgent(
 	allowedToolNames?: readonly string[] | undefined,
 	onEvent?: OnToolEvent,
 	abortSignal?: AbortSignal | undefined,
-	toolResultEnricher?: ToolResultEnricher | undefined
+	toolResultEnricher?: ToolResultEnricher | undefined,
+	toolContext?: ToolExecutionContext | undefined
 ): Promise<ProviderAgentResult> {
 	if (options.provider === "openai") {
-		return runOpenAIResponsesAgent(params, options, history, systemPrompt, mcpHost, gateway, allowedToolNames, onEvent, abortSignal, toolResultEnricher);
+		return runOpenAIResponsesAgent(params, options, history, systemPrompt, mcpHost, gateway, allowedToolNames, onEvent, abortSignal, toolResultEnricher, toolContext);
 	}
 
-	return runDeepSeekAgent(params, options, history, systemPrompt, mcpHost, gateway, allowedToolNames, onEvent, abortSignal, toolResultEnricher);
+	return runDeepSeekAgent(params, options, history, systemPrompt, mcpHost, gateway, allowedToolNames, onEvent, abortSignal, toolResultEnricher, toolContext);
 }
 
 export async function runProviderAgentStreaming(
@@ -46,13 +48,14 @@ export async function runProviderAgentStreaming(
 	allowedToolNames?: readonly string[] | undefined,
 	onEvent?: OnToolEvent,
 	abortSignal?: AbortSignal | undefined,
-	toolResultEnricher?: ToolResultEnricher | undefined
+	toolResultEnricher?: ToolResultEnricher | undefined,
+	toolContext?: ToolExecutionContext | undefined
 ): Promise<ProviderAgentResult> {
 	if (options.provider === "openai") {
-		return runOpenAIResponsesAgentStreaming(params, options, history, systemPrompt, mcpHost, gateway, allowedToolNames, onEvent, abortSignal, toolResultEnricher);
+		return runOpenAIResponsesAgentStreaming(params, options, history, systemPrompt, mcpHost, gateway, allowedToolNames, onEvent, abortSignal, toolResultEnricher, toolContext);
 	}
 
-	return runDeepSeekAgentStreaming(params, options, history, systemPrompt, mcpHost, gateway, allowedToolNames, onEvent, abortSignal, toolResultEnricher);
+	return runDeepSeekAgentStreaming(params, options, history, systemPrompt, mcpHost, gateway, allowedToolNames, onEvent, abortSignal, toolResultEnricher, toolContext);
 }
 
 export async function continueProviderAgent(
@@ -64,13 +67,14 @@ export async function continueProviderAgent(
 	gateway: ApprovalGateway,
 	allowedToolNames?: readonly string[] | undefined,
 	onEvent?: OnToolEvent,
-	abortSignal?: AbortSignal | undefined
+	abortSignal?: AbortSignal | undefined,
+	toolContext?: ToolExecutionContext | undefined
 ): Promise<ProviderAgentResult> {
 	if (continuation.kind === "responses") {
-		return continueOpenAIResponsesAgent(params, options, continuation as ResponsesAgentContinuation, approvedToolResult, mcpHost, gateway, allowedToolNames, onEvent, abortSignal);
+		return continueOpenAIResponsesAgent(params, options, continuation as ResponsesAgentContinuation, approvedToolResult, mcpHost, gateway, allowedToolNames, onEvent, abortSignal, undefined, toolContext);
 	}
 
-	return continueDeepSeekAgent(params, options, continuation, approvedToolResult, mcpHost, gateway, allowedToolNames, onEvent, abortSignal);
+	return continueDeepSeekAgent(params, options, continuation, approvedToolResult, mcpHost, gateway, allowedToolNames, onEvent, abortSignal, undefined, toolContext);
 }
 
 export async function continueProviderAgentStreaming(
@@ -82,11 +86,12 @@ export async function continueProviderAgentStreaming(
 	gateway: ApprovalGateway,
 	allowedToolNames?: readonly string[] | undefined,
 	onEvent?: OnToolEvent,
-	abortSignal?: AbortSignal | undefined
+	abortSignal?: AbortSignal | undefined,
+	toolContext?: ToolExecutionContext | undefined
 ): Promise<ProviderAgentResult> {
 	if (continuation.kind === "responses") {
-		return continueOpenAIResponsesAgentStreaming(params, options, continuation as ResponsesAgentContinuation, approvedToolResult, mcpHost, gateway, allowedToolNames, onEvent, abortSignal);
+		return continueOpenAIResponsesAgentStreaming(params, options, continuation as ResponsesAgentContinuation, approvedToolResult, mcpHost, gateway, allowedToolNames, onEvent, abortSignal, undefined, toolContext);
 	}
 
-	return continueDeepSeekAgentStreaming(params, options, continuation, approvedToolResult, mcpHost, gateway, allowedToolNames, onEvent, abortSignal);
+	return continueDeepSeekAgentStreaming(params, options, continuation, approvedToolResult, mcpHost, gateway, allowedToolNames, onEvent, abortSignal, undefined, toolContext);
 }

@@ -3,6 +3,7 @@ import type { AutomationConfig } from "./config.js";
 import { redactAutomationResult } from "./security.js";
 
 type RpcRequest = {
+	protocolVersion: 2;
 	type: "request";
 	id: string;
 	method: string;
@@ -113,6 +114,7 @@ export class AutomationRpcClient {
 				this.helloSent = true;
 				try {
 					await this.sendConnectedRequest("client.hello", {
+						protocolVersion: 2,
 						clientType: "smoke",
 						clientName: this.config.clientName,
 						capabilities: {
@@ -171,7 +173,7 @@ export class AutomationRpcClient {
 
 	private async sendConnectedRequest(method: string, params?: unknown, timeoutMs: number = this.config.requestTimeoutMs): Promise<unknown> {
 		const id = createRequestId(method.replaceAll(".", "_"));
-		const request: RpcRequest = { type: "request", id, method, params };
+		const request: RpcRequest = { protocolVersion: 2, type: "request", id, method, params };
 		return new Promise<unknown>((resolve, reject): void => {
 			const timer = setTimeout((): void => {
 				this.pending.delete(id);
@@ -192,7 +194,7 @@ export class AutomationRpcClient {
 	async sendRequestNoWait(method: string, params?: unknown): Promise<string> {
 		await this.ensureConnected();
 		const id = createRequestId(method.replaceAll(".", "_"));
-		const request: RpcRequest = { type: "request", id, method, params };
+		const request: RpcRequest = { protocolVersion: 2, type: "request", id, method, params };
 		await new Promise<void>((resolve, reject): void => {
 			this.socket?.send(JSON.stringify(request), (error?: Error | null): void => {
 				if (error != null) {

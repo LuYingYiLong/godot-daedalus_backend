@@ -374,7 +374,9 @@ async function runPlanAgentDecision(
 		gateway,
 		allowedToolNames,
 		onEvent,
-		abortSignal
+		abortSignal,
+		undefined,
+		{ workspaceId: runtime.session.activeWorkspace?.id, editorInstanceId: runtime.session.editorInstanceId }
 	);
 	if (agentResult.status === "approval_required") {
 		throw new Error(`Plan runner requested approval for ${agentResult.toolName}, which is not allowed.`);

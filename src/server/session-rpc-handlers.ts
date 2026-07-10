@@ -167,8 +167,8 @@ import { sendWorkflowEvent, mapWorkflowEventToAgentEvent, convertWorkflowSnapsho
 import { runWorkflowPhase, createWorkflowPhasePrompt } from "./workflow/phase-runner.js";
 import { createWorkflowPendingContinuation, continueWorkflowExecution } from "./workflow/continuation.js";
 import { startWorkflowExecution } from "./workflow/executor.js";
-import { ensureProviderConfigured } from "./handlers/provider-handlers.js";
-import { getSessionSubscriberInfos, subscribeSocketToSession, unsubscribeSocketFromSession } from "./client-connections.js";
+import { ensureProviderConfigured } from "../application/provider-session-service.js";
+import { bindConnectionToSessionRuntime, getSessionRuntime, getSessionSubscriberInfos, subscribeSocketToSession, unsubscribeSocketFromSession } from "./client-connections.js";
 import { logger } from "../logger.js";
 
 function restoreWorkspaceFromSessionMetadata(metadata: SessionMetadata): WorkspaceConfig | undefined {
@@ -320,6 +320,7 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 			if (skillId) {
 				session.activeSkillId = skillId;
 			}
+			session = bindConnectionToSessionRuntime(socket, metadata.id, session);
 			subscribeSocketToSession(socket, metadata.id);
 
 			sendJson(socket, {
@@ -335,6 +336,11 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 			try {
 				const openMessageLimit: number = clampSessionOpenMessageLimit(request.params.limit);
 				const timeline = await openSessionRecentTimeline(request.params.sessionId, openMessageLimit);
+				const existingRuntime: ClientSession | undefined = getSessionRuntime(request.params.sessionId);
+				const reusingRuntime: boolean = existingRuntime !== undefined;
+				if (existingRuntime !== undefined) {
+					session = bindConnectionToSessionRuntime(socket, request.params.sessionId, existingRuntime);
+				}
 				let workspace: WorkspaceConfig | undefined;
 				let workspaceWarning: string | undefined;
 
@@ -362,29 +368,32 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 					}
 				}
 
-				session.sessionId = timeline.metadata.id;
-				session.sessionTitle = timeline.metadata.title;
-				session.messages = timeline.messages.map(toChatMessage);
-				const storedForGuides: Awaited<ReturnType<typeof openSession>> = await openSession(request.params.sessionId);
-				session.pendingGuides = hydratePendingGuides(storedForGuides.events);
-				startFullSessionLoad(session, timeline.metadata.id);
+				if (!reusingRuntime) {
+					session.sessionId = timeline.metadata.id;
+					session.sessionTitle = timeline.metadata.title;
+					session.messages = timeline.messages.map(toChatMessage);
+					const storedForGuides: Awaited<ReturnType<typeof openSession>> = await openSession(request.params.sessionId);
+					session.pendingGuides = hydratePendingGuides(storedForGuides.events);
+					startFullSessionLoad(session, timeline.metadata.id);
 
-				const summary = await readSummary(request.params.sessionId);
-				session.summaryMessage = summary !== null ? createSummaryMessage(summary) : undefined;
-				session.summaryCoveredMessageCount = summary?.messageCount;
+					const summary = await readSummary(request.params.sessionId);
+					session.summaryMessage = summary !== null ? createSummaryMessage(summary) : undefined;
+					session.summaryCoveredMessageCount = summary?.messageCount;
 
-				if (workspace) {
-					session.activeWorkspace = workspace;
-					session.godotProjectPath = workspace.rootPath;
+					if (workspace) {
+						session.activeWorkspace = workspace;
+						session.godotProjectPath = workspace.rootPath;
 
-					if (workspace.godotExecutablePath) {
-						session.godotExecutablePath = workspace.godotExecutablePath;
+						if (workspace.godotExecutablePath) {
+							session.godotExecutablePath = workspace.godotExecutablePath;
+						}
 					}
-				}
 
-				session.activeSkillId = timeline.metadata.activeSkillId && isSkillId(timeline.metadata.activeSkillId)
-					? timeline.metadata.activeSkillId
-					: undefined;
+					session.activeSkillId = timeline.metadata.activeSkillId && isSkillId(timeline.metadata.activeSkillId)
+						? timeline.metadata.activeSkillId
+						: undefined;
+					session = bindConnectionToSessionRuntime(socket, timeline.metadata.id, session);
+				}
 				subscribeSocketToSession(socket, timeline.metadata.id);
 
 				sendJson(socket, {

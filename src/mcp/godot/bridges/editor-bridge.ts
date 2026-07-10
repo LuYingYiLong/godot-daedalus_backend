@@ -164,8 +164,8 @@ export class GodotEditorBridge {
 		return typeof scenePath === "string" && scenePath.trim().length > 0 ? scenePath : undefined;
 	}
 
-	supportsTool(toolName: string): boolean {
-		const connection: EditorConnection | null = this.selectConnection(undefined, undefined, false);
+	supportsTool(toolName: string, workspaceId?: string | undefined, editorInstanceId?: string | undefined): boolean {
+		const connection: EditorConnection | null = this.selectConnection(workspaceId, editorInstanceId, false);
 		if (connection === null || !this.isConnectionOnline(connection)) {
 			return false;
 		}
@@ -181,8 +181,8 @@ export class GodotEditorBridge {
 			&& (capabilities as Record<string, unknown>).sceneViewCapture === true;
 	}
 
-	async refreshFilesystem(changedPaths: string[]): Promise<unknown[] | null> {
-		const connections: EditorConnection[] = this.selectRefreshConnections();
+	async refreshFilesystem(changedPaths: string[], workspaceId?: string | undefined): Promise<unknown[] | null> {
+		const connections: EditorConnection[] = this.selectRefreshConnections(workspaceId);
 		if (connections.length === 0) {
 			return null;
 		}
@@ -334,13 +334,19 @@ export class GodotEditorBridge {
 		};
 	}
 
-	async callTool(name: string, args: JsonObject): Promise<ToolTextResult> {
+	async callTool(
+		name: string,
+		args: JsonObject,
+		workspaceId?: string | undefined,
+		editorInstanceId?: string | undefined
+	): Promise<ToolTextResult> {
 		if (name === "get_context") {
-			return jsonTextResult(this.createContextSnapshot());
+			const connection: EditorConnection | null = this.selectConnection(workspaceId, editorInstanceId, false);
+			return jsonTextResult(this.createContextSnapshot(connection, workspaceId));
 		}
 
 		if (name === "get_selected_nodes") {
-			const connection: EditorConnection | null = this.selectConnection(undefined, undefined, false);
+			const connection: EditorConnection | null = this.selectConnection(workspaceId, editorInstanceId, false);
 			if (connection === null || !this.isConnectionOnline(connection)) {
 				return createEditorUnavailableResult();
 			}
@@ -348,7 +354,7 @@ export class GodotEditorBridge {
 			return jsonTextResult({
 				ok: true,
 				selectedNodes: connection.context.selectedNodes ?? [],
-				context: this.createContextSnapshot(connection)
+				context: this.createContextSnapshot(connection, workspaceId)
 			});
 		}
 
@@ -356,14 +362,17 @@ export class GodotEditorBridge {
 			throw new Error(`Unknown godot_editor tool: ${name}`);
 		}
 
-		const result: unknown = await this.requestEditorTool(name, args);
+		const result: unknown = await this.requestEditorTool(name, args, workspaceId, editorInstanceId);
 		return jsonTextResult({
 			ok: true,
 			result
 		});
 	}
 
-	private createContextSnapshot(connection: EditorConnection | null = this.selectConnection(undefined, undefined, false)): JsonObject {
+	private createContextSnapshot(
+		connection: EditorConnection | null = this.selectConnection(undefined, undefined, false),
+		workspaceId?: string | undefined
+	): JsonObject {
 		const ageMs: number | null = connection !== null && connection.updatedAtMs > 0 ? Date.now() - connection.updatedAtMs : null;
 		const online: boolean = connection !== null && this.isConnectionOnline(connection);
 		return {
@@ -372,7 +381,7 @@ export class GodotEditorBridge {
 			updatedAt: connection !== null && connection.updatedAtMs > 0 ? new Date(connection.updatedAtMs).toISOString() : null,
 			ageMs,
 			context: online && connection !== null ? connection.context : {},
-			instances: this.listInstances(getCurrentMcpWorkspaceId()),
+			instances: this.listInstances(workspaceId ?? getCurrentMcpWorkspaceId()),
 			error: online ? null : "editor_unavailable"
 		};
 	}
@@ -419,10 +428,15 @@ export class GodotEditorBridge {
 		return candidates.sort((a: EditorConnection, b: EditorConnection): number => b.updatedAtMs - a.updatedAtMs)[0] ?? null;
 	}
 
-	private requestEditorTool(toolName: string, args: JsonObject): Promise<unknown> {
+	private requestEditorTool(
+		toolName: string,
+		args: JsonObject,
+		workspaceId?: string | undefined,
+		editorInstanceId?: string | undefined
+	): Promise<unknown> {
 		let connection: EditorConnection | null;
 		try {
-			connection = this.selectConnection(undefined, undefined, true);
+			connection = this.selectConnection(workspaceId, editorInstanceId, true);
 		} catch (error: unknown) {
 			return Promise.reject(error instanceof Error ? error : new Error("editor_target_required"));
 		}
@@ -434,8 +448,8 @@ export class GodotEditorBridge {
 		return this.requestEditorToolForConnection(connection, toolName, args);
 	}
 
-	private selectRefreshConnections(): EditorConnection[] {
-		const resolvedWorkspaceId: string | undefined = getCurrentMcpWorkspaceId();
+	private selectRefreshConnections(workspaceId?: string | undefined): EditorConnection[] {
+		const resolvedWorkspaceId: string | undefined = workspaceId ?? getCurrentMcpWorkspaceId();
 		return Array.from(this.connectionsByInstanceId.values())
 			.filter((connection: EditorConnection): boolean => this.isConnectionOnline(connection))
 			.filter((connection: EditorConnection): boolean => resolvedWorkspaceId === undefined || connection.workspaceId === resolvedWorkspaceId);

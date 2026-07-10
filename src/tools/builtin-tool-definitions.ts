@@ -2,7 +2,7 @@ import type { ChatCompletionTool } from "openai/resources/chat/completions";
 import { CUSTOM_MCP_TOOLS_SENTINEL } from "./tool-sentinels.js";
 import { getDynamicMcpToolDefinitions, isDynamicMcpToolName } from "./dynamic-mcp-tools.js";
 
-const TOOL_DEFINITIONS: ChatCompletionTool[] = [
+export const BUILTIN_TOOL_DEFINITIONS: ChatCompletionTool[] = [
 	{
 		type: "function",
 		function: {
@@ -1117,14 +1117,14 @@ const TOOL_DEFINITIONS: ChatCompletionTool[] = [
 	}
 ];
 
-export function getToolDefinitions(): ChatCompletionTool[] {
-	return [...TOOL_DEFINITIONS, ...getDynamicMcpToolDefinitions()];
+export function getToolDefinitions(workspaceId?: string | undefined): ChatCompletionTool[] {
+	return [...BUILTIN_TOOL_DEFINITIONS, ...getDynamicMcpToolDefinitions(workspaceId)];
 }
 
-export function getToolDefinitionsForNames(toolNames: readonly string[]): ChatCompletionTool[] {
+export function getToolDefinitionsForNames(toolNames: readonly string[], workspaceId?: string | undefined): ChatCompletionTool[] {
 	const allowedNames: Set<string> = new Set(toolNames);
 	const includeDynamicTools: boolean = allowedNames.has(CUSTOM_MCP_TOOLS_SENTINEL);
-	return getToolDefinitions().filter((tool: ChatCompletionTool): boolean => {
+	return getToolDefinitions(workspaceId).filter((tool: ChatCompletionTool): boolean => {
 		if (tool.type !== "function" || !("function" in tool)) {
 			return false;
 		}

@@ -3,7 +3,7 @@ import type { AiChatParams, ClientRequest } from "../../protocol/types.js";
 import type { McpHost } from "../../mcp/mcp-host.js";
 import type { ClientSession } from "../client-session.js";
 import { sendJson } from "../send-json.js";
-import { ensureProviderConfigured } from "./provider-handlers.js";
+import { ensureProviderConfigured } from "../../application/provider-session-service.js";
 import { createProviderChatOptions } from "../provider-chat-options.js";
 import { getProviderDisplayName } from "../../providers/provider-registry.js";
 import { resolveProviderTaskModelOptions } from "../../providers/task-model-routing.js";

@@ -21,20 +21,26 @@ export type DynamicMcpToolMetadata = DynamicMcpToolSource & {
 	llmToolName: string;
 };
 
+type DynamicToolSet = {
+	definitions: ChatCompletionTool[];
+	mapping: Map<string, ToolMapping>;
+	metadata: Map<string, DynamicMcpToolMetadata>;
+};
+
 const dynamicToolDefinitions: ChatCompletionTool[] = [];
 const dynamicToolMap: Map<string, ToolMapping> = new Map();
 const dynamicToolMetadata: Map<string, DynamicMcpToolMetadata> = new Map();
-const workspaceDynamicTools: Map<string, {
-	definitions: ChatCompletionTool[];
-	mapping: Map<string, ToolMapping>;
-	metadata: Map<string, DynamicMcpToolMetadata>;
-}> = new Map();
+const workspaceDynamicTools: Map<string, DynamicToolSet> = new Map();
 
-function buildDynamicToolSet(sources: readonly DynamicMcpToolSource[]): {
-	definitions: ChatCompletionTool[];
-	mapping: Map<string, ToolMapping>;
-	metadata: Map<string, DynamicMcpToolMetadata>;
-} {
+function createEmptyDynamicToolSet(): DynamicToolSet {
+	return {
+		definitions: [],
+		mapping: new Map(),
+		metadata: new Map()
+	};
+}
+
+function buildDynamicToolSet(sources: readonly DynamicMcpToolSource[]): DynamicToolSet {
 	const definitions: ChatCompletionTool[] = [];
 	const mapping: Map<string, ToolMapping> = new Map();
 	const metadata: Map<string, DynamicMcpToolMetadata> = new Map();
@@ -66,18 +72,9 @@ function buildDynamicToolSet(sources: readonly DynamicMcpToolSource[]): {
 	return { definitions, mapping, metadata };
 }
 
-function getActiveDynamicToolSet(): {
-	definitions: ChatCompletionTool[];
-	mapping: Map<string, ToolMapping>;
-	metadata: Map<string, DynamicMcpToolMetadata>;
-} {
-	const workspaceId: string | undefined = getCurrentMcpWorkspaceId();
+function getDynamicToolSet(workspaceId?: string | undefined): DynamicToolSet {
 	if (workspaceId !== undefined) {
-		return workspaceDynamicTools.get(workspaceId) ?? {
-			definitions: [],
-			mapping: new Map(),
-			metadata: new Map()
-		};
+		return workspaceDynamicTools.get(workspaceId) ?? createEmptyDynamicToolSet();
 	}
 
 	return {
@@ -85,6 +82,11 @@ function getActiveDynamicToolSet(): {
 		mapping: dynamicToolMap,
 		metadata: dynamicToolMetadata
 	};
+}
+
+// 旧调用方仍可从请求上下文解析 workspace；新的执行链必须显式传入 workspaceId。
+function getLegacyDynamicToolSet(): DynamicToolSet {
+	return getDynamicToolSet(getCurrentMcpWorkspaceId());
 }
 
 function slugifyToolPart(value: string, maxLength: number): string {
@@ -172,12 +174,13 @@ export function clearDynamicMcpToolsForWorkspace(workspaceId: string): void {
 	workspaceDynamicTools.delete(workspaceId);
 }
 
-export function getDynamicMcpToolNames(): string[] {
-	return Array.from(getActiveDynamicToolSet().mapping.keys());
+export function getDynamicMcpToolNames(workspaceId?: string | undefined): string[] {
+	return Array.from((workspaceId === undefined ? getLegacyDynamicToolSet() : getDynamicToolSet(workspaceId)).mapping.keys());
 }
 
-export function getPlanSafeDynamicMcpToolNames(): string[] {
-	return Array.from(getActiveDynamicToolSet().metadata.entries())
+export function getPlanSafeDynamicMcpToolNames(workspaceId?: string | undefined): string[] {
+	const toolSet: DynamicToolSet = workspaceId === undefined ? getLegacyDynamicToolSet() : getDynamicToolSet(workspaceId);
+	return Array.from(toolSet.metadata.entries())
 		.filter(([_toolName, metadata]: [string, DynamicMcpToolMetadata]): boolean => metadata.planAccess === "read")
 		.map(([toolName]: [string, DynamicMcpToolMetadata]): string => toolName);
 }
@@ -186,18 +189,21 @@ export function isDynamicMcpToolName(toolName: string): boolean {
 	return toolName.startsWith(CUSTOM_MCP_TOOL_PREFIX);
 }
 
-export function getDynamicMcpToolMetadata(toolName: string): DynamicMcpToolMetadata | undefined {
-	return getActiveDynamicToolSet().metadata.get(toolName);
+export function getDynamicMcpToolMetadata(toolName: string, workspaceId?: string | undefined): DynamicMcpToolMetadata | undefined {
+	const toolSet: DynamicToolSet = workspaceId === undefined ? getLegacyDynamicToolSet() : getDynamicToolSet(workspaceId);
+	return toolSet.metadata.get(toolName);
 }
 
-export function isPlanSafeDynamicMcpToolName(toolName: string): boolean {
-	return getDynamicMcpToolMetadata(toolName)?.planAccess === "read";
+export function isPlanSafeDynamicMcpToolName(toolName: string, workspaceId?: string | undefined): boolean {
+	return getDynamicMcpToolMetadata(toolName, workspaceId)?.planAccess === "read";
 }
 
-export function getDynamicMcpToolDefinitions(): ChatCompletionTool[] {
-	return [...getActiveDynamicToolSet().definitions];
+export function getDynamicMcpToolDefinitions(workspaceId?: string | undefined): ChatCompletionTool[] {
+	const toolSet: DynamicToolSet = workspaceId === undefined ? getLegacyDynamicToolSet() : getDynamicToolSet(workspaceId);
+	return [...toolSet.definitions];
 }
 
-export function getDynamicMcpToolMapping(toolName: string): ToolMapping | undefined {
-	return getActiveDynamicToolSet().mapping.get(toolName);
+export function getDynamicMcpToolMapping(toolName: string, workspaceId?: string | undefined): ToolMapping | undefined {
+	const toolSet: DynamicToolSet = workspaceId === undefined ? getLegacyDynamicToolSet() : getDynamicToolSet(workspaceId);
+	return toolSet.mapping.get(toolName);
 }

@@ -21,8 +21,8 @@ import { createSceneViewToolResultEnricher } from "./scene-view-enricher.js";
 
 const SCENE_VIEW_CAPTURE_TOOL: string = "mcp_godot_editor_capture_scene_view";
 
-export function createRuntimeWorkflowPhase(phase: WorkflowPhase, mcpHost: McpHost): WorkflowPhase {
-	if (!phase.allowedTools.includes(SCENE_VIEW_CAPTURE_TOOL) || mcpHost.getEditorBridge().supportsTool("capture_scene_view")) {
+export function createRuntimeWorkflowPhase(phase: WorkflowPhase, mcpHost: McpHost, session?: ClientSession | undefined): WorkflowPhase {
+	if (!phase.allowedTools.includes(SCENE_VIEW_CAPTURE_TOOL) || mcpHost.getEditorBridge().supportsTool("capture_scene_view", session?.activeWorkspace?.id, session?.editorInstanceId)) {
 		return phase;
 	}
 
@@ -48,7 +48,7 @@ export async function runWorkflowPhase(
 	streamPhase: boolean,
 	abortSignal?: AbortSignal | undefined
 ): Promise<WorkflowPhaseRunResult> {
-	const runtimePhase: WorkflowPhase = createRuntimeWorkflowPhase(phase, mcpHost);
+	const runtimePhase: WorkflowPhase = createRuntimeWorkflowPhase(phase, mcpHost, session);
 	const sceneViewEnricher = createSceneViewToolResultEnricher({
 		session,
 		options,
@@ -66,8 +66,8 @@ export async function runWorkflowPhase(
 	let agentResult: ProviderAgentResult;
 	try {
 		agentResult = streamPhase
-			? await runProviderAgentStreaming(params, options, history, fullSystemPrompt, mcpHost, session.approvalGateway, runtimePhase.allowedTools, onToolEvent, abortSignal, sceneViewEnricher.enricher)
-			: await runProviderAgent(params, options, history, fullSystemPrompt, mcpHost, session.approvalGateway, runtimePhase.allowedTools, onToolEvent, abortSignal, sceneViewEnricher.enricher);
+			? await runProviderAgentStreaming(params, options, history, fullSystemPrompt, mcpHost, session.approvalGateway, runtimePhase.allowedTools, onToolEvent, abortSignal, sceneViewEnricher.enricher, { workspaceId: session.activeWorkspace?.id, editorInstanceId: session.editorInstanceId })
+			: await runProviderAgent(params, options, history, fullSystemPrompt, mcpHost, session.approvalGateway, runtimePhase.allowedTools, onToolEvent, abortSignal, sceneViewEnricher.enricher, { workspaceId: session.activeWorkspace?.id, editorInstanceId: session.editorInstanceId });
 	} catch (error: unknown) {
 		if (phase.toolGroup === "write" && isEmptyProviderResponseError(error)) {
 			agentResult = {

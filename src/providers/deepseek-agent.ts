@@ -18,7 +18,7 @@ import {
 	type DeepSeekChatOptions
 } from "../providers/deepseek-client.js";
 import type { McpHost } from "../mcp/mcp-host.js";
-import { getToolDefinitions, getToolDefinitionsForNames } from "../tools/builtin-tool-definitions.js";
+import { createWorkspaceToolCatalog, type ToolExecutionContext } from "../tools/tool-catalog.js";
 import { resolveToolBudget, MAX_TOTAL_TOOL_RESULT_CHARS } from "../tools/llm-tool-budget.js";
 import { dispatchToolCalls, ToolApprovalRequiredError, type OnToolEvent, type ToolResultEnricher } from "../tools/tool-dispatcher.js";
 import { ApprovalGateway } from "../tools/approval-gateway.js";
@@ -616,7 +616,8 @@ async function runAgentLoop(
 	streamAssistant: boolean,
 	onEvent?: OnToolEvent,
 	abortSignal?: AbortSignal | undefined,
-	toolResultEnricher?: ToolResultEnricher | undefined
+	toolResultEnricher?: ToolResultEnricher | undefined,
+	toolContext?: ToolExecutionContext | undefined
 ): Promise<DeepSeekAgentResult> {
 	let totalToolResultChars: number = initialToolResultChars;
 	const allowedToolNames: ReadonlySet<string> = getAllowedToolNames(tools);
@@ -719,7 +720,7 @@ async function runAgentLoop(
 			if (abortSignal?.aborted) {
 				throw new Error("Request cancelled");
 			}
-			toolResults = await dispatchToolCalls(mcpHost, toolCalls, step, gateway, onEvent, toolResultEnricher);
+			toolResults = await dispatchToolCalls(mcpHost, toolCalls, step, gateway, onEvent, toolResultEnricher, toolContext);
 		} catch (error: unknown) {
 			if (error instanceof ToolApprovalRequiredError) {
 				const pendingToolCall: ChatCompletionMessageToolCall | undefined = toolCalls.find(
@@ -811,12 +812,14 @@ export async function runDeepSeekAgent(
 	allowedToolNames?: readonly string[] | undefined,
 	onEvent?: OnToolEvent,
 	abortSignal?: AbortSignal | undefined,
-	toolResultEnricher?: ToolResultEnricher | undefined
+	toolResultEnricher?: ToolResultEnricher | undefined,
+	toolContext?: ToolExecutionContext | undefined
 ): Promise<DeepSeekAgentResult> {
 	const client: OpenAI = createDeepSeekClient(options);
+	const toolCatalog = createWorkspaceToolCatalog(toolContext);
 	const tools = allowedToolNames !== undefined
-		? getToolDefinitionsForNames(allowedToolNames)
-		: getToolDefinitions();
+		? toolCatalog.getDefinitionsForNames(allowedToolNames)
+		: toolCatalog.getDefinitions();
 
 	const maxSteps: number = resolveToolBudget(
 		(params.options as Record<string, unknown> | undefined)?.["toolBudget"] as string | undefined,
@@ -825,7 +828,7 @@ export async function runDeepSeekAgent(
 
 	const messages: ChatCompletionMessageParam[] = createMessages(params, history, systemPrompt);
 
-	return runAgentLoop(client, params, options, messages, mcpHost, gateway, tools, 0, maxSteps, 0, false, onEvent, abortSignal, toolResultEnricher);
+	return runAgentLoop(client, params, options, messages, mcpHost, gateway, tools, 0, maxSteps, 0, false, onEvent, abortSignal, toolResultEnricher, toolContext);
 }
 
 export async function runDeepSeekAgentStreaming(
@@ -838,12 +841,14 @@ export async function runDeepSeekAgentStreaming(
 	allowedToolNames?: readonly string[] | undefined,
 	onEvent?: OnToolEvent,
 	abortSignal?: AbortSignal | undefined,
-	toolResultEnricher?: ToolResultEnricher | undefined
+	toolResultEnricher?: ToolResultEnricher | undefined,
+	toolContext?: ToolExecutionContext | undefined
 ): Promise<DeepSeekAgentResult> {
 	const client: OpenAI = createDeepSeekClient(options);
+	const toolCatalog = createWorkspaceToolCatalog(toolContext);
 	const tools = allowedToolNames !== undefined
-		? getToolDefinitionsForNames(allowedToolNames)
-		: getToolDefinitions();
+		? toolCatalog.getDefinitionsForNames(allowedToolNames)
+		: toolCatalog.getDefinitions();
 
 	const maxSteps: number = resolveToolBudget(
 		(params.options as Record<string, unknown> | undefined)?.["toolBudget"] as string | undefined,
@@ -852,7 +857,7 @@ export async function runDeepSeekAgentStreaming(
 
 	const messages: ChatCompletionMessageParam[] = createMessages(params, history, systemPrompt);
 
-	return runAgentLoop(client, params, options, messages, mcpHost, gateway, tools, 0, maxSteps, 0, true, onEvent, abortSignal, toolResultEnricher);
+	return runAgentLoop(client, params, options, messages, mcpHost, gateway, tools, 0, maxSteps, 0, true, onEvent, abortSignal, toolResultEnricher, toolContext);
 }
 
 export async function continueDeepSeekAgent(
@@ -865,12 +870,14 @@ export async function continueDeepSeekAgent(
 	allowedToolNames?: readonly string[] | undefined,
 	onEvent?: OnToolEvent,
 	abortSignal?: AbortSignal | undefined,
-	toolResultEnricher?: ToolResultEnricher | undefined
+	toolResultEnricher?: ToolResultEnricher | undefined,
+	toolContext?: ToolExecutionContext | undefined
 ): Promise<DeepSeekAgentResult> {
 	const client: OpenAI = createDeepSeekClient(options);
+	const toolCatalog = createWorkspaceToolCatalog(toolContext);
 	const tools = allowedToolNames !== undefined
-		? getToolDefinitionsForNames(allowedToolNames)
-		: getToolDefinitions();
+		? toolCatalog.getDefinitionsForNames(allowedToolNames)
+		: toolCatalog.getDefinitions();
 	const messages: ChatCompletionMessageParam[] = [...continuation.messages];
 	const budgetedResult = fitToolResultContent(approvedToolResult.content, continuation.totalToolResultChars);
 	const toolMessage: ChatCompletionToolMessageParam = {
@@ -915,7 +922,8 @@ export async function continueDeepSeekAgent(
 		false,
 		onEvent,
 		abortSignal,
-		toolResultEnricher
+		toolResultEnricher,
+		toolContext
 	);
 }
 
@@ -929,12 +937,14 @@ export async function continueDeepSeekAgentStreaming(
 	allowedToolNames?: readonly string[] | undefined,
 	onEvent?: OnToolEvent,
 	abortSignal?: AbortSignal | undefined,
-	toolResultEnricher?: ToolResultEnricher | undefined
+	toolResultEnricher?: ToolResultEnricher | undefined,
+	toolContext?: ToolExecutionContext | undefined
 ): Promise<DeepSeekAgentResult> {
 	const client: OpenAI = createDeepSeekClient(options);
+	const toolCatalog = createWorkspaceToolCatalog(toolContext);
 	const tools = allowedToolNames !== undefined
-		? getToolDefinitionsForNames(allowedToolNames)
-		: getToolDefinitions();
+		? toolCatalog.getDefinitionsForNames(allowedToolNames)
+		: toolCatalog.getDefinitions();
 	const messages: ChatCompletionMessageParam[] = [...continuation.messages];
 	const budgetedResult = fitToolResultContent(approvedToolResult.content, continuation.totalToolResultChars);
 	const toolMessage: ChatCompletionToolMessageParam = {
@@ -982,6 +992,7 @@ export async function continueDeepSeekAgentStreaming(
 		true,
 		onEvent,
 		abortSignal,
-		toolResultEnricher
+		toolResultEnricher,
+		toolContext
 	);
 }

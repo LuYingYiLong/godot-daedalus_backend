@@ -192,13 +192,13 @@ export async function validatePendingApprovalBeforeExecution(
 	mcpHost: McpHost,
 	pendingApproval: PendingApproval
 ): Promise<string | null> {
-	const decision = await session.approvalGateway.evaluate(pendingApproval.llmToolName, pendingApproval.args, pendingApproval.toolCallId);
+	const decision = await session.approvalGateway.evaluate(pendingApproval.llmToolName, pendingApproval.args, pendingApproval.toolCallId, pendingApproval.workspaceId);
 	if (decision.action === "deny") {
 		return decision.reason;
 	}
 
 	try {
-		resolveToolMapping(pendingApproval.llmToolName);
+		resolveToolMapping(pendingApproval.llmToolName, pendingApproval.workspaceId);
 	} catch (error: unknown) {
 		return error instanceof Error ? error.message : "审批工具当前不可用";
 	}
@@ -206,7 +206,8 @@ export async function validatePendingApprovalBeforeExecution(
 	const currentIdentity = getLlmToolExecutionIdentity(
 		pendingApproval.llmToolName,
 		pendingApproval.args,
-		mcpHost.getActiveWorkspaceId()
+		pendingApproval.workspaceId ?? mcpHost.getActiveWorkspaceId(),
+		pendingApproval.workspaceId
 	);
 	if (
 		pendingApproval.executionFingerprint !== undefined
@@ -225,7 +226,7 @@ export function createApprovedWorkflowToolObservation(pendingApproval: PendingAp
 	return {
 		toolCallId: pendingApproval.toolCallId,
 		toolName: pendingApproval.llmToolName,
-		risk: getToolPolicy(pendingApproval.llmToolName)?.risk,
+		risk: getToolPolicy(pendingApproval.llmToolName, pendingApproval.workspaceId)?.risk,
 		status: failed ? "failed" : "succeeded",
 		argsSummary: {},
 		parsedResult: {

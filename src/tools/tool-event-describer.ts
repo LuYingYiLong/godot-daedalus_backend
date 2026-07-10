@@ -59,9 +59,9 @@ function createDisplay(
 	return { serverId, serverName, category, title, summary, target };
 }
 
-export function describeToolEvent(toolName: string, args: Record<string, unknown>): ToolEventDisplay {
+export function describeToolEvent(toolName: string, args: Record<string, unknown>, workspaceId?: string | undefined): ToolEventDisplay {
 	if (isDynamicMcpToolName(toolName)) {
-		const metadata = getDynamicMcpToolMetadata(toolName);
+		const metadata = getDynamicMcpToolMetadata(toolName, workspaceId);
 		const serverId: string = metadata?.serverId ?? "custom";
 		const serverName: string = metadata?.serverName ?? "Custom MCP";
 		const originalToolName: string = metadata?.toolName ?? toolName;

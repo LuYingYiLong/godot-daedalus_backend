@@ -63,7 +63,7 @@ export function createBackendHealthResult(): BackendHealthResult {
 		port: getBackendPortFromEnv(),
 		multiClient: {
 			enabled: true,
-			protocolVersion: 1
+			protocolVersion: 2
 		},
 		logPath: getCurrentBackendLogPath()
 	};

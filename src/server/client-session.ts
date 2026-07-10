@@ -1,13 +1,10 @@
 import type { AiChatParams, ChatMessage, ModelProfile, ProviderId } from "../protocol/types.js";
-import type { AgentContinuation } from "../providers/agent-types.js";
-import type { ProviderChatOptions } from "../providers/deepseek-client.js";
 import type { SessionMetadata } from "../session/session-store.js";
+import type { PendingAiContinuation } from "../session/pending-continuation.js";
 import { ApprovalGateway } from "../tools/approval-gateway.js";
 import type { SkillId } from "../skills/registry.js";
 import { getDefaultModelProfile } from "../tokens/model-profiles.js";
 import type { WorkspaceConfig } from "../workspace/types.js";
-import type { WorkflowRunState } from "../workflow/types.js";
-import type { ClientCapabilities, ClientType } from "./client-connections.js";
 
 export type PendingGuide = {
 	id: string;
@@ -24,18 +21,7 @@ export type ThinkingEventBuffer = {
 	text: string;
 };
 
-export type PendingAiContinuation = {
-	params: AiChatParams;
-	options: ProviderChatOptions;
-	continuation: AgentContinuation;
-	allowedToolNames?: readonly string[] | undefined;
-	userMessage: string;
-	requestId: string;
-	userCreatedAt: string;
-	stream: boolean;
-	agentRunState?: WorkflowRunState | undefined;
-	workflowState?: WorkflowRunState | undefined;
-};
+export type { PendingAiContinuation } from "../session/pending-continuation.js";
 
 export type ClientSession = {
 	activeProvider: ProviderId;
@@ -49,9 +35,6 @@ export type ClientSession = {
 	approvalGateway: ApprovalGateway;
 	activeSkillId?: SkillId | undefined;
 	activeWorkspace?: WorkspaceConfig | undefined;
-	connectionId?: string | undefined;
-	clientType?: ClientType | undefined;
-	clientCapabilities?: ClientCapabilities | undefined;
 	editorInstanceId?: string | undefined;
 	sessionId?: string | undefined;
 	sessionTitle?: string | undefined;

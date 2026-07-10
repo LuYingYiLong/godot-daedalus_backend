@@ -6,7 +6,7 @@ import { GodotEditorBridge } from "../src/mcp/godot/bridges/editor-bridge.js";
 import { McpHost } from "../src/mcp/mcp-host.js";
 import { withMcpRequestContext } from "../src/mcp/request-context.js";
 import { createClientSession } from "../src/server/client-session.js";
-import { beginSessionRun, finishSessionRun, registerClientConnection, subscribeSocketToSession, updateClientConnection } from "../src/server/client-connections.js";
+import { beginSessionRun, bindConnectionToSessionRuntime, finishSessionRun, getConnectionSession, registerClientConnection, subscribeSocketToSession, updateClientConnection } from "../src/server/client-connections.js";
 import { createGodotRuntimeStatus } from "../src/server/godot-runtime-status.js";
 import { sendSessionEvent } from "../src/server/session-events.js";
 import { clearDynamicMcpToolsForWorkspace, getDynamicMcpToolMapping, getDynamicMcpToolNames, replaceDynamicMcpToolsForWorkspace } from "../src/tools/dynamic-mcp-tools.js";
@@ -84,6 +84,24 @@ test("multiple Godot editors require an explicit session editor binding", async 
 	assert.ok(requested);
 	assert.equal(socketA.sent.some((message: Record<string, unknown>): boolean => message.event === "editor.tool.requested"), false);
 	const data = requested.data as Record<string, unknown>;
+	assert.equal(bridge.handleToolResult(String(data.callId), true, { ok: true }, undefined), true);
+	await toolPromise;
+});
+
+test("editor tool requests use explicit workspace and editor binding without request context", async (): Promise<void> => {
+	const bridge = new GodotEditorBridge();
+	const socketA = createSocket();
+	const socketB = createSocket();
+	bridge.updateInstanceContext(socketA, "workspace-a", "editor-a", {}, "Godot A");
+	bridge.updateInstanceContext(socketB, "workspace-b", "editor-b", {}, "Godot B");
+
+	const toolPromise = bridge.callTool("capture_scene_view", { view: "auto" }, "workspace-b", "editor-b");
+	const requested = socketB.sent.find((message: Record<string, unknown>): boolean => message.event === "editor.tool.requested");
+	assert.ok(requested);
+	assert.equal(socketA.sent.some((message: Record<string, unknown>): boolean => message.event === "editor.tool.requested"), false);
+	const data = requested.data as Record<string, unknown>;
+	assert.equal(data.workspaceId, "workspace-b");
+	assert.equal(data.editorInstanceId, "editor-b");
 	assert.equal(bridge.handleToolResult(String(data.callId), true, { ok: true }, undefined), true);
 	await toolPromise;
 });
@@ -199,6 +217,24 @@ test("session events broadcast to subscribed frontend sockets once", (): void =>
 
 	assert.equal(originSocket.sent.filter((message: Record<string, unknown>): boolean => message.event === "client.connected").length, 1);
 	assert.equal(studioSocket.sent.filter((message: Record<string, unknown>): boolean => message.event === "client.connected").length, 1);
+});
+
+test("opening the same session binds frontend connections to one runtime", (): void => {
+	const firstSocket = createSocket();
+	const secondSocket = createSocket();
+	const firstRuntime = createClientSession(undefined);
+	const secondCandidate = createClientSession(undefined);
+	firstRuntime.sessionId = "session-shared-runtime";
+	secondCandidate.sessionId = "session-shared-runtime";
+	registerClientConnection(firstSocket, firstRuntime);
+	registerClientConnection(secondSocket, secondCandidate);
+
+	const boundFirst = bindConnectionToSessionRuntime(firstSocket, "session-shared-runtime", firstRuntime);
+	const boundSecond = bindConnectionToSessionRuntime(secondSocket, "session-shared-runtime", secondCandidate);
+	boundFirst.messages.push({ role: "user", content: "shared" });
+
+	assert.equal(boundFirst, boundSecond);
+	assert.equal(getConnectionSession(secondSocket)?.messages[0]?.content, "shared");
 });
 
 test("session run lock is shared across frontend connections", (): void => {

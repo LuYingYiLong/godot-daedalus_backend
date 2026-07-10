@@ -5,7 +5,7 @@ export type ToolMapping = {
 	toolName: string;
 };
 
-const TOOL_MAP: Record<string, ToolMapping> = {
+export const BUILTIN_TOOL_MAPPINGS: Record<string, ToolMapping> = {
 	"mcp_godot_get_project_summary": {
 		serverId: "godot",
 		toolName: "get_project_summary"
@@ -248,8 +248,8 @@ const TOOL_MAP: Record<string, ToolMapping> = {
 	}
 };
 
-export function resolveToolMapping(llmToolName: string): ToolMapping {
-	const mapping: ToolMapping | undefined = TOOL_MAP[llmToolName] ?? getDynamicMcpToolMapping(llmToolName);
+export function resolveToolMapping(llmToolName: string, workspaceId?: string | undefined): ToolMapping {
+	const mapping: ToolMapping | undefined = BUILTIN_TOOL_MAPPINGS[llmToolName] ?? getDynamicMcpToolMapping(llmToolName, workspaceId);
 
 	if (!mapping) {
 		throw new Error(`Unknown tool: ${llmToolName}`);

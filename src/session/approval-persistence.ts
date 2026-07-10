@@ -1,11 +1,10 @@
 import type { AiChatParams, ProviderId } from "../protocol/types.js";
 import type { AgentContinuation } from "../providers/agent-types.js";
 import type { ProviderChatOptions } from "../providers/deepseek-client.js";
-import type { PendingAiContinuation } from "../server/client-session.js";
+import type { PendingAiContinuation } from "./pending-continuation.js";
 import type { PendingApproval } from "../tools/approval-gateway.js";
 import type { WorkflowRunState } from "../workflow/types.js";
 import type { StoredApprovalEvent } from "./session-store.js";
-import { cloneAdditionalContextItems } from "../server/additional-context.js";
 
 export type PersistedProviderChatOptions = {
 	provider?: ProviderId | undefined;
@@ -247,6 +246,25 @@ function sanitizeAiChatParamsForPersistence(params: AiChatParams): AiChatParams 
 		sanitized.additionalContext = additionalContext;
 	}
 	return sanitized;
+}
+
+function cloneAdditionalContextItems(items: AiChatParams["additionalContext"]): AiChatParams["additionalContext"] {
+	if (items === undefined || items.length === 0) {
+		return undefined;
+	}
+
+	return items.map((item) => {
+		const clonedItem = { ...item };
+		if (item.kind === "image" && item.data !== undefined && typeof item.data === "object" && item.data !== null && !Array.isArray(item.data)) {
+			const data: Record<string, unknown> = { ...(item.data as Record<string, unknown>) };
+			if (typeof data.attachmentId === "string" && data.attachmentId.length > 0) {
+				delete data.dataUrl;
+				delete data.thumbnailDataUrl;
+			}
+			clonedItem.data = data;
+		}
+		return clonedItem;
+	});
 }
 
 function parseRequestedData(value: unknown): PersistedApprovalRequestedData | null {

@@ -14,7 +14,7 @@ import type { AiChatParams, ChatMessage } from "../protocol/types.js";
 import type { McpHost } from "../mcp/mcp-host.js";
 import { ApprovalGateway } from "../tools/approval-gateway.js";
 import { dispatchToolCalls, ToolApprovalRequiredError, type OnToolEvent, type ToolResultEnricher } from "../tools/tool-dispatcher.js";
-import { getToolDefinitions, getToolDefinitionsForNames } from "../tools/builtin-tool-definitions.js";
+import { createWorkspaceToolCatalog, type ToolExecutionContext } from "../tools/tool-catalog.js";
 import { MAX_TOTAL_TOOL_RESULT_CHARS, resolveToolBudget } from "../tools/llm-tool-budget.js";
 import type { ApprovedToolResult, ProviderAgentResult, ResponsesAgentContinuation } from "./agent-types.js";
 import type { ProviderChatOptions } from "./deepseek-client.js";
@@ -257,7 +257,8 @@ async function runResponsesAgentLoop(
 	streamAssistant: boolean,
 	onEvent?: OnToolEvent,
 	abortSignal?: AbortSignal | undefined,
-	toolResultEnricher?: ToolResultEnricher | undefined
+	toolResultEnricher?: ToolResultEnricher | undefined,
+	toolContext?: ToolExecutionContext | undefined
 ): Promise<ProviderAgentResult> {
 	let totalToolResultChars: number = initialToolResultChars;
 	const tools: Tool[] = convertToolDefinitions(chatTools);
@@ -295,7 +296,7 @@ async function runResponsesAgentLoop(
 		appendResponseOutputItems(inputItems, assistantMessage.outputItems);
 
 		try {
-			const toolResults = await dispatchToolCalls(mcpHost, toolCalls, step, gateway, onEvent, toolResultEnricher);
+			const toolResults = await dispatchToolCalls(mcpHost, toolCalls, step, gateway, onEvent, toolResultEnricher, toolContext);
 			const appendResult: AppendToolResultItemsResult = appendToolResultItems(inputItems, toolResults, totalToolResultChars);
 			totalToolResultChars += appendResult.addedChars;
 			if (appendResult.limitReached || totalToolResultChars >= MAX_TOTAL_TOOL_RESULT_CHARS) {
@@ -374,11 +375,13 @@ export async function runOpenAIResponsesAgent(
 	allowedToolNames?: readonly string[] | undefined,
 	onEvent?: OnToolEvent,
 	abortSignal?: AbortSignal | undefined,
-	toolResultEnricher?: ToolResultEnricher | undefined
+	toolResultEnricher?: ToolResultEnricher | undefined,
+	toolContext?: ToolExecutionContext | undefined
 ): Promise<ProviderAgentResult> {
+	const toolCatalog = createWorkspaceToolCatalog(toolContext);
 	const tools = allowedToolNames !== undefined
-		? getToolDefinitionsForNames(allowedToolNames)
-		: getToolDefinitions();
+		? toolCatalog.getDefinitionsForNames(allowedToolNames)
+		: toolCatalog.getDefinitions();
 	const maxSteps: number = resolveToolBudget(
 		(params.options as Record<string, unknown> | undefined)?.["toolBudget"] as string | undefined,
 		params.skillId
@@ -398,7 +401,8 @@ export async function runOpenAIResponsesAgent(
 		false,
 		onEvent,
 		abortSignal,
-		toolResultEnricher
+		toolResultEnricher,
+		toolContext
 	);
 }
 
@@ -412,11 +416,13 @@ export async function runOpenAIResponsesAgentStreaming(
 	allowedToolNames?: readonly string[] | undefined,
 	onEvent?: OnToolEvent,
 	abortSignal?: AbortSignal | undefined,
-	toolResultEnricher?: ToolResultEnricher | undefined
+	toolResultEnricher?: ToolResultEnricher | undefined,
+	toolContext?: ToolExecutionContext | undefined
 ): Promise<ProviderAgentResult> {
+	const toolCatalog = createWorkspaceToolCatalog(toolContext);
 	const tools = allowedToolNames !== undefined
-		? getToolDefinitionsForNames(allowedToolNames)
-		: getToolDefinitions();
+		? toolCatalog.getDefinitionsForNames(allowedToolNames)
+		: toolCatalog.getDefinitions();
 	const maxSteps: number = resolveToolBudget(
 		(params.options as Record<string, unknown> | undefined)?.["toolBudget"] as string | undefined,
 		params.skillId
@@ -436,7 +442,8 @@ export async function runOpenAIResponsesAgentStreaming(
 		true,
 		onEvent,
 		abortSignal,
-		toolResultEnricher
+		toolResultEnricher,
+		toolContext
 	);
 }
 
@@ -450,11 +457,13 @@ export async function continueOpenAIResponsesAgent(
 	allowedToolNames?: readonly string[] | undefined,
 	onEvent?: OnToolEvent,
 	abortSignal?: AbortSignal | undefined,
-	toolResultEnricher?: ToolResultEnricher | undefined
+	toolResultEnricher?: ToolResultEnricher | undefined,
+	toolContext?: ToolExecutionContext | undefined
 ): Promise<ProviderAgentResult> {
+	const toolCatalog = createWorkspaceToolCatalog(toolContext);
 	const tools = allowedToolNames !== undefined
-		? getToolDefinitionsForNames(allowedToolNames)
-		: getToolDefinitions();
+		? toolCatalog.getDefinitionsForNames(allowedToolNames)
+		: toolCatalog.getDefinitions();
 	const inputItems: ResponseInputItem[] = [...continuation.inputItems];
 	const budgetedResult = fitToolResultContent(approvedToolResult.content, continuation.totalToolResultChars);
 	const totalToolResultChars: number = continuation.totalToolResultChars + budgetedResult.chars;
@@ -496,7 +505,8 @@ export async function continueOpenAIResponsesAgent(
 		false,
 		onEvent,
 		abortSignal,
-		toolResultEnricher
+		toolResultEnricher,
+		toolContext
 	);
 }
 
@@ -510,11 +520,13 @@ export async function continueOpenAIResponsesAgentStreaming(
 	allowedToolNames?: readonly string[] | undefined,
 	onEvent?: OnToolEvent,
 	abortSignal?: AbortSignal | undefined,
-	toolResultEnricher?: ToolResultEnricher | undefined
+	toolResultEnricher?: ToolResultEnricher | undefined,
+	toolContext?: ToolExecutionContext | undefined
 ): Promise<ProviderAgentResult> {
+	const toolCatalog = createWorkspaceToolCatalog(toolContext);
 	const tools = allowedToolNames !== undefined
-		? getToolDefinitionsForNames(allowedToolNames)
-		: getToolDefinitions();
+		? toolCatalog.getDefinitionsForNames(allowedToolNames)
+		: toolCatalog.getDefinitions();
 	const inputItems: ResponseInputItem[] = [...continuation.inputItems];
 	const budgetedResult = fitToolResultContent(approvedToolResult.content, continuation.totalToolResultChars);
 	const totalToolResultChars: number = continuation.totalToolResultChars + budgetedResult.chars;
@@ -555,6 +567,7 @@ export async function continueOpenAIResponsesAgentStreaming(
 		true,
 		onEvent,
 		abortSignal,
-		toolResultEnricher
+		toolResultEnricher,
+		toolContext
 	);
 }

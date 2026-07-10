@@ -35,7 +35,7 @@ function readCapabilities(value: unknown): ClientCapabilities {
 export async function handleClientRequest(socket: WebSocket, request: ClientRequest, session: ClientSession, _mcpHost: McpHost): Promise<void> {
 	switch (request.method) {
 		case "client.hello": {
-			const params = request.params ?? {};
+			const params = request.params!;
 			const info = updateClientConnection(socket, {
 				clientType: readClientType(params.clientType),
 				clientName: params.clientName ?? (params.clientType === "studio" ? "Daedalus Studio" : "Godot Daedalus"),
@@ -60,9 +60,9 @@ export async function handleClientRequest(socket: WebSocket, request: ClientRequ
 				ok: true,
 				result: {
 					connection: info,
-					multiClient: {
-						enabled: true,
-						protocolVersion: 1
+				multiClient: {
+					enabled: true,
+					protocolVersion: 2
 					}
 				}
 			});

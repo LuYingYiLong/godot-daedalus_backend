@@ -1,4 +1,5 @@
 import WebSocket from "ws";
+import { SessionRuntimeRegistry } from "../application/session-runtime-registry.js";
 import type { ServerEvent } from "../protocol/types.js";
 import type { ClientSession } from "./client-session.js";
 import { sendJson } from "./send-json.js";
@@ -30,6 +31,7 @@ type ConnectionRecord = ClientConnectionInfo & {
 const socketConnections: Map<WebSocket, ConnectionRecord> = new Map();
 const sessionSubscribers: Map<string, Set<WebSocket>> = new Map();
 const activeSessionRuns: Map<string, string> = new Map();
+const sessionRuntimes: SessionRuntimeRegistry<ClientSession> = new SessionRuntimeRegistry<ClientSession>();
 
 function createConnectionId(): string {
 	return `conn-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
@@ -65,9 +67,6 @@ export function registerClientConnection(socket: WebSocket, session: ClientSessi
 		subscribedSessionIds: new Set()
 	};
 	socketConnections.set(socket, record);
-	session.connectionId = record.connectionId;
-	session.clientType = record.clientType;
-	session.clientCapabilities = record.capabilities;
 	return toPublicInfo(record);
 }
 
@@ -107,16 +106,44 @@ export function updateClientConnection(socket: WebSocket, update: {
 	record.workspaceRoot = update.workspaceRoot ?? record.workspaceRoot;
 	record.editorInstanceId = update.editorInstanceId ?? record.editorInstanceId;
 	record.capabilities = update.capabilities ?? record.capabilities;
-	record.session.connectionId = record.connectionId;
-	record.session.clientType = record.clientType;
-	record.session.clientCapabilities = record.capabilities;
-	record.session.editorInstanceId = record.editorInstanceId ?? record.session.editorInstanceId;
 	return toPublicInfo(record);
 }
 
 export function getClientConnection(socket: WebSocket): ClientConnectionInfo | null {
 	const record: ConnectionRecord | undefined = socketConnections.get(socket);
 	return record === undefined ? null : toPublicInfo(record);
+}
+
+export function getConnectionSession(socket: WebSocket): ClientSession | undefined {
+	return socketConnections.get(socket)?.session;
+}
+
+export function hasOtherConnectionsForSession(socket: WebSocket, sessionId: string | undefined): boolean {
+	if (sessionId === undefined) {
+		return false;
+	}
+
+	for (const [candidateSocket, record] of socketConnections) {
+		if (candidateSocket !== socket && record.session.sessionId === sessionId) {
+			return true;
+		}
+	}
+	return false;
+}
+
+export function getSessionRuntime(sessionId: string): ClientSession | undefined {
+	return sessionRuntimes.get(sessionId);
+}
+
+export function bindConnectionToSessionRuntime(socket: WebSocket, sessionId: string, candidate: ClientSession): ClientSession {
+	const record: ConnectionRecord | undefined = socketConnections.get(socket);
+	if (record === undefined) {
+		return candidate;
+	}
+
+	const runtime: ClientSession = sessionRuntimes.bind(sessionId, candidate);
+	record.session = runtime;
+	return runtime;
 }
 
 export function subscribeSocketToSession(socket: WebSocket, sessionId: string): void {

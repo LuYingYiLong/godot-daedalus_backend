@@ -6,7 +6,7 @@ import { McpSession } from "./mcp-session.js";
 import type { McpServerConfig } from "./types.js";
 import { findWorkspace, getDefaultWorkspace } from "../workspace/registry.js";
 import type { WorkspaceConfig } from "../workspace/types.js";
-import { clearDynamicMcpToolsForWorkspace, replaceDynamicMcpTools, replaceDynamicMcpToolsForWorkspace, type DynamicMcpToolSource } from "../tools/dynamic-mcp-tools.js";
+import { clearDynamicMcpToolsForWorkspace, replaceDynamicMcpToolsForWorkspace, type DynamicMcpToolSource } from "../tools/dynamic-mcp-tools.js";
 import { getCurrentMcpWorkspaceId } from "./request-context.js";
 import { logger } from "../logger.js";
 
@@ -83,7 +83,6 @@ export class McpHost {
 		await this.ensureWorkspace(workspace);
 		this.activeWorkspaceId = workspace.id;
 		this.diagnosticsBridge.setWorkspace(workspace);
-		this.syncActiveDynamicTools();
 		logger.info("mcp", "active_workspace_selected", {
 			workspaceId: workspace.id,
 			rootPath: workspace.rootPath
@@ -218,23 +217,6 @@ export class McpHost {
 		replaceDynamicMcpToolsForWorkspace(workspaceId, workspaceTools === undefined ? [] : Array.from(workspaceTools.values()).flat());
 	}
 
-	private syncActiveDynamicTools(): void {
-		const workspaceId: string | undefined = this.activeWorkspaceId;
-		if (!workspaceId) {
-			replaceDynamicMcpTools([]);
-			return;
-		}
-
-		const workspaceTools: Map<string, DynamicMcpToolSource[]> | undefined = this.workspaceCustomTools.get(workspaceId);
-		if (workspaceTools === undefined) {
-			replaceDynamicMcpTools([]);
-			return;
-		}
-
-		replaceDynamicMcpTools(Array.from(workspaceTools.values()).flat());
-		this.syncDynamicToolsForWorkspace(workspaceId);
-	}
-
 	async refreshCustomServersForActiveWorkspace(): Promise<void> {
 		const workspaceId: string | undefined = getCurrentMcpWorkspaceId() ?? this.activeWorkspaceId;
 		if (workspaceId === undefined) {
@@ -303,9 +285,6 @@ export class McpHost {
 		}
 
 		this.syncDynamicToolsForWorkspace(workspace.id);
-		if (this.activeWorkspaceId === workspace.id) {
-			this.syncActiveDynamicTools();
-		}
 	}
 
 	private getWorkspaceId(workspaceId?: string | undefined): string {
@@ -355,7 +334,6 @@ export class McpHost {
 		if (this.activeWorkspaceId === workspaceId) {
 			this.activeWorkspaceId = undefined;
 			this.diagnosticsBridge.clearWorkspace(workspaceId);
-			this.syncActiveDynamicTools();
 		}
 	}
 
@@ -433,9 +411,15 @@ export class McpHost {
 		return this.getSession(serverId, workspaceId).listTools();
 	}
 
-	async callTool(serverId: string, name: string, args: Record<string, unknown>, workspaceId?: string | undefined) {
+	async callTool(
+		serverId: string,
+		name: string,
+		args: Record<string, unknown>,
+		workspaceId?: string | undefined,
+		editorInstanceId?: string | undefined
+	) {
 		if (serverId === GODOT_EDITOR_SERVER_ID) {
-			return this.editorBridge.callTool(name, args);
+			return this.editorBridge.callTool(name, args, workspaceId, editorInstanceId);
 		}
 
 		if (serverId === GODOT_DIAGNOSTICS_SERVER_ID) {
@@ -484,6 +468,5 @@ export class McpHost {
 		this.customServerStatuses.clear();
 		this.activeWorkspaceId = undefined;
 		this.diagnosticsBridge.clearWorkspace();
-		this.syncActiveDynamicTools();
 	}
 }

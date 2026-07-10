@@ -163,7 +163,7 @@ import { sendWorkflowEvent, mapWorkflowEventToAgentEvent, convertWorkflowSnapsho
 import { runWorkflowPhase, createWorkflowPhasePrompt } from "../workflow/phase-runner.js";
 import { createWorkflowPendingContinuation, continueWorkflowExecution } from "../workflow/continuation.js";
 import { startWorkflowExecution } from "../workflow/executor.js";
-import { ensureProviderConfigured } from "./provider-handlers.js";
+import { ensureProviderConfigured } from "../../application/provider-session-service.js";
 import { findSessionWithPendingApproval } from "../client-connections.js";
 import { withMcpRequestContext } from "../../mcp/request-context.js";
 
@@ -397,7 +397,8 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 					session.approvalGateway,
 					pendingContinuation.allowedToolNames,
 					onToolEvent,
-					abortController.signal
+					abortController.signal,
+					{ workspaceId: pending.workspaceId ?? session.activeWorkspace?.id, editorInstanceId: pending.editorInstanceId ?? session.editorInstanceId }
 				)
 				: await continueProviderAgent(
 					continuationParams,
@@ -411,7 +412,8 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 					session.approvalGateway,
 					pendingContinuation.allowedToolNames,
 					onToolEvent,
-					abortController.signal
+					abortController.signal,
+					{ workspaceId: pending.workspaceId ?? session.activeWorkspace?.id, editorInstanceId: pending.editorInstanceId ?? session.editorInstanceId }
 				);
 
 			if (continuationWorkflowState !== undefined) {

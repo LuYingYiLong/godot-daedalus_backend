@@ -14,6 +14,8 @@ export type PendingApproval = {
 	reason: string;
 	createdAt: number;
 	executionFingerprint?: string | undefined;
+	workspaceId?: string | undefined;
+	editorInstanceId?: string | undefined;
 };
 
 export type ApprovalResult =
@@ -68,9 +70,10 @@ export class ApprovalGateway {
 	async evaluate(
 		llmToolName: string,
 		args: Record<string, unknown>,
-		toolCallId: string
+		toolCallId: string,
+		workspaceId?: string | undefined
 	): Promise<ApprovalDecision> {
-		return evaluateToolCall(this.mode, llmToolName, args);
+		return evaluateToolCall(this.mode, llmToolName, args, workspaceId);
 	}
 
 	requestApproval(
@@ -78,9 +81,11 @@ export class ApprovalGateway {
 		args: Record<string, unknown>,
 		toolCallId: string,
 		reason: string,
-		executionScope: string = "workspace:none"
+		workspaceId?: string | undefined,
+		editorInstanceId?: string | undefined
 	): PendingApproval {
-		const executionFingerprint: string | undefined = getLlmToolExecutionIdentity(llmToolName, args, executionScope)?.fingerprint;
+		const executionScope: string = workspaceId ?? "workspace:none";
+		const executionFingerprint: string | undefined = getLlmToolExecutionIdentity(llmToolName, args, executionScope, workspaceId)?.fingerprint;
 		if (executionFingerprint !== undefined) {
 			for (const pendingApproval of this.pendingApprovals.values()) {
 				if (pendingApproval.executionFingerprint === executionFingerprint) {
@@ -99,7 +104,9 @@ export class ApprovalGateway {
 			args,
 			reason,
 			createdAt: Date.now(),
-			executionFingerprint
+			executionFingerprint,
+			workspaceId,
+			editorInstanceId
 		};
 
 		this.pendingApprovals.set(approvalId, pending);
@@ -113,7 +120,7 @@ export class ApprovalGateway {
 			throw new Error(`Approval not found: ${approvalId}`);
 		}
 
-		const result = await executeLlmToolWithIdempotency(mcpHost, pending.llmToolName, pending.args);
+		const result = await executeLlmToolWithIdempotency(mcpHost, pending.llmToolName, pending.args, pending.workspaceId, pending.editorInstanceId);
 		this.pendingApprovals.delete(approvalId);
 		return { content: result.content, cached: result.reused, fileEditDraft: result.fileEditDraft };
 	}
@@ -141,7 +148,8 @@ export class ReadOnlyToolApprovalGateway extends ApprovalGateway {
 	override async evaluate(
 		llmToolName: string,
 		args: Record<string, unknown>,
-		_toolCallId: string
+		_toolCallId: string,
+		workspaceId?: string | undefined
 	): Promise<ApprovalDecision> {
 		if (!this.allowedToolNames.has(llmToolName)) {
 			return {
@@ -149,11 +157,11 @@ export class ReadOnlyToolApprovalGateway extends ApprovalGateway {
 				reason: `只读上下文只允许显式授权的 read/verify 工具: ${llmToolName}`
 			};
 		}
-		if (isPlanSafeDynamicMcpToolName(llmToolName)) {
+		if (isPlanSafeDynamicMcpToolName(llmToolName, workspaceId)) {
 			return { action: "allow" };
 		}
 
-		const policy = getEffectiveToolPolicy(llmToolName, args);
+		const policy = getEffectiveToolPolicy(llmToolName, args, workspaceId);
 		if (policy?.risk === "read" || policy?.risk === "verify") {
 			return { action: "allow" };
 		}
@@ -169,7 +177,7 @@ export class ReadOnlyToolApprovalGateway extends ApprovalGateway {
 		_args: Record<string, unknown>,
 		_toolCallId: string,
 		_reason: string,
-		_executionScope: string = "workspace:none"
+		_workspaceId?: string | undefined
 	): PendingApproval {
 		throw new Error("只读上下文不允许触发人工审批。");
 	}

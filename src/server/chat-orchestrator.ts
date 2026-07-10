@@ -168,7 +168,7 @@ import { sendWorkflowEvent, mapWorkflowEventToAgentEvent, convertWorkflowSnapsho
 import { runWorkflowPhase, createWorkflowPhasePrompt } from "./workflow/phase-runner.js";
 import { createWorkflowPendingContinuation, continueWorkflowExecution } from "./workflow/continuation.js";
 import { startWorkflowExecution } from "./workflow/executor.js";
-import { ensureProviderConfigured } from "./handlers/provider-handlers.js";
+import { ensureProviderConfigured } from "../application/provider-session-service.js";
 import { beginSessionRun, finishSessionRun } from "./client-connections.js";
 import { logger } from "../logger.js";
 import { createInitialPlan } from "./plan-mode.js";
@@ -304,12 +304,12 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				const options: ProviderChatOptions = createProviderChatOptions(session, apiKey);
 				const hydratedParams: AiChatParams = await hydrateImageAttachmentContexts(session.sessionId, params);
 				const imagePreprocess: ImageRecognitionPreprocessResult = await preprocessImageAttachmentsForTextModel(
-					socket,
-					request.id,
-					session,
 					hydratedParams,
 					options,
-					abortController.signal
+					abortController.signal,
+					(progress): void => {
+						sendSessionEvent(socket, request.id, session, "ai.status", progress);
+					}
 				);
 				const effectiveParams: AiChatParams = imagePreprocess.params;
 				logger.info("ai", "chat_started", {
