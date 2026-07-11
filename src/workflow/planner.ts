@@ -1,75 +1,15 @@
 import type { AiChatParams } from "../protocol/types.js";
+import { getDefaultWorkflowToolNames } from "../tools/tool-catalog.js";
 import { CUSTOM_MCP_TOOLS_SENTINEL } from "../tools/tool-sentinels.js";
 import type { WorkflowPhase, WorkflowPhaseId, WorkflowPlan, WorkflowTodoItem } from "./types.js";
 
 type FixedWorkflowPhaseId = "inspect" | "implement" | "review" | "verify" | "summarize";
 
-export const READ_TOOLS: string[] = [
-	"mcp_godot_get_project_summary",
-	"mcp_godot_list_project_files",
-	"mcp_godot_list_scenes",
-	"mcp_godot_list_scripts",
-	"mcp_godot_read_text_file",
-	"mcp_godot_search_text",
-	"mcp_godot_get_project_log_config",
-	"mcp_godot_list_project_logs",
-	"mcp_godot_read_project_log",
-	"mcp_godot_get_project_settings",
-	"mcp_godot_get_editor_config_summary",
-	"mcp_godot_get_editor_settings",
-	"mcp_godot_list_editor_config_files",
-	"mcp_godot_read_editor_config_file",
-	"mcp_godot_get_editor_project_state",
-	"mcp_godot_get_recent_projects",
-	"mcp_godot_inspect_scene_tree",
-	"mcp_godot_editor_get_context",
-	"mcp_godot_editor_get_selected_nodes",
-	"mcp_godot_editor_inspect_node",
-	"mcp_godot_editor_capture_scene_view",
-	"mcp_godot_lsp_get_status",
-	"mcp_godot_lsp_get_file_diagnostics",
-	"mcp_godot_lsp_get_document_symbols",
-	"mcp_godot_lsp_hover",
-	"mcp_godot_lsp_goto_definition",
-	"mcp_godot_dap_get_status",
-	"mcp_godot_dap_get_last_error",
-	"mcp_godot_dap_get_stack_trace",
-	"mcp_godot_dap_get_variables",
-	CUSTOM_MCP_TOOLS_SENTINEL
-];
+export const READ_TOOLS: string[] = getDefaultWorkflowToolNames("read");
 
-export const VERIFY_TOOLS: string[] = [
-	"mcp_godot_validate_scene_script_references",
-	"mcp_godot_lsp_get_file_diagnostics",
-	"mcp_terminal_get_capabilities",
-	"mcp_terminal_run_safe_preset"
-];
+export const VERIFY_TOOLS: string[] = getDefaultWorkflowToolNames("verify");
 
-export const WRITE_TOOLS: string[] = [
-	"mcp_godot_propose_create_text_file",
-	"mcp_godot_create_text_file",
-	"mcp_godot_propose_overwrite_text_file",
-	"mcp_godot_overwrite_text_file",
-	"mcp_godot_propose_replace_text_in_file",
-	"mcp_godot_replace_text_in_file",
-	"mcp_godot_propose_create_scene",
-	"mcp_godot_create_scene",
-	"mcp_godot_propose_add_node_to_scene",
-	"mcp_godot_add_node_to_scene",
-	"mcp_godot_propose_attach_script_to_node",
-	"mcp_godot_attach_script_to_node",
-	"mcp_godot_propose_connect_signal_in_scene",
-	"mcp_godot_connect_signal_in_scene",
-	"mcp_godot_propose_apply_scene_patch",
-	"mcp_godot_apply_scene_patch",
-	"mcp_godot_editor_apply_scene_patch",
-	"mcp_godot_propose_set_project_setting",
-	"mcp_godot_set_project_setting",
-	"mcp_godot_propose_unset_project_setting",
-	"mcp_godot_unset_project_setting",
-	"mcp_terminal_run_write_preset",
-	"mcp_terminal_run_godot_scene_script"
-];
+export const WRITE_TOOLS: string[] = getDefaultWorkflowToolNames("write");
 
 const PHASE_TEMPLATES: Record<FixedWorkflowPhaseId, WorkflowPhase> = {
 	inspect: {

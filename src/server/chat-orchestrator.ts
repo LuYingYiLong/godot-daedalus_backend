@@ -349,7 +349,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				}
 				const activeSkillId: SkillId | undefined = effectiveParams.skillId ?? session.activeSkillId;
 				const activeSkill = activeSkillId !== undefined ? getSkill(activeSkillId) : undefined;
-				const allowedToolNames: readonly string[] | undefined = resolveAllowedToolsForChatParams(effectiveParams, activeSkill?.allowedTools);
+				const allowedToolNames: readonly string[] | undefined = resolveAllowedToolsForChatParams(effectiveParams, activeSkill?.allowedTools, session.activeWorkspace?.id);
 				const promptId = effectiveParams.promptId ?? (activeSkillId !== undefined ? getSkill(activeSkillId).defaultPromptId : undefined);
 				const systemPrompt: string = await composeSystemPrompt(
 					promptId,

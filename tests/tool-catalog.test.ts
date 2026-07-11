@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { clearDynamicMcpToolsForWorkspace, replaceDynamicMcpToolsForWorkspace } from "../src/tools/dynamic-mcp-tools.js";
 import { createWorkspaceToolCatalog } from "../src/tools/tool-catalog.js";
+import { getDefaultWorkflowToolNames } from "../src/tools/tool-catalog.js";
 import { CUSTOM_MCP_TOOLS_SENTINEL } from "../src/tools/tool-sentinels.js";
 
 function getFunctionToolName(tool: { type: string; function?: { name: string } | undefined }): string {
@@ -52,4 +53,16 @@ test("workspace tool catalog keeps builtin metadata complete", (): void => {
 	assert.deepEqual(sceneCapture?.mapping, { serverId: "godot_editor", toolName: "capture_scene_view" });
 	assert.equal(sceneCapture?.policy.risk, "read");
 	assert.equal(sceneCapture?.capabilityRequirement, "sceneViewCapture");
+});
+
+test("workflow defaults are catalog-backed and resolve to known tools", (): void => {
+	const catalog = createWorkspaceToolCatalog();
+	for (const group of ["read", "verify", "write"] as const) {
+		for (const toolName of getDefaultWorkflowToolNames(group)) {
+			if (toolName === CUSTOM_MCP_TOOLS_SENTINEL) {
+				continue;
+			}
+			assert.notEqual(catalog.getEntry(toolName), undefined, `${group} tool is missing from catalog: ${toolName}`);
+		}
+	}
 });

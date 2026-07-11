@@ -229,6 +229,10 @@ function parseTerminalSummary(record: Record<string, unknown>, args: Record<stri
 	};
 }
 
+function isGodotRuntimeTool(toolName: string): boolean {
+	return toolName === "mcp_godot_launch_editor" || toolName === "mcp_godot_run_project" || toolName === "mcp_godot_stop_project";
+}
+
 function parseGenericJsonSummary(toolName: string, record: Record<string, unknown>, args: Record<string, unknown>): ParsedToolResultSummary {
 	const ok: boolean | undefined = getBoolean(record.ok) ?? getBoolean(record.valid);
 	const failedChecks: string[] = [];
@@ -267,7 +271,7 @@ export function parseToolResultSummary(
 		};
 	}
 
-	if (toolName === "mcp_terminal_run_safe_preset" || toolName === "mcp_terminal_run_write_preset") {
+	if (toolName === "mcp_terminal_run_safe_preset" || toolName === "mcp_terminal_run_write_preset" || isGodotRuntimeTool(toolName)) {
 		return parseTerminalSummary(record, args);
 	}
 

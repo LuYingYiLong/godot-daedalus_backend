@@ -16,7 +16,10 @@ export const skillIdSchema = z.enum([
 	"backend.helper"
 ]);
 
-export const providerIdSchema = z.enum(["deepseek", "moonshot", "openai"]);
+export const providerIdSchema = z.string()
+	.min(1)
+	.max(80)
+	.regex(/^[a-z][a-z0-9._-]*$/u, "Provider id must be lowercase ASCII with digits, dot, underscore, or dash.");
 
 const imageContextDataSchema = z.object({
 	mimeType: z.enum(SUPPORTED_IMAGE_MIME_TYPES as [string, ...string[]]),

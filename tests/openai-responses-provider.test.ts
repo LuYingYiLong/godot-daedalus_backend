@@ -16,7 +16,8 @@ import { getProviderDefaultBaseUrl, getProviderDefaultModel, getProviderIds } fr
 
 test("provider schema and registry include official OpenAI provider", (): void => {
 	assert.equal(providerIdSchema.safeParse("openai").success, true);
-	assert.equal(providerIdSchema.safeParse("anthropic").success, false);
+	assert.equal(providerIdSchema.safeParse("anthropic").success, true);
+	assert.equal(providerIdSchema.safeParse("Anthropic").success, false);
 	assert.ok(getProviderIds().includes("openai"));
 	assert.equal(getProviderDefaultModel("openai"), "gpt-5.5");
 	assert.equal(getProviderDefaultBaseUrl("openai"), "https://api.openai.com/v1");

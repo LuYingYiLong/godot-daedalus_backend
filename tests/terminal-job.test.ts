@@ -143,6 +143,26 @@ test("terminal job result parser exposes running job wakeup metadata", (): void 
 	assert.equal(summary.terminalJobWakeAfterMs, 1000);
 });
 
+test("Godot runtime result parser exposes running job wakeup metadata", (): void => {
+	const summary = parseToolResultSummary(
+		"mcp_godot_run_project",
+		{ scenePath: "scenes/main.tscn" },
+		JSON.stringify({
+			preset: "godot.run_project",
+			status: "running",
+			jobId: "terminal-job-godot",
+			wakeAfterMs: 1000,
+			scenePath: "scenes/main.tscn"
+		})
+	);
+
+	assert.equal(summary.validationStatus, "unknown");
+	assert.equal(summary.terminalJobId, "terminal-job-godot");
+	assert.equal(summary.terminalJobStatus, "running");
+	assert.equal(summary.terminalJobWakeAfterMs, 1000);
+	assert.deepEqual(summary.artifactRefs, ["scenes/main.tscn"]);
+});
+
 test("terminal preset wrappers accept only their risk boundary", async (): Promise<void> => {
 	const server: FakeMcpServer = createFakeTerminalServer();
 	registerTerminalTools(server as never);

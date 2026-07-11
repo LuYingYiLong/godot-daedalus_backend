@@ -6,6 +6,34 @@ export type ToolMapping = {
 };
 
 export const BUILTIN_TOOL_MAPPINGS: Record<string, ToolMapping> = {
+	"mcp_godot_get_runtime_status": {
+		serverId: "godot",
+		toolName: "get_runtime_status"
+	},
+	"mcp_godot_get_godot_version": {
+		serverId: "godot",
+		toolName: "get_godot_version"
+	},
+	"mcp_godot_launch_editor": {
+		serverId: "godot",
+		toolName: "launch_editor"
+	},
+	"mcp_godot_run_project": {
+		serverId: "godot",
+		toolName: "run_project"
+	},
+	"mcp_godot_stop_project": {
+		serverId: "godot",
+		toolName: "stop_project"
+	},
+	"mcp_godot_get_debug_output": {
+		serverId: "godot",
+		toolName: "get_debug_output"
+	},
+	"mcp_godot_list_projects": {
+		serverId: "godot",
+		toolName: "list_projects"
+	},
 	"mcp_godot_get_project_summary": {
 		serverId: "godot",
 		toolName: "get_project_summary"
@@ -69,6 +97,30 @@ export const BUILTIN_TOOL_MAPPINGS: Record<string, ToolMapping> = {
 	"mcp_godot_get_recent_projects": {
 		serverId: "godot",
 		toolName: "get_recent_projects"
+	},
+	"mcp_godot_get_uid": {
+		serverId: "godot",
+		toolName: "get_uid"
+	},
+	"mcp_godot_resave_resource": {
+		serverId: "godot",
+		toolName: "resave_resource"
+	},
+	"mcp_godot_update_project_uids": {
+		serverId: "godot",
+		toolName: "update_project_uids"
+	},
+	"mcp_godot_save_scene_variant": {
+		serverId: "godot",
+		toolName: "save_scene_variant"
+	},
+	"mcp_godot_load_sprite_texture": {
+		serverId: "godot",
+		toolName: "load_sprite_texture"
+	},
+	"mcp_godot_export_mesh_library": {
+		serverId: "godot",
+		toolName: "export_mesh_library"
 	},
 	"mcp_godot_propose_set_project_setting": {
 		serverId: "godot",

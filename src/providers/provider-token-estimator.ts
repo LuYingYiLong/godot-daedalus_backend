@@ -1,7 +1,9 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
-import type { ProviderChatOptions } from "./deepseek-client.js";
-import { resolveChatModel } from "./deepseek-client.js";
+import type { ProviderChatOptions } from "./provider-types.js";
+import { resolveChatModel } from "./provider-chat-completions-client.js";
 import { getProviderDefaultBaseUrl, getProviderDefinition } from "./provider-registry.js";
+import { resolveProviderAdapter } from "./provider-adapter.js";
+import "./provider-adapters.js";
 
 function normalizeBaseUrl(baseUrl: string): string {
 	return baseUrl.replace(/\/+$/, "");
@@ -34,7 +36,7 @@ function readTotalTokens(value: unknown): number {
 	return Math.max(1, Math.ceil(totalTokens));
 }
 
-export async function estimateProviderMessagesTokens(
+export async function estimateOpenAICompatibleMessagesTokens(
 	options: ProviderChatOptions,
 	messages: ChatCompletionMessageParam[],
 	abortSignal?: AbortSignal | undefined
@@ -66,6 +68,18 @@ export async function estimateProviderMessagesTokens(
 	}
 
 	return readTotalTokens(await response.json() as unknown);
+}
+
+export async function estimateProviderMessagesTokens(
+	options: ProviderChatOptions,
+	messages: ChatCompletionMessageParam[],
+	abortSignal?: AbortSignal | undefined
+): Promise<number | null> {
+	const estimator = resolveProviderAdapter(options).estimateMessagesTokens;
+	if (estimator === undefined) {
+		return null;
+	}
+	return estimator(options, messages, abortSignal);
 }
 
 export async function estimateProviderTextTokens(

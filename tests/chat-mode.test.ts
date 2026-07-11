@@ -3,7 +3,7 @@ import test from "node:test";
 import { aiChatParamsSchema } from "../src/protocol/schema.js";
 import type { AiChatParams } from "../src/protocol/types.js";
 import { composeSystemPrompt } from "../src/prompts/registry.js";
-import { getPlanSafeDynamicMcpToolNames, replaceDynamicMcpTools } from "../src/tools/dynamic-mcp-tools.js";
+import { clearDynamicMcpToolsForWorkspace, getPlanSafeDynamicMcpToolNames, replaceDynamicMcpToolsForWorkspace } from "../src/tools/dynamic-mcp-tools.js";
 import { CUSTOM_MCP_TOOLS_SENTINEL } from "../src/tools/tool-sentinels.js";
 import { READ_TOOLS, VERIFY_TOOLS, WRITE_TOOLS } from "../src/workflow/planner.js";
 import { normalizeChatParamsForMode, resolveAllowedToolsForChatParams } from "../src/server/chat-mode.js";
@@ -61,7 +61,8 @@ test("ask mode normalizes workflow and tool budget without mutating agent mode",
 });
 
 test("ask and plan modes allow built-in read, verify and plan-safe custom MCP tools", (): void => {
-	replaceDynamicMcpTools([
+	const workspaceId: string = "chat-mode-workspace";
+	replaceDynamicMcpToolsForWorkspace(workspaceId, [
 		{
 			serverId: "context7",
 			serverName: "context7",
@@ -83,7 +84,8 @@ test("ask and plan modes allow built-in read, verify and plan-safe custom MCP to
 				toolBudget: "project_edit"
 			}
 		},
-		WRITE_TOOLS
+		WRITE_TOOLS,
+		workspaceId
 	);
 
 	assert.ok(allowedTools !== undefined);
@@ -97,7 +99,7 @@ test("ask and plan modes allow built-in read, verify and plan-safe custom MCP to
 		assert.equal(allowedTools.includes(toolName), false, `unexpected write tool ${toolName}`);
 	}
 	assert.equal(allowedTools.includes(CUSTOM_MCP_TOOLS_SENTINEL), false);
-	const planSafeDynamicToolNames: string[] = getPlanSafeDynamicMcpToolNames();
+	const planSafeDynamicToolNames: string[] = getPlanSafeDynamicMcpToolNames(workspaceId);
 	assert.equal(planSafeDynamicToolNames.length, 1);
 	assert.equal(allowedTools.includes(planSafeDynamicToolNames[0] ?? ""), true);
 
@@ -110,10 +112,11 @@ test("ask and plan modes allow built-in read, verify and plan-safe custom MCP to
 				toolBudget: "project_edit"
 			}
 		},
-		WRITE_TOOLS
+		WRITE_TOOLS,
+		workspaceId
 	);
 	assert.deepEqual(planAllowedTools, allowedTools);
-	replaceDynamicMcpTools([]);
+	clearDynamicMcpToolsForWorkspace(workspaceId);
 });
 
 test("ask mode prompt contains advisor constraints before custom instructions", async (): Promise<void> => {

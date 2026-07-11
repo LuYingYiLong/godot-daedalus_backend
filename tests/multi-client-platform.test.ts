@@ -266,18 +266,18 @@ test("custom MCP dynamic tools are scoped by workspace context", async (): Promi
 	}]);
 
 	try {
-		const workspaceAToolNames = await withMcpRequestContext({ workspaceId: "workspace-a" }, async (): Promise<string[]> => getDynamicMcpToolNames());
-		const workspaceBToolNames = await withMcpRequestContext({ workspaceId: "workspace-b" }, async (): Promise<string[]> => getDynamicMcpToolNames());
+		const workspaceAToolNames: string[] = getDynamicMcpToolNames("workspace-a");
+		const workspaceBToolNames: string[] = getDynamicMcpToolNames("workspace-b");
 		assert.equal(workspaceAToolNames.length, 1);
 		assert.equal(workspaceBToolNames.length, 1);
 		assert.notEqual(workspaceAToolNames[0], workspaceBToolNames[0]);
 
-		const workspaceAMapping = await withMcpRequestContext({ workspaceId: "workspace-a" }, async () => getDynamicMcpToolMapping(workspaceAToolNames[0]!));
-		const workspaceBMapping = await withMcpRequestContext({ workspaceId: "workspace-b" }, async () => getDynamicMcpToolMapping(workspaceBToolNames[0]!));
+		const workspaceAMapping = getDynamicMcpToolMapping(workspaceAToolNames[0]!, "workspace-a");
+		const workspaceBMapping = getDynamicMcpToolMapping(workspaceBToolNames[0]!, "workspace-b");
 		assert.deepEqual(workspaceAMapping, { serverId: "custom-a", toolName: "echo" });
 		assert.deepEqual(workspaceBMapping, { serverId: "custom-b", toolName: "echo" });
 
-		const hiddenAcrossWorkspace = await withMcpRequestContext({ workspaceId: "workspace-b" }, async () => getDynamicMcpToolMapping(workspaceAToolNames[0]!));
+		const hiddenAcrossWorkspace = getDynamicMcpToolMapping(workspaceAToolNames[0]!, "workspace-b");
 		assert.equal(hiddenAcrossWorkspace, undefined);
 	} finally {
 		clearDynamicMcpToolsForWorkspace("workspace-a");

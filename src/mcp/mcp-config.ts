@@ -50,5 +50,3 @@ export function buildMcpServerConfigs(workspace?: WorkspaceConfig): McpServerCon
 	});
 	return configs;
 }
-
-export const mcpServerConfigs: McpServerConfig[] = buildMcpServerConfigs();

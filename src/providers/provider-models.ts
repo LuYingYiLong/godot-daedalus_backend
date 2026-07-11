@@ -2,11 +2,15 @@ import type { ProviderId } from "../protocol/types.js";
 import {
 	getProviderDefinition,
 	getProviderFallbackModels,
+	getProviderDefaultEndpointType,
 	type ProviderModelCapabilities,
 	type ProviderModelInfo
 } from "./provider-registry.js";
 import { getProviderModelsCache, saveProviderModelsCache, type StoredProviderModelsCache } from "./provider-config-store.js";
 import { resolveProviderBaseUrl } from "./provider-base-url.js";
+import type { ProviderChatOptions } from "./provider-types.js";
+import { resolveProviderAdapter } from "./provider-adapter.js";
+import "./provider-adapters.js";
 
 export type ProviderModelsListResult = {
 	provider: ProviderId;
@@ -15,6 +19,9 @@ export type ProviderModelsListResult = {
 	source: "api" | "cache" | "fallback";
 	error?: string | undefined;
 };
+
+const FALLBACK_CONTEXT_WINDOW_TOKENS: number = 128_000;
+const FALLBACK_MAX_OUTPUT_TOKENS: number = 8_192;
 
 function createDisplayName(modelId: string): string {
 	return modelId
@@ -31,45 +38,13 @@ function inferContextLength(provider: ProviderId, modelId: string, rawContextLen
 
 	const fallback: ProviderModelInfo | undefined = getProviderFallbackModels(provider)
 		.find((model: ProviderModelInfo): boolean => model.id === modelId);
-	if (fallback !== undefined) {
-		return fallback.contextWindowTokens;
-	}
-
-	if (provider === "deepseek") {
-		return 1_000_000;
-	}
-	if (provider === "openai") {
-		return 400_000;
-	}
-
-	const lowerId: string = modelId.toLowerCase();
-	if (lowerId.includes("8k")) {
-		return 8_192;
-	}
-	if (lowerId.includes("32k")) {
-		return 32_768;
-	}
-	if (lowerId.includes("128k")) {
-		return 131_072;
-	}
-	return 256_000;
+	return fallback?.contextWindowTokens ?? FALLBACK_CONTEXT_WINDOW_TOKENS;
 }
 
 function inferMaxOutputTokens(provider: ProviderId, modelId: string, contextWindowTokens: number): number {
 	const fallback: ProviderModelInfo | undefined = getProviderFallbackModels(provider)
 		.find((model: ProviderModelInfo): boolean => model.id === modelId);
-	if (fallback !== undefined) {
-		return fallback.maxOutputTokens;
-	}
-
-	if (provider === "deepseek") {
-		return 384_000;
-	}
-	if (provider === "openai") {
-		return Math.min(128_000, Math.max(4_096, Math.floor(contextWindowTokens / 3)));
-	}
-
-	return contextWindowTokens <= 8_192 ? 4_096 : Math.min(32_000, Math.max(4_096, Math.floor(contextWindowTokens / 4)));
+	return fallback?.maxOutputTokens ?? Math.min(FALLBACK_MAX_OUTPUT_TOKENS, Math.max(4_096, Math.floor(contextWindowTokens / 4)));
 }
 
 function normalizeCapabilities(raw: Record<string, unknown>, fallback: ProviderModelInfo | undefined): ProviderModelCapabilities {
@@ -94,6 +69,7 @@ function parseApiModels(provider: ProviderId, value: unknown): ProviderModelInfo
 		throw new Error("Provider model list response does not contain data[]");
 	}
 
+	const endpointType = getProviderDefaultEndpointType(provider);
 	const models: ProviderModelInfo[] = [];
 	for (const item of data) {
 		if (typeof item !== "object" || item === null || Array.isArray(item)) {
@@ -109,15 +85,21 @@ function parseApiModels(provider: ProviderId, value: unknown): ProviderModelInfo
 		const fallback: ProviderModelInfo | undefined = getProviderFallbackModels(provider)
 			.find((model: ProviderModelInfo): boolean => model.id === id);
 		const contextWindowTokens: number = inferContextLength(provider, id, record.context_length);
-		models.push({
+		const model: ProviderModelInfo = {
 			id,
 			displayName: fallback?.displayName ?? createDisplayName(id),
 			provider,
+			endpointType: fallback?.endpointType ?? endpointType,
 			contextWindowTokens,
 			maxOutputTokens: inferMaxOutputTokens(provider, id, contextWindowTokens),
-			capabilities: normalizeCapabilities(record, fallback),
-			ownedBy: typeof record.owned_by === "string" ? record.owned_by : fallback?.ownedBy
-		});
+			capabilities: normalizeCapabilities(record, fallback)
+		};
+		if (typeof record.owned_by === "string") {
+			model.ownedBy = record.owned_by;
+		} else if (fallback?.ownedBy !== undefined) {
+			model.ownedBy = fallback.ownedBy;
+		}
+		models.push(model);
 	}
 
 	if (models.length === 0) {
@@ -127,12 +109,12 @@ function parseApiModels(provider: ProviderId, value: unknown): ProviderModelInfo
 	return models;
 }
 
-async function fetchProviderModels(provider: ProviderId, apiKey: string, baseUrl?: string | undefined): Promise<ProviderModelInfo[]> {
-	const endpoint: string = `${resolveProviderBaseUrl(provider, baseUrl)}${getProviderDefinition(provider).modelsPath}`;
+export async function fetchOpenAICompatibleModels(options: ProviderChatOptions): Promise<ProviderModelInfo[]> {
+	const endpoint: string = `${resolveProviderBaseUrl(options.provider, options.baseUrl)}${getProviderDefinition(options.provider).modelsPath}`;
 	const response: Response = await fetch(endpoint, {
 		method: "GET",
 		headers: {
-			"Authorization": `Bearer ${apiKey}`
+			"Authorization": `Bearer ${options.apiKey}`
 		}
 	});
 
@@ -141,7 +123,7 @@ async function fetchProviderModels(provider: ProviderId, apiKey: string, baseUrl
 	}
 
 	const body: unknown = await response.json() as unknown;
-	return parseApiModels(provider, body);
+	return parseApiModels(options.provider, body);
 }
 
 export async function listProviderModels(
@@ -150,9 +132,10 @@ export async function listProviderModels(
 	baseUrl: string | undefined,
 	refresh: boolean = false
 ): Promise<ProviderModelsListResult> {
+	const options: ProviderChatOptions = { provider, apiKey: apiKey ?? "", baseUrl };
 	if (apiKey !== undefined && refresh) {
 		try {
-			const models: ProviderModelInfo[] = await fetchProviderModels(provider, apiKey, baseUrl);
+			const models: ProviderModelInfo[] = await resolveProviderAdapter(options).listModels(options, refresh);
 			await saveProviderModelsCache(provider, models);
 			return { provider, models, stale: false, source: "api" };
 		} catch (error: unknown) {
@@ -184,7 +167,7 @@ export async function listProviderModels(
 
 	if (apiKey !== undefined) {
 		try {
-			const models: ProviderModelInfo[] = await fetchProviderModels(provider, apiKey, baseUrl);
+			const models: ProviderModelInfo[] = await resolveProviderAdapter(options).listModels(options);
 			await saveProviderModelsCache(provider, models);
 			return { provider, models, stale: false, source: "api" };
 		} catch (error: unknown) {

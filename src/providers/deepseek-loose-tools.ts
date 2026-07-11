@@ -7,6 +7,13 @@ const PARAMETER_TAG_PATTERN: RegExp = new RegExp(`<\\s*(${XML_NAME_PATTERN})\\s*
 const ATTRIBUTE_PATTERN: RegExp = new RegExp(`(${XML_NAME_PATTERN})\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "g");
 
 const RAW_TOOL_NAME_MAP: Readonly<Record<string, string>> = {
+	get_runtime_status: "mcp_godot_get_runtime_status",
+	get_godot_version: "mcp_godot_get_godot_version",
+	launch_editor: "mcp_godot_launch_editor",
+	run_project: "mcp_godot_run_project",
+	stop_project: "mcp_godot_stop_project",
+	get_debug_output: "mcp_godot_get_debug_output",
+	list_projects: "mcp_godot_list_projects",
 	get_project_summary: "mcp_godot_get_project_summary",
 	list_project_files: "mcp_godot_list_project_files",
 	list_scenes: "mcp_godot_list_scenes",
@@ -23,6 +30,12 @@ const RAW_TOOL_NAME_MAP: Readonly<Record<string, string>> = {
 	read_editor_config_file: "mcp_godot_read_editor_config_file",
 	get_editor_project_state: "mcp_godot_get_editor_project_state",
 	get_recent_projects: "mcp_godot_get_recent_projects",
+	get_uid: "mcp_godot_get_uid",
+	resave_resource: "mcp_godot_resave_resource",
+	update_project_uids: "mcp_godot_update_project_uids",
+	save_scene_variant: "mcp_godot_save_scene_variant",
+	load_sprite_texture: "mcp_godot_load_sprite_texture",
+	export_mesh_library: "mcp_godot_export_mesh_library",
 	propose_set_project_setting: "mcp_godot_propose_set_project_setting",
 	set_project_setting: "mcp_godot_set_project_setting",
 	propose_unset_project_setting: "mcp_godot_propose_unset_project_setting",
@@ -95,6 +108,10 @@ const RELATIVE_PATH_TOOL_NAMES: ReadonlySet<string> = new Set([
 ]);
 
 const SCENE_PATH_TOOL_NAMES: ReadonlySet<string> = new Set([
+	"mcp_godot_run_project",
+	"mcp_godot_save_scene_variant",
+	"mcp_godot_load_sprite_texture",
+	"mcp_godot_export_mesh_library",
 	"mcp_godot_propose_add_node_to_scene",
 	"mcp_godot_add_node_to_scene",
 	"mcp_godot_propose_attach_script_to_node",
@@ -107,6 +124,8 @@ const SCENE_PATH_TOOL_NAMES: ReadonlySet<string> = new Set([
 ]);
 
 const RESOURCE_PATH_TOOL_NAMES: ReadonlySet<string> = new Set([
+	"mcp_godot_get_uid",
+	"mcp_godot_resave_resource",
 	"mcp_godot_lsp_get_file_diagnostics",
 	"mcp_godot_lsp_get_document_symbols",
 	"mcp_godot_lsp_hover",
@@ -204,6 +223,21 @@ function normalizeParameterName(toolName: string, parameterName: string): string
 	}
 
 	if (
+		(toolName === "mcp_godot_save_scene_variant" || toolName === "mcp_godot_export_mesh_library")
+		&& (localParameterName === "output" || localParameterName === "outputPath")
+	) {
+		return "outputPath";
+	}
+
+	if (toolName === "mcp_godot_load_sprite_texture" && (localParameterName === "texture" || localParameterName === "texturePath")) {
+		return "texturePath";
+	}
+
+	if (toolName === "mcp_godot_update_project_uids" && (localParameterName === "path" || localParameterName === "directory" || localParameterName === "resourcePath")) {
+		return "subdir";
+	}
+
+	if (
 		(toolName === "mcp_godot_get_project_settings"
 			|| toolName === "mcp_godot_propose_set_project_setting"
 			|| toolName === "mcp_godot_set_project_setting"
@@ -215,6 +249,10 @@ function normalizeParameterName(toolName: string, parameterName: string): string
 	}
 
 	if (localParameterName === "path" || localParameterName === "resourcePath") {
+		if (toolName === "mcp_godot_list_projects") {
+			return "directory";
+		}
+
 		if (SCENE_PATH_TOOL_NAMES.has(toolName)) {
 			return "scenePath";
 		}
@@ -254,6 +292,10 @@ function defaultParameterName(toolName: string): string | undefined {
 
 	if (toolName === "mcp_godot_search_text") {
 		return "query";
+	}
+
+	if (toolName === "mcp_godot_list_projects") {
+		return "directory";
 	}
 
 	if (toolName === "mcp_godot_editor_inspect_node") {

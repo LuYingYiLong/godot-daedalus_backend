@@ -2,7 +2,242 @@ import type { ChatCompletionTool } from "openai/resources/chat/completions";
 import { CUSTOM_MCP_TOOLS_SENTINEL } from "./tool-sentinels.js";
 import { getDynamicMcpToolDefinitions, isDynamicMcpToolName } from "./dynamic-mcp-tools.js";
 
+function createSceneToolDefinition(
+	name: string,
+	description: string,
+	properties: Record<string, unknown>,
+	required: string[]
+): ChatCompletionTool {
+	return {
+		type: "function",
+		function: {
+			name,
+			description,
+			parameters: {
+				type: "object",
+				properties,
+				required
+			}
+		}
+	};
+}
+
+const GODOT_RUNTIME_TOOL_DEFINITIONS: ChatCompletionTool[] = [
+	createSceneToolDefinition(
+		"mcp_godot_get_runtime_status",
+		"读取当前 Godot runtime 状态，包括 Godot 可执行文件、项目路径和 active runtime job。",
+		{},
+		[]
+	),
+	createSceneToolDefinition(
+		"mcp_godot_get_godot_version",
+		"调用 Godot --version，确认当前 Godot 可执行文件版本。",
+		{},
+		[]
+	),
+	createSceneToolDefinition(
+		"mcp_godot_launch_editor",
+		"启动当前项目的 Godot 编辑器，会创建可查询/可取消的 runtime job，需要审批。",
+		{
+			wakeAfterMs: { type: "number", description: "启动后请求 backend 唤醒 AI 的毫秒数" },
+			timeoutMs: { type: "number", description: "runtime job 超时毫秒，默认按长任务处理" }
+		},
+		[]
+	),
+	createSceneToolDefinition(
+		"mcp_godot_run_project",
+		"运行当前 Godot 项目，可指定场景路径，会创建可查询/可取消的 runtime job，需要审批。",
+		{
+			scenePath: { type: "string", description: "可选场景路径，可用 res:// 或项目相对路径" },
+			debug: { type: "boolean", description: "是否以 debug 模式运行，默认 true" },
+			wakeAfterMs: { type: "number", description: "启动后请求 backend 唤醒 AI 的毫秒数" },
+			timeoutMs: { type: "number", description: "runtime job 超时毫秒，默认按长任务处理" }
+		},
+		[]
+	),
+	createSceneToolDefinition(
+		"mcp_godot_stop_project",
+		"停止当前 active Godot runtime job，或停止指定 runtime jobId，需要审批。",
+		{
+			jobId: { type: "string", description: "可选 runtime job id；为空时停止当前 active job" }
+		},
+		[]
+	),
+	createSceneToolDefinition(
+		"mcp_godot_get_debug_output",
+		"读取当前或指定 Godot runtime job 的 stdout/stderr tail。默认脱敏本机路径。",
+		{
+			jobId: { type: "string", description: "可选 runtime job id；为空时读取当前 active job" },
+			raw: { type: "boolean", description: "是否返回原始本机路径，默认 false" }
+		},
+		[]
+	),
+	createSceneToolDefinition(
+		"mcp_godot_list_projects",
+		"在允许根目录内查找包含 project.godot 的目录。必须显式传 directory，不会扫描未授权位置。",
+		{
+			directory: { type: "string", description: "要扫描的目录，必须位于当前 Godot 项目或后端工作区允许根内" },
+			recursive: { type: "boolean", description: "是否递归扫描，默认 false" }
+		},
+		["directory"]
+	)
+];
+
+const GODOT_HEADLESS_OPERATION_TOOL_DEFINITIONS: ChatCompletionTool[] = [
+	createSceneToolDefinition(
+		"mcp_godot_get_uid",
+		"通过 Godot ResourceLoader 读取资源 UID，只读。",
+		{
+			resourcePath: { type: "string", description: "资源路径，可用 res:// 或项目相对路径" }
+		},
+		["resourcePath"]
+	),
+	createSceneToolDefinition(
+		"mcp_godot_resave_resource",
+		"通过 Godot ResourceSaver 重新保存 .tscn/.tres/.res 资源，用于刷新 UID/import 相关元数据，需要审批。",
+		{
+			resourcePath: { type: "string", description: "资源路径，可用 res:// 或项目相对路径" }
+		},
+		["resourcePath"]
+	),
+	createSceneToolDefinition(
+		"mcp_godot_update_project_uids",
+		"递归重新保存当前项目中的 .tscn/.tres/.res 资源，用于刷新 UID 引用，需要审批。",
+		{
+			subdir: { type: "string", description: "可选子目录，可用 res:// 或项目相对路径；为空时处理整个项目" }
+		},
+		[]
+	),
+	createSceneToolDefinition(
+		"mcp_godot_save_scene_variant",
+		"用 Godot 引擎加载已有 PackedScene 并保存到新 .tscn 路径，需要审批。",
+		{
+			scenePath: { type: "string", description: "已有场景路径" },
+			outputPath: { type: "string", description: "输出 .tscn 路径" }
+		},
+		["scenePath", "outputPath"]
+	),
+	createSceneToolDefinition(
+		"mcp_godot_load_sprite_texture",
+		"通过 Godot 引擎给场景内 Sprite2D/TextureRect 等节点加载贴图并保存场景，需要审批。",
+		{
+			scenePath: { type: "string", description: "要修改的 .tscn 场景路径" },
+			nodePath: { type: "string", description: "目标节点 NodePath" },
+			texturePath: { type: "string", description: "贴图资源路径" }
+		},
+		["scenePath", "nodePath", "texturePath"]
+	),
+	createSceneToolDefinition(
+		"mcp_godot_export_mesh_library",
+		"从 3D 场景中的 MeshInstance3D 节点导出 MeshLibrary .tres/.res，需要审批。",
+		{
+			scenePath: { type: "string", description: "源 3D 场景路径" },
+			outputPath: { type: "string", description: "输出 .tres 或 .res 路径" },
+			meshItemNames: { type: "array", items: { type: "string" }, description: "可选 MeshInstance3D 名称白名单" }
+		},
+		["scenePath", "outputPath"]
+	)
+];
+
+const SCENE_TOOL_DEFINITIONS: ChatCompletionTool[] = [
+	createSceneToolDefinition(
+		"mcp_godot_propose_create_scene",
+		"预览创建 Godot .tscn 场景，不写入文件。确认后使用 mcp_godot_create_scene。",
+		{
+			relativePath: { type: "string", description: "新场景的相对路径，必须以 .tscn 结尾" },
+			rootNodeType: { type: "string", description: "根节点类型，例如 Node2D、Node3D、Control" },
+			rootNodeName: { type: "string", description: "根节点名称" }
+		},
+		["relativePath", "rootNodeType", "rootNodeName"]
+	),
+	createSceneToolDefinition(
+		"mcp_godot_create_scene",
+		"创建 Godot .tscn 场景文件，需要审批。",
+		{
+			relativePath: { type: "string", description: "新场景的相对路径，必须以 .tscn 结尾" },
+			rootNodeType: { type: "string", description: "根节点类型，例如 Node2D、Node3D、Control" },
+			rootNodeName: { type: "string", description: "根节点名称" }
+		},
+		["relativePath", "rootNodeType", "rootNodeName"]
+	),
+	createSceneToolDefinition(
+		"mcp_godot_propose_add_node_to_scene",
+		"预览向现有场景添加节点，不写入文件。确认后使用 mcp_godot_add_node_to_scene。",
+		{
+			scenePath: { type: "string", description: "场景相对路径" },
+			parentPath: { type: "string", description: "父节点路径，根节点使用 ." },
+			nodeType: { type: "string", description: "节点类型" },
+			nodeName: { type: "string", description: "节点名称" },
+			properties: { type: "object", additionalProperties: { type: "string" }, description: "节点属性" }
+		},
+		["scenePath", "parentPath", "nodeType", "nodeName"]
+	),
+	createSceneToolDefinition(
+		"mcp_godot_add_node_to_scene",
+		"向现有场景添加节点，需要审批。",
+		{
+			scenePath: { type: "string", description: "场景相对路径" },
+			parentPath: { type: "string", description: "父节点路径，根节点使用 ." },
+			nodeType: { type: "string", description: "节点类型" },
+			nodeName: { type: "string", description: "节点名称" },
+			properties: { type: "object", additionalProperties: { type: "string" }, description: "节点属性" }
+		},
+		["scenePath", "parentPath", "nodeType", "nodeName"]
+	),
+	createSceneToolDefinition(
+		"mcp_godot_propose_attach_script_to_node",
+		"预览给场景节点挂载脚本，不写入文件。确认后使用 mcp_godot_attach_script_to_node。",
+		{
+			scenePath: { type: "string", description: "场景相对路径" },
+			nodePath: { type: "string", description: "目标节点路径" },
+			scriptPath: { type: "string", description: "脚本资源路径" }
+		},
+		["scenePath", "nodePath", "scriptPath"]
+	),
+	createSceneToolDefinition(
+		"mcp_godot_attach_script_to_node",
+		"给场景节点挂载脚本，需要审批。",
+		{
+			scenePath: { type: "string", description: "场景相对路径" },
+			nodePath: { type: "string", description: "目标节点路径" },
+			scriptPath: { type: "string", description: "脚本资源路径" }
+		},
+		["scenePath", "nodePath", "scriptPath"]
+	),
+	createSceneToolDefinition(
+		"mcp_godot_propose_connect_signal_in_scene",
+		"预览场景信号连接，不写入文件。确认后使用 mcp_godot_connect_signal_in_scene。",
+		{
+			scenePath: { type: "string", description: "场景相对路径" },
+			signal: { type: "string", description: "信号名称" },
+			fromNode: { type: "string", description: "发送节点路径" },
+			toNode: { type: "string", description: "接收节点路径" },
+			method: { type: "string", description: "回调方法" },
+			flags: { type: "integer", description: "连接标志" },
+			binds: { type: "string", description: "绑定参数" }
+		},
+		["scenePath", "signal", "fromNode", "toNode", "method"]
+	),
+	createSceneToolDefinition(
+		"mcp_godot_connect_signal_in_scene",
+		"在场景中连接信号，需要审批。",
+		{
+			scenePath: { type: "string", description: "场景相对路径" },
+			signal: { type: "string", description: "信号名称" },
+			fromNode: { type: "string", description: "发送节点路径" },
+			toNode: { type: "string", description: "接收节点路径" },
+			method: { type: "string", description: "回调方法" },
+			flags: { type: "integer", description: "连接标志" },
+			binds: { type: "string", description: "绑定参数" }
+		},
+		["scenePath", "signal", "fromNode", "toNode", "method"]
+	)
+];
+
 export const BUILTIN_TOOL_DEFINITIONS: ChatCompletionTool[] = [
+	...GODOT_RUNTIME_TOOL_DEFINITIONS,
+	...GODOT_HEADLESS_OPERATION_TOOL_DEFINITIONS,
+	...SCENE_TOOL_DEFINITIONS,
 	{
 		type: "function",
 		function: {

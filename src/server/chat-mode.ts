@@ -3,12 +3,16 @@ import { getPlanSafeDynamicMcpToolNames } from "../tools/dynamic-mcp-tools.js";
 import { CUSTOM_MCP_TOOLS_SENTINEL } from "../tools/tool-sentinels.js";
 import { READ_TOOLS, VERIFY_TOOLS, WRITE_TOOLS } from "../workflow/planner.js";
 
-export function resolveAllowedToolsForChatParams(params: AiChatParams, activeSkillTools: readonly string[] | undefined): readonly string[] | undefined {
+export function resolveAllowedToolsForChatParams(
+	params: AiChatParams,
+	activeSkillTools: readonly string[] | undefined,
+	workspaceId?: string | undefined
+): readonly string[] | undefined {
 	if (params.mode === "ask" || params.mode === "plan") {
 		return [
 			...READ_TOOLS.filter((toolName: string): boolean => toolName !== CUSTOM_MCP_TOOLS_SENTINEL),
 			...VERIFY_TOOLS,
-			...getPlanSafeDynamicMcpToolNames()
+			...getPlanSafeDynamicMcpToolNames(workspaceId)
 		];
 	}
 

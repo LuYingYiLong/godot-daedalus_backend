@@ -1,0 +1,142 @@
+[
+  {
+    "id": "deepseek-v4-flash",
+    "displayName": "DeepSeek V4 Flash",
+    "provider": "deepseek",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 1000000,
+    "maxOutputTokens": 384000,
+    "capabilities": { "reasoning": true },
+    "ownedBy": "deepseek"
+  },
+  {
+    "id": "deepseek-v4-pro",
+    "displayName": "DeepSeek V4 Pro",
+    "provider": "deepseek",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 1000000,
+    "maxOutputTokens": 384000,
+    "capabilities": { "reasoning": true },
+    "ownedBy": "deepseek"
+  },
+  {
+    "id": "kimi-k2.7-code",
+    "displayName": "Kimi K2.7 Code",
+    "provider": "moonshot",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 256000,
+    "maxOutputTokens": 32000,
+    "capabilities": { "reasoning": true },
+    "ownedBy": "moonshot"
+  },
+  {
+    "id": "kimi-k2.7-code-highspeed",
+    "displayName": "Kimi K2.7 Code Highspeed",
+    "provider": "moonshot",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 256000,
+    "maxOutputTokens": 32000,
+    "capabilities": { "reasoning": true },
+    "ownedBy": "moonshot"
+  },
+  {
+    "id": "kimi-k2.6",
+    "displayName": "Kimi K2.6",
+    "provider": "moonshot",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 256000,
+    "maxOutputTokens": 32000,
+    "capabilities": { "imageInput": true, "videoInput": true, "reasoning": true },
+    "ownedBy": "moonshot"
+  },
+  {
+    "id": "kimi-k2.5",
+    "displayName": "Kimi K2.5",
+    "provider": "moonshot",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 256000,
+    "maxOutputTokens": 32000,
+    "capabilities": { "reasoning": true },
+    "ownedBy": "moonshot"
+  },
+  {
+    "id": "moonshot-v1-8k",
+    "displayName": "Moonshot v1 8K",
+    "provider": "moonshot",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 8192,
+    "maxOutputTokens": 4096,
+    "capabilities": {},
+    "ownedBy": "moonshot"
+  },
+  {
+    "id": "moonshot-v1-32k",
+    "displayName": "Moonshot v1 32K",
+    "provider": "moonshot",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 32768,
+    "maxOutputTokens": 8192,
+    "capabilities": {},
+    "ownedBy": "moonshot"
+  },
+  {
+    "id": "moonshot-v1-128k",
+    "displayName": "Moonshot v1 128K",
+    "provider": "moonshot",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 131072,
+    "maxOutputTokens": 8192,
+    "capabilities": {},
+    "ownedBy": "moonshot"
+  },
+  {
+    "id": "moonshot-v1-auto",
+    "displayName": "Moonshot v1 Auto",
+    "provider": "moonshot",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 128000,
+    "maxOutputTokens": 8192,
+    "capabilities": {},
+    "ownedBy": "moonshot"
+  },
+  {
+    "id": "moonshot-v1-8k-vision-preview",
+    "displayName": "Moonshot v1 8K Vision Preview",
+    "provider": "moonshot",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 8192,
+    "maxOutputTokens": 4096,
+    "capabilities": { "imageInput": true },
+    "ownedBy": "moonshot"
+  },
+  {
+    "id": "moonshot-v1-32k-vision-preview",
+    "displayName": "Moonshot v1 32K Vision Preview",
+    "provider": "moonshot",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 32768,
+    "maxOutputTokens": 8192,
+    "capabilities": { "imageInput": true },
+    "ownedBy": "moonshot"
+  },
+  {
+    "id": "moonshot-v1-128k-vision-preview",
+    "displayName": "Moonshot v1 128K Vision Preview",
+    "provider": "moonshot",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 131072,
+    "maxOutputTokens": 8192,
+    "capabilities": { "imageInput": true },
+    "ownedBy": "moonshot"
+  },
+  {
+    "id": "gpt-5.5",
+    "displayName": "GPT-5.5",
+    "provider": "openai",
+    "endpointType": "openai-responses",
+    "contextWindowTokens": 400000,
+    "maxOutputTokens": 128000,
+    "capabilities": { "imageInput": true, "reasoning": true },
+    "ownedBy": "openai"
+  }
+]

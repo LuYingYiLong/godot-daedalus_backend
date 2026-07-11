@@ -8,8 +8,10 @@ import {
 	type ProviderTaskModelRef
 } from "./provider-config-store.js";
 import { getProviderDefaultModel } from "./provider-registry.js";
+import { getProviderAdapterFamily, getProviderDefaultEndpointType } from "./provider-registry.js";
 import { normalizeConfiguredProviderBaseUrl } from "./provider-base-url.js";
 import type { ProviderId } from "../protocol/types.js";
+import { resolveModelProfile } from "../tokens/model-profiles.js";
 
 export type ProviderTaskModelKind = "imageRecognition" | "workflowPlanner" | "sessionTitle";
 
@@ -67,7 +69,10 @@ export async function resolveProviderTaskModelOptions(
 	const options: ProviderChatOptions = {
 		provider: configuredRef.provider,
 		apiKey: config.apiKey,
-		model: configuredRef.model
+		model: configuredRef.model,
+		endpointType: getProviderDefaultEndpointType(configuredRef.provider),
+		adapterFamily: getProviderAdapterFamily(configuredRef.provider),
+		modelProfile: resolveModelProfile(configuredRef.provider, configuredRef.model)
 	};
 	const normalizedBaseUrl: string | undefined = normalizeConfiguredProviderBaseUrl(config.baseUrl);
 	if (normalizedBaseUrl !== undefined) {

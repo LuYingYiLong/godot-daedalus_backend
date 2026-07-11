@@ -19,6 +19,89 @@ export type ToolExecutionContext = {
 
 export type ToolPhaseEligibility = "read" | "verify" | "write";
 
+export type WorkflowToolGroup = "read" | "verify" | "write";
+
+// 这是 workflow 的保守默认工具集，不等同于同风险工具的全集。
+const DEFAULT_WORKFLOW_TOOL_NAMES: Record<WorkflowToolGroup, readonly string[]> = {
+	read: [
+		"mcp_godot_get_runtime_status",
+		"mcp_godot_get_godot_version",
+		"mcp_godot_get_debug_output",
+		"mcp_godot_list_projects",
+		"mcp_godot_get_project_summary",
+		"mcp_godot_list_project_files",
+		"mcp_godot_list_scenes",
+		"mcp_godot_list_scripts",
+		"mcp_godot_read_text_file",
+		"mcp_godot_search_text",
+		"mcp_godot_get_project_log_config",
+		"mcp_godot_list_project_logs",
+		"mcp_godot_read_project_log",
+		"mcp_godot_get_project_settings",
+		"mcp_godot_get_editor_config_summary",
+		"mcp_godot_get_editor_settings",
+		"mcp_godot_list_editor_config_files",
+		"mcp_godot_read_editor_config_file",
+		"mcp_godot_get_editor_project_state",
+		"mcp_godot_get_recent_projects",
+		"mcp_godot_get_uid",
+		"mcp_godot_inspect_scene_tree",
+		"mcp_godot_editor_get_context",
+		"mcp_godot_editor_get_selected_nodes",
+		"mcp_godot_editor_inspect_node",
+		"mcp_godot_editor_capture_scene_view",
+		"mcp_godot_lsp_get_status",
+		"mcp_godot_lsp_get_file_diagnostics",
+		"mcp_godot_lsp_get_document_symbols",
+		"mcp_godot_lsp_hover",
+		"mcp_godot_lsp_goto_definition",
+		"mcp_godot_dap_get_status",
+		"mcp_godot_dap_get_last_error",
+		"mcp_godot_dap_get_stack_trace",
+		"mcp_godot_dap_get_variables",
+		CUSTOM_MCP_TOOLS_SENTINEL
+	],
+	verify: [
+		"mcp_godot_validate_scene_script_references",
+		"mcp_godot_lsp_get_file_diagnostics",
+		"mcp_terminal_get_capabilities",
+		"mcp_terminal_run_safe_preset"
+	],
+	write: [
+		"mcp_godot_propose_create_text_file",
+		"mcp_godot_create_text_file",
+		"mcp_godot_propose_overwrite_text_file",
+		"mcp_godot_overwrite_text_file",
+		"mcp_godot_propose_replace_text_in_file",
+		"mcp_godot_replace_text_in_file",
+		"mcp_godot_propose_create_scene",
+		"mcp_godot_create_scene",
+		"mcp_godot_propose_add_node_to_scene",
+		"mcp_godot_add_node_to_scene",
+		"mcp_godot_propose_attach_script_to_node",
+		"mcp_godot_attach_script_to_node",
+		"mcp_godot_propose_connect_signal_in_scene",
+		"mcp_godot_connect_signal_in_scene",
+		"mcp_godot_propose_apply_scene_patch",
+		"mcp_godot_apply_scene_patch",
+		"mcp_godot_editor_apply_scene_patch",
+		"mcp_godot_launch_editor",
+		"mcp_godot_run_project",
+		"mcp_godot_stop_project",
+		"mcp_godot_resave_resource",
+		"mcp_godot_update_project_uids",
+		"mcp_godot_save_scene_variant",
+		"mcp_godot_load_sprite_texture",
+		"mcp_godot_export_mesh_library",
+		"mcp_godot_propose_set_project_setting",
+		"mcp_godot_set_project_setting",
+		"mcp_godot_propose_unset_project_setting",
+		"mcp_godot_unset_project_setting",
+		"mcp_terminal_run_write_preset",
+		"mcp_terminal_run_godot_scene_script"
+	]
+};
+
 export type ToolCatalogEntry = {
 	id: string;
 	definition: ChatCompletionTool;
@@ -151,4 +234,8 @@ export class WorkspaceToolCatalog {
 
 export function createWorkspaceToolCatalog(context: ToolExecutionContext = {}): WorkspaceToolCatalog {
 	return new WorkspaceToolCatalog(context);
+}
+
+export function getDefaultWorkflowToolNames(group: WorkflowToolGroup): string[] {
+	return [...DEFAULT_WORKFLOW_TOOL_NAMES[group]];
 }

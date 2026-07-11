@@ -120,12 +120,12 @@ test("provider.config.set schema accepts task model routing", (): void => {
 
 	assert.equal(clientRequestSchema.safeParse({
 		type: "request",
-		id: "provider-routing-bad-provider",
+		id: "provider-routing-format-bad-provider",
 		method: "provider.config.set",
 		params: {
-			provider: "deepseek",
+			provider: "DeepSeek",
 			modelRouting: {
-				imageRecognition: { provider: "unknown", model: "vision" }
+				imageRecognition: { provider: "unknown provider", model: "vision" }
 			}
 		}
 	}).success, false);

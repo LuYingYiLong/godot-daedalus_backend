@@ -13,6 +13,7 @@ import {
 	isProviderId,
 	type ProviderModelInfo
 } from "./provider-registry.js";
+import type { ModelRef } from "./provider-types.js";
 
 const KEYTAR_SERVICE: string = "Godot Daedalus";
 
@@ -52,10 +53,10 @@ export type StoredProviderEntry = {
 };
 
 export type StoredProviderConfig = {
-	schemaVersion: 2;
-	activeProvider: ProviderId;
+	schemaVersion: 3;
+	activeModel: ModelRef;
 	providers: Partial<Record<ProviderId, StoredProviderEntry>>;
-	modelRouting?: ProviderModelRouting | undefined;
+	modelRouting: ProviderModelRouting;
 };
 
 export type ProviderConfigWithSecret = {
@@ -82,6 +83,8 @@ export type ProviderConfigProviderStatus = {
 };
 
 export type ProviderConfigStatus = {
+	schemaVersion: 3;
+	activeModel: ModelRef;
 	activeProvider: ProviderId;
 	providers: ProviderConfigProviderStatus[];
 	modelRouting: ProviderModelRouting;
@@ -93,6 +96,11 @@ export type ProviderConfigStatus = {
 	keyStorage: "keytar";
 	configPath: string;
 	updatedAt: string | null;
+};
+
+type ParsedStoredConfig = {
+	config: StoredProviderConfig;
+	migrated: boolean;
 };
 
 function normalizeOptionalString(value: string | undefined): string | undefined {
@@ -116,10 +124,17 @@ function maskApiKey(apiKey: string | null): string | null {
 	return `${apiKey.slice(0, 3)}...${apiKey.slice(-4)}`;
 }
 
-function createEmptyStoredConfig(activeProvider: ProviderId = DEFAULT_PROVIDER_ID): StoredProviderConfig {
+function createModelRef(provider: ProviderId = DEFAULT_PROVIDER_ID, model?: string | undefined): ModelRef {
 	return {
-		schemaVersion: 2,
-		activeProvider,
+		providerId: provider,
+		modelId: normalizeOptionalString(model) ?? getProviderDefaultModel(provider)
+	};
+}
+
+function createEmptyStoredConfig(activeModel: ModelRef = createModelRef()): StoredProviderConfig {
+	return {
+		schemaVersion: 3,
+		activeModel,
 		providers: {},
 		modelRouting: createEmptyModelRouting()
 	};
@@ -139,8 +154,8 @@ function parseTaskModelRef(value: unknown): ProviderTaskModelRef | null {
 	}
 
 	const record: Record<string, unknown> = value as Record<string, unknown>;
-	const provider: unknown = record.provider;
-	const model: unknown = record.model;
+	const provider: unknown = record.provider ?? record.providerId;
+	const model: unknown = record.model ?? record.modelId;
 	if (!isProviderId(provider) || typeof model !== "string" || model.trim().length === 0) {
 		return null;
 	}
@@ -197,6 +212,66 @@ function mergeModelRouting(existing: ProviderModelRouting | undefined, input: Pr
 	return next;
 }
 
+function parseModelInfo(value: unknown): ProviderModelInfo | null {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) {
+		return null;
+	}
+
+	const record: Record<string, unknown> = value as Record<string, unknown>;
+	const provider: unknown = record.provider;
+	const id: unknown = record.id;
+	const displayName: unknown = record.displayName;
+	const contextWindowTokens: unknown = record.contextWindowTokens;
+	const maxOutputTokens: unknown = record.maxOutputTokens;
+	if (!isProviderId(provider) || typeof id !== "string" || id.trim().length === 0) {
+		return null;
+	}
+	if (typeof displayName !== "string" || displayName.trim().length === 0) {
+		return null;
+	}
+	if (typeof contextWindowTokens !== "number" || !Number.isFinite(contextWindowTokens) || contextWindowTokens <= 0) {
+		return null;
+	}
+	if (typeof maxOutputTokens !== "number" || !Number.isFinite(maxOutputTokens) || maxOutputTokens <= 0) {
+		return null;
+	}
+
+	const fallback = getProviderFallbackModels(provider).find((model: ProviderModelInfo): boolean => model.id === id);
+	const model: ProviderModelInfo = {
+		id: id.trim(),
+		displayName: displayName.trim(),
+		provider,
+		endpointType: fallback?.endpointType ?? "openai-chat-completions",
+		contextWindowTokens: Math.floor(contextWindowTokens),
+		maxOutputTokens: Math.floor(maxOutputTokens),
+		capabilities: typeof record.capabilities === "object" && record.capabilities !== null && !Array.isArray(record.capabilities)
+			? { ...(record.capabilities as ProviderModelInfo["capabilities"]) }
+			: {}
+	};
+	if (typeof record.endpointType === "string" && (record.endpointType === "openai-chat-completions" || record.endpointType === "openai-responses")) {
+		model.endpointType = record.endpointType;
+	}
+	if (typeof record.ownedBy === "string") {
+		model.ownedBy = record.ownedBy;
+	}
+	return model;
+}
+
+function parseModelsCache(value: unknown): StoredProviderModelsCache | undefined {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) {
+		return undefined;
+	}
+
+	const record: Record<string, unknown> = value as Record<string, unknown>;
+	if (!Array.isArray(record.models) || typeof record.updatedAt !== "string") {
+		return undefined;
+	}
+	const models: ProviderModelInfo[] = record.models
+		.map(parseModelInfo)
+		.filter((model: ProviderModelInfo | null): model is ProviderModelInfo => model !== null);
+	return models.length > 0 ? { models, updatedAt: record.updatedAt } : undefined;
+}
+
 function parseStoredEntry(value: unknown): StoredProviderEntry | undefined {
 	if (typeof value !== "object" || value === null || Array.isArray(value)) {
 		return undefined;
@@ -214,31 +289,36 @@ function parseStoredEntry(value: unknown): StoredProviderEntry | undefined {
 	if (typeof record.baseUrl === "string" && record.baseUrl.trim().length > 0) {
 		entry.baseUrl = record.baseUrl.trim();
 	}
-	if (isModelsCache(record.modelsCache)) {
-		entry.modelsCache = record.modelsCache;
+	const modelsCache: StoredProviderModelsCache | undefined = parseModelsCache(record.modelsCache);
+	if (modelsCache !== undefined) {
+		entry.modelsCache = modelsCache;
 	}
 
 	return entry;
 }
 
-function isModelsCache(value: unknown): value is StoredProviderModelsCache {
-	if (typeof value !== "object" || value === null || Array.isArray(value)) {
-		return false;
+function parseActiveModel(value: unknown, fallbackProvider?: ProviderId | undefined, fallbackModel?: string | undefined): ModelRef {
+	if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+		const record: Record<string, unknown> = value as Record<string, unknown>;
+		const provider: unknown = record.providerId ?? record.provider;
+		const model: unknown = record.modelId ?? record.model;
+		if (isProviderId(provider) && typeof model === "string" && model.trim().length > 0) {
+			return createModelRef(provider, model);
+		}
 	}
 
-	const record: Record<string, unknown> = value as Record<string, unknown>;
-	return Array.isArray(record.models) && typeof record.updatedAt === "string";
+	return createModelRef(fallbackProvider ?? DEFAULT_PROVIDER_ID, fallbackModel);
 }
 
-function parseStoredProviderConfig(parsed: unknown): StoredProviderConfig | null {
+function parseStoredProviderConfig(parsed: unknown): ParsedStoredConfig {
 	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-		return null;
+		return { config: createEmptyStoredConfig(), migrated: true };
 	}
 
 	const record: Record<string, unknown> = parsed as Record<string, unknown>;
-	if (record.schemaVersion === 2) {
-		const activeProvider: ProviderId = isProviderId(record.activeProvider) ? record.activeProvider : DEFAULT_PROVIDER_ID;
-		const config: StoredProviderConfig = createEmptyStoredConfig(activeProvider);
+	if (record.schemaVersion === 3) {
+		const activeModel: ModelRef = parseActiveModel(record.activeModel);
+		const config: StoredProviderConfig = createEmptyStoredConfig(activeModel);
 		const providersValue: unknown = record.providers;
 		if (typeof providersValue === "object" && providersValue !== null && !Array.isArray(providersValue)) {
 			const providersRecord: Record<string, unknown> = providersValue as Record<string, unknown>;
@@ -250,11 +330,29 @@ function parseStoredProviderConfig(parsed: unknown): StoredProviderConfig | null
 			}
 		}
 		config.modelRouting = parseModelRouting(record.modelRouting);
-
-		return config;
+		return { config, migrated: false };
 	}
 
-	return null;
+	// v2 只在这里迁移一次，后续写回 schemaVersion 3。
+	const activeProvider: ProviderId = isProviderId(record.activeProvider) ? record.activeProvider : DEFAULT_PROVIDER_ID;
+	const providersValue: unknown = record.providers;
+	let activeModel: ModelRef = createModelRef(activeProvider);
+	const config: StoredProviderConfig = createEmptyStoredConfig(activeModel);
+	if (typeof providersValue === "object" && providersValue !== null && !Array.isArray(providersValue)) {
+		const providersRecord: Record<string, unknown> = providersValue as Record<string, unknown>;
+		for (const provider of getProviderIds()) {
+			const entry: StoredProviderEntry | undefined = parseStoredEntry(providersRecord[provider]);
+			if (entry !== undefined) {
+				config.providers[provider] = entry;
+				if (provider === activeProvider) {
+					activeModel = createModelRef(provider, entry.model);
+				}
+			}
+		}
+	}
+	config.activeModel = activeModel;
+	config.modelRouting = parseModelRouting(record.modelRouting);
+	return { config, migrated: true };
 }
 
 async function readStoredProviderConfig(): Promise<StoredProviderConfig> {
@@ -263,7 +361,11 @@ async function readStoredProviderConfig(): Promise<StoredProviderConfig> {
 	try {
 		const raw: string = await readFile(filePath, "utf8");
 		const parsed: unknown = JSON.parse(raw);
-		return parseStoredProviderConfig(parsed) ?? createEmptyStoredConfig();
+		const result: ParsedStoredConfig = parseStoredProviderConfig(parsed);
+		if (result.migrated) {
+			await writeStoredProviderConfig(result.config);
+		}
+		return result.config;
 	} catch {
 		return createEmptyStoredConfig();
 	}
@@ -276,6 +378,10 @@ async function writeStoredProviderConfig(config: StoredProviderConfig): Promise<
 }
 
 export async function saveProviderConfig(input: ProviderConfigInput): Promise<ProviderConfigStatus> {
+	if (!isProviderId(input.provider)) {
+		throw new Error(`Unknown provider: ${input.provider}`);
+	}
+
 	const apiKey: string | undefined = normalizeOptionalString(input.apiKey);
 	if (apiKey !== undefined) {
 		await keytar.setPassword(KEYTAR_SERVICE, getKeytarAccount(input.provider), apiKey);
@@ -288,11 +394,9 @@ export async function saveProviderConfig(input: ProviderConfigInput): Promise<Pr
 		updatedAt: new Date().toISOString()
 	};
 
-	const model: string | undefined = normalizeOptionalString(input.model) ?? existing?.model;
+	const model: string | undefined = normalizeOptionalString(input.model) ?? existing?.model ?? getProviderDefaultModel(input.provider);
 	const baseUrl: string | undefined = input.baseUrl === null ? undefined : (normalizeOptionalString(input.baseUrl) ?? existing?.baseUrl);
-	if (model !== undefined) {
-		entry.model = model;
-	}
+	entry.model = model;
 	if (baseUrl !== undefined && input.baseUrl !== null) {
 		entry.baseUrl = baseUrl;
 	}
@@ -303,7 +407,7 @@ export async function saveProviderConfig(input: ProviderConfigInput): Promise<Pr
 	stored.providers[input.provider] = entry;
 	stored.modelRouting = mergeModelRouting(stored.modelRouting, input.modelRouting);
 	if (input.activate !== false) {
-		stored.activeProvider = input.provider;
+		stored.activeModel = createModelRef(input.provider, model);
 	}
 
 	await writeStoredProviderConfig(stored);
@@ -312,7 +416,10 @@ export async function saveProviderConfig(input: ProviderConfigInput): Promise<Pr
 
 export async function loadProviderConfigWithSecret(provider?: ProviderId | undefined): Promise<ProviderConfigWithSecret | null> {
 	const stored: StoredProviderConfig = await readStoredProviderConfig();
-	const activeProvider: ProviderId = provider ?? stored.activeProvider;
+	const activeProvider: ProviderId = provider ?? stored.activeModel.providerId;
+	if (!isProviderId(activeProvider)) {
+		return null;
+	}
 	const entry: StoredProviderEntry | undefined = stored.providers[activeProvider];
 	const apiKey: string | null = await keytar.getPassword(KEYTAR_SERVICE, getKeytarAccount(activeProvider));
 
@@ -320,12 +427,15 @@ export async function loadProviderConfigWithSecret(provider?: ProviderId | undef
 		return null;
 	}
 
-	return {
+	const result: ProviderConfigWithSecret = {
 		provider: activeProvider,
-		model: entry?.model,
-		baseUrl: entry?.baseUrl,
+		model: entry?.model ?? (activeProvider === stored.activeModel.providerId ? stored.activeModel.modelId : undefined),
 		apiKey: apiKey ?? undefined
 	};
+	if (entry?.baseUrl !== undefined) {
+		result.baseUrl = entry.baseUrl;
+	}
+	return result;
 }
 
 export async function getProviderConfigStatus(): Promise<ProviderConfigStatus> {
@@ -352,13 +462,15 @@ export async function getProviderConfigStatus(): Promise<ProviderConfigStatus> {
 		});
 	}
 
-	const activeStatus: ProviderConfigProviderStatus = providers.find((item: ProviderConfigProviderStatus): boolean => item.provider === stored.activeProvider)
+	const activeStatus: ProviderConfigProviderStatus = providers.find((item: ProviderConfigProviderStatus): boolean => item.provider === stored.activeModel.providerId)
 		?? providers[0]!;
 
 	return {
-		activeProvider: stored.activeProvider,
+		schemaVersion: 3,
+		activeModel: stored.activeModel,
+		activeProvider: stored.activeModel.providerId,
 		providers,
-		modelRouting: stored.modelRouting ?? createEmptyModelRouting(),
+		modelRouting: stored.modelRouting,
 		provider: activeStatus.provider,
 		configured: activeStatus.configured,
 		model: activeStatus.model,
@@ -372,7 +484,11 @@ export async function getProviderConfigStatus(): Promise<ProviderConfigStatus> {
 
 export async function clearProviderConfig(provider?: ProviderId | undefined): Promise<ProviderConfigStatus> {
 	const stored: StoredProviderConfig = await readStoredProviderConfig();
-	const providerToClear: ProviderId = provider ?? stored.activeProvider;
+	const providerToClear: ProviderId = provider ?? stored.activeModel.providerId;
+	if (!isProviderId(providerToClear)) {
+		throw new Error(`Unknown provider: ${providerToClear}`);
+	}
+
 	await keytar.deletePassword(KEYTAR_SERVICE, getKeytarAccount(providerToClear));
 	delete stored.providers[providerToClear];
 
@@ -381,8 +497,9 @@ export async function clearProviderConfig(provider?: ProviderId | undefined): Pr
 		return getProviderConfigStatus();
 	}
 
-	if (stored.activeProvider === providerToClear) {
-		stored.activeProvider = DEFAULT_PROVIDER_ID;
+	if (stored.activeModel.providerId === providerToClear) {
+		const nextProvider: ProviderId = Object.keys(stored.providers).find(isProviderId) ?? DEFAULT_PROVIDER_ID;
+		stored.activeModel = createModelRef(nextProvider, stored.providers[nextProvider]?.model);
 	}
 
 	await writeStoredProviderConfig(stored);
@@ -399,7 +516,8 @@ export async function saveProviderModelsCache(provider: ProviderId, models: Prov
 	const existing: StoredProviderEntry | undefined = stored.providers[provider];
 	const entry: StoredProviderEntry = existing ?? {
 		keyStorage: "keytar",
-		updatedAt: new Date().toISOString()
+		updatedAt: new Date().toISOString(),
+		model: getProviderDefaultModel(provider)
 	};
 	entry.modelsCache = {
 		models,

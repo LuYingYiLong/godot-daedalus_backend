@@ -1,6 +1,13 @@
 import type { ToolPolicy } from "./tool-policy.js";
 
 export const TOOL_POLICIES: Record<string, ToolPolicy> = {
+	"mcp_godot_get_runtime_status": { risk: "read" },
+	"mcp_godot_get_godot_version": { risk: "read" },
+	"mcp_godot_launch_editor": { risk: "write" },
+	"mcp_godot_run_project": { risk: "write" },
+	"mcp_godot_stop_project": { risk: "write" },
+	"mcp_godot_get_debug_output": { risk: "read" },
+	"mcp_godot_list_projects": { risk: "read" },
 	"mcp_godot_get_project_summary": { risk: "read" },
 	"mcp_godot_list_project_files": { risk: "read" },
 	"mcp_godot_list_scenes": { risk: "read" },
@@ -17,6 +24,12 @@ export const TOOL_POLICIES: Record<string, ToolPolicy> = {
 	"mcp_godot_read_editor_config_file": { risk: "read" },
 	"mcp_godot_get_editor_project_state": { risk: "read" },
 	"mcp_godot_get_recent_projects": { risk: "read" },
+	"mcp_godot_get_uid": { risk: "read" },
+	"mcp_godot_resave_resource": { risk: "write" },
+	"mcp_godot_update_project_uids": { risk: "write" },
+	"mcp_godot_save_scene_variant": { risk: "write" },
+	"mcp_godot_load_sprite_texture": { risk: "write" },
+	"mcp_godot_export_mesh_library": { risk: "write" },
 	"mcp_godot_propose_set_project_setting": { risk: "propose" },
 	"mcp_godot_set_project_setting": { risk: "write" },
 	"mcp_godot_propose_unset_project_setting": { risk: "propose" },

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test, { mock } from "node:test";
@@ -47,6 +47,10 @@ test("provider config ignores legacy single-provider file and legacy keytar acco
 		assert.equal(config, null);
 		assert.equal(status.configured, false);
 		assert.equal(status.model, null);
+		assert.deepEqual(status.activeModel, {
+			providerId: "deepseek",
+			modelId: "deepseek-v4-flash"
+		});
 		assert.deepEqual(status.modelRouting, {
 			imageRecognition: null,
 			workflowPlanner: null,
@@ -72,6 +76,50 @@ test("provider config saves keys under provider-scoped keytar accounts", async (
 		});
 
 		assert.deepEqual(savedAccounts, ["provider:deepseek:api_key"]);
+	});
+});
+
+test("provider config migrates v2 provider config to schema v3", async (): Promise<void> => {
+	await withTempAppData(async (): Promise<void> => {
+		const configDir: string = join(process.env.APPDATA!, ".godot_daedalus", "config");
+		const configPath: string = join(configDir, "provider.json");
+		await mkdir(configDir, { recursive: true });
+		await writeFile(configPath, JSON.stringify({
+			schemaVersion: 2,
+			activeProvider: "moonshot",
+			providers: {
+				moonshot: {
+					model: "kimi-k2.6",
+					baseUrl: "https://proxy.example/v1",
+					keyStorage: "keytar",
+					updatedAt: "2026-07-01T00:00:00.000Z"
+				}
+			},
+			modelRouting: {
+				imageRecognition: { provider: "moonshot", model: "kimi-k2.6" }
+			}
+		}), "utf8");
+
+		mock.method(keytar, "getPassword", async (_service: string, account: string): Promise<string | null> => {
+			return account === "provider:moonshot:api_key" ? "moonshot-key" : null;
+		});
+
+		const config = await loadProviderConfigWithSecret();
+		const status = await getProviderConfigStatus();
+		const rawAfterMigration = JSON.parse(await readFile(configPath, "utf8")) as Record<string, unknown>;
+
+		assert.deepEqual(config, {
+			provider: "moonshot",
+			model: "kimi-k2.6",
+			baseUrl: "https://proxy.example/v1",
+			apiKey: "moonshot-key"
+		});
+		assert.equal(status.schemaVersion, 3);
+		assert.deepEqual(status.activeModel, {
+			providerId: "moonshot",
+			modelId: "kimi-k2.6"
+		});
+		assert.equal(rawAfterMigration.schemaVersion, 3);
 	});
 });
 

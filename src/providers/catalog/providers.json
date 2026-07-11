@@ -1,0 +1,51 @@
+[
+  {
+    "id": "deepseek",
+    "displayName": "DeepSeek",
+    "authType": "api-key",
+    "defaultModel": "deepseek-v4-flash",
+    "defaultEndpointType": "openai-chat-completions",
+    "endpointConfigs": {
+      "openai-chat-completions": {
+        "baseUrl": "https://api.deepseek.com",
+        "adapterFamily": "openai-compatible",
+        "modelsPath": "/models"
+      }
+    },
+    "envBaseUrl": "DEEPSEEK_BASE_URL",
+    "envModel": "DEEPSEEK_MODEL"
+  },
+  {
+    "id": "moonshot",
+    "displayName": "Moonshot/Kimi",
+    "authType": "api-key",
+    "defaultModel": "kimi-k2.7-code",
+    "defaultEndpointType": "openai-chat-completions",
+    "endpointConfigs": {
+      "openai-chat-completions": {
+        "baseUrl": "https://api.moonshot.cn/v1",
+        "adapterFamily": "openai-compatible",
+        "modelsPath": "/models",
+        "tokenEstimatePath": "/tokenizers/estimate-token-count"
+      }
+    },
+    "envBaseUrl": "MOONSHOT_BASE_URL",
+    "envModel": "MOONSHOT_MODEL"
+  },
+  {
+    "id": "openai",
+    "displayName": "OpenAI",
+    "authType": "api-key",
+    "defaultModel": "gpt-5.5",
+    "defaultEndpointType": "openai-responses",
+    "endpointConfigs": {
+      "openai-responses": {
+        "baseUrl": "https://api.openai.com/v1",
+        "adapterFamily": "openai-responses",
+        "modelsPath": "/models"
+      }
+    },
+    "envBaseUrl": "OPENAI_BASE_URL",
+    "envModel": "OPENAI_MODEL"
+  }
+]

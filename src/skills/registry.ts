@@ -23,6 +23,10 @@ export type Skill = {
 };
 
 const READ_TOOLS: string[] = [
+	"mcp_godot_get_runtime_status",
+	"mcp_godot_get_godot_version",
+	"mcp_godot_get_debug_output",
+	"mcp_godot_list_projects",
 	"mcp_godot_get_project_summary",
 	"mcp_godot_list_project_files",
 	"mcp_godot_list_scenes",
@@ -39,6 +43,7 @@ const READ_TOOLS: string[] = [
 	"mcp_godot_read_editor_config_file",
 	"mcp_godot_get_editor_project_state",
 	"mcp_godot_get_recent_projects",
+	"mcp_godot_get_uid",
 	"mcp_godot_inspect_scene_tree",
 	"mcp_godot_editor_get_context",
 	"mcp_godot_editor_get_selected_nodes",
@@ -69,7 +74,18 @@ const VERIFY_TOOLS: string[] = [
 
 const TERMINAL_WRITE_TOOLS: string[] = [
 	"mcp_terminal_run_write_preset",
-	"mcp_terminal_run_godot_scene_script"
+	"mcp_terminal_run_godot_scene_script",
+	"mcp_godot_launch_editor",
+	"mcp_godot_run_project",
+	"mcp_godot_stop_project"
+];
+
+const HEADLESS_RESOURCE_WRITE_TOOLS: string[] = [
+	"mcp_godot_resave_resource",
+	"mcp_godot_update_project_uids",
+	"mcp_godot_save_scene_variant",
+	"mcp_godot_load_sprite_texture",
+	"mcp_godot_export_mesh_library"
 ];
 
 const FILE_EDIT_TOOLS: string[] = [
@@ -104,7 +120,7 @@ const skills: Record<SkillId, Skill> = {
 		description: "Inspect the Godot project and create an AGENTS.md project guide.",
 		promptPath: "src/skills/templates/godot-project-init.md",
 		defaultPromptId: "godot.assistant",
-		allowedTools: [...READ_TOOLS, ...FILE_CREATE_TOOLS, ...FILE_EDIT_TOOLS, ...VERIFY_TOOLS, ...TERMINAL_WRITE_TOOLS]
+		allowedTools: [...READ_TOOLS, ...FILE_CREATE_TOOLS, ...FILE_EDIT_TOOLS, ...HEADLESS_RESOURCE_WRITE_TOOLS, ...VERIFY_TOOLS, ...TERMINAL_WRITE_TOOLS]
 	},
 	"gdscript.review": {
 		id: "gdscript.review",
@@ -120,7 +136,7 @@ const skills: Record<SkillId, Skill> = {
 		description: "Plan Godot scene structures and node responsibilities.",
 		promptPath: "src/skills/templates/scene-builder.md",
 		defaultPromptId: "scene.architect",
-		allowedTools: [...READ_TOOLS, ...SCENE_WRITE_TOOLS, ...FILE_CREATE_TOOLS, ...VERIFY_TOOLS]
+		allowedTools: [...READ_TOOLS, ...SCENE_WRITE_TOOLS, ...HEADLESS_RESOURCE_WRITE_TOOLS, ...FILE_CREATE_TOOLS, ...VERIFY_TOOLS, ...TERMINAL_WRITE_TOOLS]
 	},
 	"file.creator": {
 		id: "file.creator",
@@ -128,7 +144,7 @@ const skills: Record<SkillId, Skill> = {
 		description: "Create new project files through approval-gated tools.",
 		promptPath: "src/skills/templates/file-creator.md",
 		defaultPromptId: "godot.assistant",
-		allowedTools: [...READ_TOOLS, ...FILE_CREATE_TOOLS, ...FILE_EDIT_TOOLS, ...VERIFY_TOOLS, ...TERMINAL_WRITE_TOOLS]
+		allowedTools: [...READ_TOOLS, ...FILE_CREATE_TOOLS, ...FILE_EDIT_TOOLS, ...HEADLESS_RESOURCE_WRITE_TOOLS, ...VERIFY_TOOLS, ...TERMINAL_WRITE_TOOLS]
 	},
 	"backend.helper": {
 		id: "backend.helper",

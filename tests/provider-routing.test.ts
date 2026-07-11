@@ -81,7 +81,7 @@ test("provider model profiles accept dynamic model ids", (): void => {
 
 	const deepseekProfile = resolveModelProfile("deepseek", "deepseek-future");
 	assert.equal(deepseekProfile.provider, "deepseek");
-	assert.equal(deepseekProfile.contextWindowTokens, 1_000_000);
+	assert.equal(deepseekProfile.contextWindowTokens, 128_000);
 });
 
 test("moonshot chat options normalize unsupported temperature values", (): void => {
