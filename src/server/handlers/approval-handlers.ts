@@ -198,7 +198,7 @@ function createSessionInfoResult(session: ClientSession, mcpHost: McpHost, histo
 			rootPath: session.activeWorkspace.rootPath,
 			godotExecutablePath: session.activeWorkspace.godotExecutablePath ?? null
 		} : null,
-		activeSkillId: session.activeSkillId ?? null
+		activeSkillId: null
 	};
 }
 

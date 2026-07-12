@@ -20,6 +20,7 @@ export function shouldPersistSessionEvent(eventName: ServerEvent["event"]): bool
 		|| eventName === "ai.status"
 		|| eventName.startsWith("workflow.")
 		|| eventName.startsWith("guide.")
+		|| eventName.startsWith("skill.")
 		|| eventName.startsWith("plan.");
 }
 

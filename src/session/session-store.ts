@@ -214,7 +214,6 @@ export async function createSession(title: string, workspaceId?: string, skillId
 		title,
 		workspaceId,
 		...createWorkspaceMetadataSnapshot(workspaceSnapshot),
-		activeSkillId: skillId,
 		createdAt: timestamp,
 		updatedAt: timestamp
 	};

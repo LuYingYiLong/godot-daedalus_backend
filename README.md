@@ -140,6 +140,20 @@ godot-daedalus-automation-mcp --backend-url ws://localhost:38180
 
 See [`docs/automation-mcp.md`](docs/automation-mcp.md) for Codex MCP configuration, approval whitelist settings, tool names, and smoke workflow examples.
 
+## Skills
+
+Daedalus discovers skills from three sources:
+
+- Project: `<project>/.github/skills/<slug>/SKILL.md`
+- Personal: `%APPDATA%/.godot_daedalus/skills/<slug>/SKILL.md`
+- Built-in: trusted skills shipped with the backend
+
+Every `SKILL.md` starts with strict frontmatter containing non-empty `name` and `description` fields, followed by a non-empty instruction body. Project and built-in skills are enabled by default per workspace; personal skills are opt-in for each workspace.
+
+Type `@` in the Godot chat input to attach one or more enabled skills to the current message. The model may also load an enabled skill when its catalog description clearly matches the task. Skill content never grants tools or bypasses tool approval.
+
+Use `/create-skill <requirements>` to ask AI to create a project skill, or `/create-skill --personal <requirements>` for a personal skill. Creation is restricted to the managed skill roots, refuses existing directories, and requires normal write-tool approval.
+
 ## Development
 
 ```powershell

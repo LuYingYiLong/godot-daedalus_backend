@@ -2,13 +2,15 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { PromptId } from "../protocol/types.js";
 import { CUSTOM_MCP_TOOLS_SENTINEL } from "../tools/tool-sentinels.js";
+import { parseSkillDocument } from "./frontmatter.js";
 
 export const skillIds = [
 	"godot.project_init",
 	"gdscript.review",
 	"scene.builder",
 	"file.creator",
-	"backend.helper"
+	"backend.helper",
+	"skill.creator"
 ] as const;
 
 export type SkillId = typeof skillIds[number];
@@ -23,6 +25,7 @@ export type Skill = {
 };
 
 const READ_TOOLS: string[] = [
+	"mcp_skills_load",
 	"mcp_godot_get_runtime_status",
 	"mcp_godot_get_godot_version",
 	"mcp_godot_get_debug_output",
@@ -118,7 +121,7 @@ const skills: Record<SkillId, Skill> = {
 		id: "godot.project_init",
 		name: "Godot Project Init",
 		description: "Inspect the Godot project and create an AGENTS.md project guide.",
-		promptPath: "src/skills/templates/godot-project-init.md",
+		promptPath: "src/skills/builtin/godot-project-init/SKILL.md",
 		defaultPromptId: "godot.assistant",
 		allowedTools: [...READ_TOOLS, ...FILE_CREATE_TOOLS, ...FILE_EDIT_TOOLS, ...HEADLESS_RESOURCE_WRITE_TOOLS, ...VERIFY_TOOLS, ...TERMINAL_WRITE_TOOLS]
 	},
@@ -126,7 +129,7 @@ const skills: Record<SkillId, Skill> = {
 		id: "gdscript.review",
 		name: "GDScript Review",
 		description: "Review GDScript for type safety, Godot lifecycle issues, signals, and style.",
-		promptPath: "src/skills/templates/gdscript-review.md",
+		promptPath: "src/skills/builtin/gdscript-review/SKILL.md",
 		defaultPromptId: "gdscript.reviewer",
 		allowedTools: [...READ_TOOLS, ...VERIFY_TOOLS]
 	},
@@ -134,7 +137,7 @@ const skills: Record<SkillId, Skill> = {
 		id: "scene.builder",
 		name: "Scene Builder",
 		description: "Plan Godot scene structures and node responsibilities.",
-		promptPath: "src/skills/templates/scene-builder.md",
+		promptPath: "src/skills/builtin/scene-builder/SKILL.md",
 		defaultPromptId: "scene.architect",
 		allowedTools: [...READ_TOOLS, ...SCENE_WRITE_TOOLS, ...HEADLESS_RESOURCE_WRITE_TOOLS, ...FILE_CREATE_TOOLS, ...VERIFY_TOOLS, ...TERMINAL_WRITE_TOOLS]
 	},
@@ -142,7 +145,7 @@ const skills: Record<SkillId, Skill> = {
 		id: "file.creator",
 		name: "File Creator",
 		description: "Create new project files through approval-gated tools.",
-		promptPath: "src/skills/templates/file-creator.md",
+		promptPath: "src/skills/builtin/file-creator/SKILL.md",
 		defaultPromptId: "godot.assistant",
 		allowedTools: [...READ_TOOLS, ...FILE_CREATE_TOOLS, ...FILE_EDIT_TOOLS, ...HEADLESS_RESOURCE_WRITE_TOOLS, ...VERIFY_TOOLS, ...TERMINAL_WRITE_TOOLS]
 	},
@@ -150,9 +153,17 @@ const skills: Record<SkillId, Skill> = {
 		id: "backend.helper",
 		name: "Backend Helper",
 		description: "Work on the TypeScript WebSocket/MCP backend.",
-		promptPath: "src/skills/templates/backend-helper.md",
+		promptPath: "src/skills/builtin/backend-helper/SKILL.md",
 		defaultPromptId: "backend.helper",
 		allowedTools: [...READ_TOOLS, ...VERIFY_TOOLS]
+	},
+	"skill.creator": {
+		id: "skill.creator",
+		name: "Skill Creator",
+		description: "Create a reusable project or personal skill through approval-gated tools.",
+		promptPath: "src/skills/builtin/skill-creator/SKILL.md",
+		defaultPromptId: "godot.assistant",
+		allowedTools: [...READ_TOOLS, "mcp_skills_load", "mcp_skills_propose_create", "mcp_skills_create"]
 	}
 };
 
@@ -178,7 +189,7 @@ export async function loadSkillPrompt(skillId: SkillId): Promise<string> {
 
 	const skill: Skill = getSkill(skillId);
 	const content: string = await readFile(resolve(process.cwd(), skill.promptPath), "utf8");
-	const trimmedContent: string = content.trim();
+	const trimmedContent: string = parseSkillDocument(content).body;
 	skillPromptCache.set(skillId, trimmedContent);
 	return trimmedContent;
 }

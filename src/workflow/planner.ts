@@ -108,7 +108,7 @@ export function createSingleAnswerPlan(params: AiChatParams, allowedTools?: read
 		title: "回答用户",
 		toolGroup: "summarize",
 		promptId: params.promptId,
-		skillId: params.skillId,
+		skillId: undefined,
 		toolBudget: (params.options?.toolBudget ?? "normal"),
 		allowedTools: allowedTools !== undefined ? [...allowedTools] : [...READ_TOOLS, ...VERIFY_TOOLS, CUSTOM_MCP_TOOLS_SENTINEL],
 		instruction: "完成用户本轮请求。可以读取或验证必要信息，但不得用文本 XML/DSML/裸标签模拟工具调用；如需工具，必须使用 API tool_calls。",

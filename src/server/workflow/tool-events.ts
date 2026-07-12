@@ -19,6 +19,7 @@ export function createAgentToolEventForwarder(
 	persistRequestId: string = requestId,
 	mcpHost?: McpHost | undefined
 ): OnToolEvent {
+	const createdSkillRefsByToolCallId: Map<string, string> = new Map();
 	return (event: ToolEvent): void => {
 		if (event.type === "ai.delta") {
 			sendSessionEvent(socket, requestId, session, "agent.message.delta", {
@@ -44,6 +45,12 @@ export function createAgentToolEventForwarder(
 			return;
 		}
 		if (event.type === "tool.call") {
+			if (event.toolName === "mcp_skills_load") {
+				return;
+			}
+			if (event.toolName === "mcp_skills_create" && typeof event.args.scope === "string" && typeof event.args.slug === "string") {
+				createdSkillRefsByToolCallId.set(event.toolCallId, `${event.args.scope}:${event.args.slug}`);
+			}
 			sendSessionEvent(socket, requestId, session, "agent.tool.call", {
 				...event,
 				type: "agent.tool.call",
@@ -53,6 +60,9 @@ export function createAgentToolEventForwarder(
 			return;
 		}
 		if (event.type === "tool.progress") {
+			if (event.toolName === "mcp_skills_load") {
+				return;
+			}
 			sendSessionEvent(socket, requestId, session, "agent.tool.progress", {
 				...event,
 				type: "agent.tool.progress",
@@ -62,6 +72,14 @@ export function createAgentToolEventForwarder(
 			return;
 		}
 		if (event.type === "tool.result") {
+			if (event.toolName === "mcp_skills_load") {
+				return;
+			}
+			const createdSkillRef: string | undefined = createdSkillRefsByToolCallId.get(event.toolCallId);
+			if (event.toolName === "mcp_skills_create" && createdSkillRef !== undefined) {
+				sendSessionEvent(socket, requestId, session, "skill.catalog.changed", { ref: createdSkillRef }, persistRequestId);
+				createdSkillRefsByToolCallId.delete(event.toolCallId);
+			}
 			const { fileEditDraft, ...publicEvent } = event;
 			const fileEditBatch = persistFileEditBatch(
 				session.sessionId,
@@ -106,6 +124,9 @@ export function createAgentToolEventForwarder(
 			return;
 		}
 		if (event.type === "tool.error") {
+			if (event.toolName === "mcp_skills_load") {
+				return;
+			}
 			sendSessionEvent(socket, requestId, session, "agent.tool.error", {
 				...event,
 				type: "agent.tool.error",

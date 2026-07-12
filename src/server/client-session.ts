@@ -2,7 +2,6 @@ import type { AiChatParams, ChatMessage, ModelProfile, ProviderId } from "../pro
 import type { SessionMetadata } from "../session/session-store.js";
 import type { PendingAiContinuation } from "../session/pending-continuation.js";
 import { ApprovalGateway } from "../tools/approval-gateway.js";
-import type { SkillId } from "../skills/registry.js";
 import { getDefaultModelProfile } from "../tokens/model-profiles.js";
 import type { WorkspaceConfig } from "../workspace/types.js";
 
@@ -33,7 +32,6 @@ export type ClientSession = {
 	messages: ChatMessage[];
 	modelProfile: ModelProfile;
 	approvalGateway: ApprovalGateway;
-	activeSkillId?: SkillId | undefined;
 	activeWorkspace?: WorkspaceConfig | undefined;
 	editorInstanceId?: string | undefined;
 	sessionId?: string | undefined;
@@ -85,5 +83,4 @@ export function clearActiveSession(session: ClientSession): void {
 export function applySessionMetadata(session: ClientSession, metadata: SessionMetadata): void {
 	session.sessionId = metadata.id;
 	session.sessionTitle = metadata.title;
-	session.activeSkillId = metadata.activeSkillId as SkillId | undefined;
 }

@@ -19,7 +19,10 @@ test("v2 client hello explicitly declares its protocol version", (): void => {
 		type: "request",
 		id: "hello-v2",
 		method: "client.hello",
-		params: { protocolVersion: 2 }
+		params: {
+			protocolVersion: 2,
+			godotExecutablePath: "D:/Godot/Godot.exe"
+		}
 	}).success, true);
 });
 

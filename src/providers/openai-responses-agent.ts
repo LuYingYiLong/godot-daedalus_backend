@@ -384,7 +384,7 @@ export async function runOpenAIResponsesAgent(
 		: toolCatalog.getDefinitions();
 	const maxSteps: number = resolveToolBudget(
 		(params.options as Record<string, unknown> | undefined)?.["toolBudget"] as string | undefined,
-		params.skillId
+		params.skillRefs?.[0]
 	);
 
 	return runResponsesAgentLoop(
@@ -425,7 +425,7 @@ export async function runOpenAIResponsesAgentStreaming(
 		: toolCatalog.getDefinitions();
 	const maxSteps: number = resolveToolBudget(
 		(params.options as Record<string, unknown> | undefined)?.["toolBudget"] as string | undefined,
-		params.skillId
+		params.skillRefs?.[0]
 	);
 
 	return runResponsesAgentLoop(
@@ -489,7 +489,7 @@ export async function continueOpenAIResponsesAgent(
 
 	const maxSteps: number = resolveToolBudget(
 		(params.options as Record<string, unknown> | undefined)?.["toolBudget"] as string | undefined,
-		params.skillId
+		params.skillRefs?.[0]
 	);
 	return runResponsesAgentLoop(
 		params,
@@ -551,7 +551,7 @@ export async function continueOpenAIResponsesAgentStreaming(
 
 	const maxSteps: number = resolveToolBudget(
 		(params.options as Record<string, unknown> | undefined)?.["toolBudget"] as string | undefined,
-		params.skillId
+		params.skillRefs?.[0]
 	);
 	return runResponsesAgentLoop(
 		params,

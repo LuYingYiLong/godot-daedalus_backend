@@ -14,7 +14,13 @@ const SKILL_BUDGET_MAP: Record<string, number> = {
 	"godot.project_init": 12,
 	"file.creator": 16,
 	"scene.builder": 20,
-	"backend.helper": 10
+	"backend.helper": 10,
+	"builtin:gdscript-review": 8,
+	"builtin:godot-project-init": 12,
+	"builtin:file-creator": 16,
+	"builtin:scene-builder": 20,
+	"builtin:backend-helper": 10,
+	"builtin:skill-creator": 16
 };
 
 export function resolveToolBudget(

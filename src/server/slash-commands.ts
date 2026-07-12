@@ -1,6 +1,7 @@
 import type WebSocket from "ws";
 import type { AiChatParams, ClientRequest } from "../protocol/types.js";
-import { getSkill, isSkillId, listSkills } from "../skills/registry.js";
+import { listSkillSummaries } from "../skills/catalog.js";
+import type { SkillWorkspace } from "../skills/types.js";
 import type { McpHost } from "../mcp/mcp-host.js";
 import type { ClientSession } from "./client-session.js";
 import { sendJson } from "./send-json.js";
@@ -56,11 +57,19 @@ const SLASH_COMMANDS: readonly SlashCommandDefinition[] = [
 	},
 	{
 		command: "/skill",
-		usage: "/skill <skillId|off>",
-		insertText: "/skill ",
-		description: "激活或关闭会话默认 skill。",
-		requiresArgument: true,
-		examples: ["/skill gdscript.review", "/skill off"]
+		usage: "/skill",
+		insertText: "/skill",
+		description: "说明如何通过 @ 在当前消息激活 skill。",
+		requiresArgument: false,
+		examples: ["/skill"]
+	},
+	{
+		command: "/create-skill",
+		usage: "/create-skill [--personal] [需求]",
+		insertText: "/create-skill ",
+		description: "让 AI 创建项目或个人 skill。",
+		requiresArgument: false,
+		examples: ["/create-skill 创建场景性能审查流程", "/create-skill --personal 创建通用代码审查流程"]
 	},
 	{
 		command: "/reset",
@@ -108,7 +117,7 @@ function formatSessionInfo(session: ClientSession, mcpHost: McpHost, createSessi
 		"## 当前上下文",
 		`- Provider configured: ${String(info.providerConfigured)}`,
 		`- Model: ${String(info.model)}`,
-		`- Active skill: ${String(info.activeSkillId ?? "none")}`,
+		"- Active skill: per-message (@skill)",
 		`- History messages: ${String(info.historyMessagesStored)}`,
 		`- Context window: ${String(info.contextWindowTokens)} tokens`,
 		`- Default output reserve: ${String(info.defaultOutputReserveTokens)} tokens`,
@@ -137,10 +146,21 @@ function formatPendingApprovals(session: ClientSession): string {
 	].join("\n");
 }
 
-function formatSkillList(): string {
+function getSkillWorkspace(session: ClientSession): SkillWorkspace {
+	if (session.activeWorkspace !== undefined) {
+		return { id: session.activeWorkspace.id, rootPath: session.activeWorkspace.rootPath };
+	}
+	if (session.godotProjectPath !== undefined) {
+		return { id: `runtime:${session.godotProjectPath}`, rootPath: session.godotProjectPath };
+	}
+	throw new Error("No active workspace is available for skills.");
+}
+
+async function formatSkillList(session: ClientSession): Promise<string> {
+	const catalog = await listSkillSummaries(getSkillWorkspace(session));
 	return [
 		"## 可用 Skills",
-		...listSkills().map((skill): string => `- \`${skill.id}\`：${skill.name} - ${skill.description}`)
+		...catalog.skills.map((skill): string => `- \`${skill.ref}\` [${skill.source}] ${skill.name} - ${skill.description || skill.error || "Invalid skill"} (${skill.enabled ? "enabled" : "disabled"})`)
 	].join("\n");
 }
 
@@ -256,32 +276,28 @@ export async function handleSlashCommand(params: {
 	}
 
 	if (command === "/skills") {
-		sendChatText(socket, request, formatSkillList(), session, mcpHost, createSessionInfo);
+		sendChatText(socket, request, await formatSkillList(session), session, mcpHost, createSessionInfo);
 		return { type: "handled" };
 	}
 
 	if (command === "/skill") {
-		if (restText.length === 0) {
-			const activeText: string = session.activeSkillId ?? "none";
-			sendChatText(socket, request, `当前激活 skill：\`${activeText}\`\n\n${formatSkillList()}`, session, mcpHost, createSessionInfo);
-			return { type: "handled" };
-		}
-
-		if (restText === "off" || restText === "none") {
-			session.activeSkillId = undefined;
-			sendChatText(socket, request, "已关闭会话默认 skill。", session, mcpHost, createSessionInfo);
-			return { type: "handled" };
-		}
-
-		if (!isSkillId(restText)) {
-			sendChatText(socket, request, `未知 skill：\`${restText}\`\n\n${formatSkillList()}`, session, mcpHost, createSessionInfo);
-			return { type: "handled" };
-		}
-
-		session.activeSkillId = restText;
-		const skill = getSkill(restText);
-		sendChatText(socket, request, `已激活 skill：\`${skill.id}\` - ${skill.name}`, session, mcpHost, createSessionInfo);
+		sendChatText(socket, request, `Skill 现在按消息激活。请在消息中输入 \`@\` 并选择一个或多个 skill。\n\n${await formatSkillList(session)}`, session, mcpHost, createSessionInfo);
 		return { type: "handled" };
+	}
+
+	if (command === "/create-skill") {
+		const personal: boolean = restParts[0]?.toLowerCase() === "--personal";
+		const requirement: string = (personal ? restParts.slice(1) : restParts).join(" ").trim();
+		return {
+			type: "ai",
+			params: {
+				...request.params,
+				skillRefs: ["builtin:skill-creator"],
+				message: requirement.length > 0
+					? `请为我创建一个${personal ? "个人" : "当前项目"} skill。\n\n需求：${requirement}`
+					: `请帮我创建一个${personal ? "个人" : "当前项目"} skill。先询问我这个 skill 要解决的具体工作流，再进行创建。`
+			}
+		};
 	}
 
 	if (command === "/reset") {
@@ -303,7 +319,7 @@ export async function handleSlashCommand(params: {
 			params: {
 				...request.params,
 				promptId: "godot.assistant",
-				skillId: "godot.project_init",
+				skillRefs: ["builtin:godot-project-init"],
 				message: [
 					"请初始化当前 Godot 项目的 AI 协作上下文。",
 					"请通过 MCP 工具检查项目摘要、场景、脚本、插件和关键配置。",

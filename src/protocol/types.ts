@@ -1,5 +1,5 @@
 import type { z } from "zod";
-import type { additionalContextItemSchema, aiChatParamsSchema, clientRequestSchema, promptIdSchema, skillIdSchema } from "./schema.js";
+import type { additionalContextItemSchema, aiChatParamsSchema, clientRequestSchema, promptIdSchema, skillIdSchema, skillRefSchema } from "./schema.js";
 
 export type AiChatParams = z.infer<typeof aiChatParamsSchema>;
 
@@ -10,6 +10,7 @@ export type ClientRequest = z.infer<typeof clientRequestSchema>;
 export type PromptId = z.infer<typeof promptIdSchema>;
 
 export type SkillId = z.infer<typeof skillIdSchema>;
+export type SkillRef = z.infer<typeof skillRefSchema>;
 
 export type ProviderId = string;
 
@@ -19,6 +20,7 @@ export type ChatMessage = {
 	requestId?: string | undefined;
 	createdAt?: string | undefined;
 	additionalContext?: AdditionalContextItem[] | undefined;
+	skillRefs?: SkillRef[] | undefined;
 	excludeFromLlmContext?: true | undefined;
 	status?: "failed" | undefined;
 	error?: {
@@ -107,6 +109,7 @@ export type ServerEvent = {
 		| "session.renamed"
 		| "editor.tool.requested"
 		| "mcp.config.updated"
+		| "skill.catalog.changed"
 		| "workflow.started"
 		| "workflow.phase.started"
 		| "workflow.todo.updated"

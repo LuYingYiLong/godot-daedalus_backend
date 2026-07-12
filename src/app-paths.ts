@@ -24,6 +24,14 @@ export function getMcpServersConfigPath(): string {
 	return join(getAppDataDir(), "config", "mcp-servers.json");
 }
 
+export function getPersonalSkillsDir(): string {
+	return join(getAppDataDir(), "skills");
+}
+
+export function getSkillSettingsPath(): string {
+	return join(getAppDataDir(), "config", "skill-settings.json");
+}
+
 export function getDefaultSessionsDir(): string {
 	return join(getAppDataDir(), "data", DATA_V2_DIR_NAME, "sessions");
 }

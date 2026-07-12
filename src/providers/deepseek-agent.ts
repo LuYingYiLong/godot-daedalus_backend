@@ -823,7 +823,7 @@ export async function runDeepSeekAgent(
 
 	const maxSteps: number = resolveToolBudget(
 		(params.options as Record<string, unknown> | undefined)?.["toolBudget"] as string | undefined,
-		params.skillId
+		params.skillRefs?.[0]
 	);
 
 	const messages: ChatCompletionMessageParam[] = createMessages(params, history, systemPrompt);
@@ -852,7 +852,7 @@ export async function runDeepSeekAgentStreaming(
 
 	const maxSteps: number = resolveToolBudget(
 		(params.options as Record<string, unknown> | undefined)?.["toolBudget"] as string | undefined,
-		params.skillId
+		params.skillRefs?.[0]
 	);
 
 	const messages: ChatCompletionMessageParam[] = createMessages(params, history, systemPrompt);
@@ -905,7 +905,7 @@ export async function continueDeepSeekAgent(
 
 	const maxSteps: number = resolveToolBudget(
 		(params.options as Record<string, unknown> | undefined)?.["toolBudget"] as string | undefined,
-		params.skillId
+		params.skillRefs?.[0]
 	);
 
 	return runAgentLoop(
@@ -975,7 +975,7 @@ export async function continueDeepSeekAgentStreaming(
 
 	const maxSteps: number = resolveToolBudget(
 		(params.options as Record<string, unknown> | undefined)?.["toolBudget"] as string | undefined,
-		params.skillId
+		params.skillRefs?.[0]
 	);
 
 	return runAgentLoop(

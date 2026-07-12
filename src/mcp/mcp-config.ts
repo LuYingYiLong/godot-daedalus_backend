@@ -41,6 +41,18 @@ export function buildMcpServerConfigs(workspace?: WorkspaceConfig): McpServerCon
 	}
 
 	configs.push({
+		id: "skills",
+		name: "Daedalus Skills MCP",
+		transport: "stdio",
+		command: "npx",
+		args: ["tsx", "src/mcp/skills/server.ts"],
+		env: {
+			DAEDALUS_WORKSPACE_ID: workspace?.id ?? "default",
+			GODOT_PROJECT_PATH: projectPath
+		}
+	});
+
+	configs.push({
 		id: "terminal",
 		name: "Terminal MCP",
 		transport: "stdio",

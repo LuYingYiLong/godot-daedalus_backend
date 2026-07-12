@@ -6,7 +6,24 @@ import { sendJson } from "../send-json.js";
 import { createBackendHealthResult } from "../backend-health.js";
 import { createSlashCommandListResult } from "../slash-commands.js";
 import { listPromptTemplates } from "../../prompts/registry.js";
-import { listSkills, getSkill } from "../../skills/registry.js";
+import { listSkillSummaries } from "../../skills/catalog.js";
+import { getSkillContent, removePersonalSkill, setWorkspaceSkillEnabled, updateSkillContent } from "../../skills/management.js";
+import type { SkillWorkspace } from "../../skills/types.js";
+import { sendGlobalEvent } from "../session-events.js";
+
+function getSkillWorkspace(session: ClientSession): SkillWorkspace {
+	if (session.activeWorkspace !== undefined) {
+		return { id: session.activeWorkspace.id, rootPath: session.activeWorkspace.rootPath };
+	}
+	if (session.godotProjectPath !== undefined) {
+		return { id: `runtime:${session.godotProjectPath}`, rootPath: session.godotProjectPath };
+	}
+	throw new Error("No active workspace is available for skill management.");
+}
+
+async function sendSkillList(socket: WebSocket, requestId: string, workspace: SkillWorkspace): Promise<void> {
+	sendJson(socket, { type: "response", id: requestId, ok: true, result: await listSkillSummaries(workspace) });
+}
 
 export async function handleCoreRequest(socket: WebSocket, request: ClientRequest, session: ClientSession, mcpHost: McpHost): Promise<void> {
 	switch (request.method) {
@@ -49,28 +66,39 @@ export async function handleCoreRequest(socket: WebSocket, request: ClientReques
 		break;
 
 	case "skill.list":
-		sendJson(socket, {
-			type: "response",
-			id: request.id,
-			ok: true,
-			result: {
-				skills: listSkills(),
-				activeSkillId: session.activeSkillId ?? null
-			}
-		});
+	case "skill.reload":
+		await sendSkillList(socket, request.id, getSkillWorkspace(session));
 		break;
 
-	case "skill.activate":
-		session.activeSkillId = request.params.skillId ?? undefined;
-		sendJson(socket, {
-			type: "response",
-			id: request.id,
-			ok: true,
-			result: {
-				activeSkillId: session.activeSkillId ?? null
-			}
-		});
+	case "skill.get": {
+		const workspace: SkillWorkspace = getSkillWorkspace(session);
+		sendJson(socket, { type: "response", id: request.id, ok: true, result: { ref: request.params.ref, content: await getSkillContent(workspace, request.params.ref) } });
 		break;
+	}
+
+	case "skill.set_enabled": {
+		const workspace: SkillWorkspace = getSkillWorkspace(session);
+		await setWorkspaceSkillEnabled(workspace, request.params.ref, request.params.enabled);
+		await sendSkillList(socket, request.id, workspace);
+		sendGlobalEvent(socket, request.id, "skill.catalog.changed", { ref: request.params.ref });
+		break;
+	}
+
+	case "skill.update": {
+		const workspace: SkillWorkspace = getSkillWorkspace(session);
+		await updateSkillContent(workspace, request.params.ref, request.params.content);
+		await sendSkillList(socket, request.id, workspace);
+		sendGlobalEvent(socket, request.id, "skill.catalog.changed", { ref: request.params.ref });
+		break;
+	}
+
+	case "skill.remove": {
+		const workspace: SkillWorkspace = getSkillWorkspace(session);
+		await removePersonalSkill(workspace, request.params.ref);
+		await sendSkillList(socket, request.id, workspace);
+		sendGlobalEvent(socket, request.id, "skill.catalog.changed", { ref: request.params.ref });
+		break;
+	}
 
 		default:
 			throw new Error(`Unsupported core method: ${request.method}`);

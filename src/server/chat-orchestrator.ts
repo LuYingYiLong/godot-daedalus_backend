@@ -29,8 +29,8 @@ import { getDefaultModelProfile, resolveModelProfile } from "../tokens/model-pro
 import { type TokenCounter } from "../tokens/token-counter.js";
 import { createTokenCounter } from "../tokens/token-counter-factory.js";
 import { computeInputBudget, selectMessagesWithinBudget } from "../session/session-compressor.js";
-import { composeSkillPrompt, getSkill, isSkillId, listSkills } from "../skills/registry.js";
-import type { SkillId } from "../skills/registry.js";
+import { composeExplicitSkillPrompt, composeSkillCatalogPrompt, resolveBuiltinToolRestriction, resolveExplicitSkills } from "../skills/runtime.js";
+import type { CatalogSkill, SkillWorkspace } from "../skills/types.js";
 import {
 	createRuntimeWorkspace,
 	loadWorkspaces,
@@ -205,7 +205,7 @@ function createSessionInfoResult(session: ClientSession, mcpHost: McpHost, histo
 			rootPath: session.activeWorkspace.rootPath,
 			godotExecutablePath: session.activeWorkspace.godotExecutablePath ?? null
 		} : null,
-		activeSkillId: session.activeSkillId ?? null
+		activeSkillId: null
 	};
 }
 
@@ -347,29 +347,36 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 					});
 					break;
 				}
-				const activeSkillId: SkillId | undefined = effectiveParams.skillId ?? session.activeSkillId;
-				const activeSkill = activeSkillId !== undefined ? getSkill(activeSkillId) : undefined;
-				const allowedToolNames: readonly string[] | undefined = resolveAllowedToolsForChatParams(effectiveParams, activeSkill?.allowedTools, session.activeWorkspace?.id);
-				const promptId = effectiveParams.promptId ?? (activeSkillId !== undefined ? getSkill(activeSkillId).defaultPromptId : undefined);
+				const skillWorkspace: SkillWorkspace = session.activeWorkspace !== undefined
+					? { id: session.activeWorkspace.id, rootPath: session.activeWorkspace.rootPath }
+					: { id: `runtime:${session.godotProjectPath ?? "unknown"}`, rootPath: session.godotProjectPath ?? process.cwd() };
+				const explicitSkills: CatalogSkill[] = await resolveExplicitSkills(skillWorkspace, effectiveParams.skillRefs ?? []);
+				let allowedToolNames: readonly string[] | undefined = resolveAllowedToolsForChatParams(effectiveParams, resolveBuiltinToolRestriction(explicitSkills), session.activeWorkspace?.id);
+				if (allowedToolNames !== undefined && !allowedToolNames.includes("mcp_skills_load")) {
+					allowedToolNames = [...allowedToolNames, "mcp_skills_load"];
+				}
+				const promptId = effectiveParams.promptId ?? explicitSkills.find((skill): boolean => skill.defaultPromptId !== undefined)?.defaultPromptId;
 				const systemPrompt: string = await composeSystemPrompt(
 					promptId,
 					effectiveParams.systemPrompt,
 					createProviderRuntimeContext(session),
 					effectiveParams.mode
 				);
-				const skillPrompt: string = await composeSkillPrompt(activeSkillId);
+				const skillPrompt: string = composeExplicitSkillPrompt(explicitSkills);
+				const skillCatalogPrompt: string = await composeSkillCatalogPrompt(skillWorkspace);
 				const mcpSystemContext: string = await createMcpSystemContext(mcpHost, session);
 				const additionalContextSection: string = createAdditionalContextPromptSection(effectiveParams.additionalContext);
 				const guidePromptSection: string = consumePendingGuideSection(socket, request.id, session);
 				const fullSystemPrompt: string = systemPrompt
 					+ (skillPrompt.length > 0 ? `\n\n${skillPrompt}` : "")
+					+ (skillCatalogPrompt.length > 0 ? `\n\n${skillCatalogPrompt}` : "")
 					+ mcpSystemContext
 					+ (additionalContextSection.length > 0 ? `\n\n${additionalContextSection}` : "")
 					+ (guidePromptSection.length > 0 ? `\n\n${guidePromptSection}` : "");
 				logPromptTrace({
 					requestId: request.id,
 					promptId,
-					skillId: activeSkillId,
+					skillId: effectiveParams.skillRefs?.join(","),
 					customInstructions: effectiveParams.systemPrompt,
 					systemPrompt,
 					skillPrompt,
@@ -392,7 +399,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 					options,
 					effectiveParams,
 					systemPrompt,
-					skillPrompt + mcpSystemContext + additionalContextSection + guidePromptSection,
+					skillPrompt + skillCatalogPrompt + mcpSystemContext + additionalContextSection + guidePromptSection,
 					abortController.signal
 				);
 				const history: ChatMessage[] = await selectHistoryForModel(session, historyBudgetTokens);
@@ -407,7 +414,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 						if (effectiveParams.options?.workflow === "llm_planned") {
 							try {
 								const plannerOptions: ProviderChatOptions = (await resolveProviderTaskModelOptions("workflowPlanner", options)).options;
-								workflowPlan = await createLlmWorkflowPlan(effectiveParams, plannerOptions, history, mcpSystemContext + additionalContextSection + guidePromptSection, abortController.signal);
+								workflowPlan = await createLlmWorkflowPlan(effectiveParams, plannerOptions, history, skillPrompt + skillCatalogPrompt + mcpSystemContext + additionalContextSection + guidePromptSection, abortController.signal);
 							} catch (error: unknown) {
 								logger.warn("ai", "llm_workflow_planner_failed_fallback", {
 									requestId: request.id,
@@ -452,7 +459,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 						history,
 						historyBudgetTokens,
 						turnStartedAt,
-						mcpSystemContext + additionalContextSection + guidePromptSection,
+						skillPrompt + skillCatalogPrompt + mcpSystemContext + additionalContextSection + guidePromptSection,
 						guidePromptSection,
 						abortController.signal
 					);

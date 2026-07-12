@@ -132,7 +132,6 @@ async function saveSessionOnDisconnect(session: ClientSession): Promise<void> {
 
 	await saveSession(sessionId, session.messages, {
 		...createWorkspaceMetadataSnapshot(session.activeWorkspace),
-		activeSkillId: session.activeSkillId
 	});
 }
 

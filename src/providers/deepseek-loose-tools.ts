@@ -7,6 +7,9 @@ const PARAMETER_TAG_PATTERN: RegExp = new RegExp(`<\\s*(${XML_NAME_PATTERN})\\s*
 const ATTRIBUTE_PATTERN: RegExp = new RegExp(`(${XML_NAME_PATTERN})\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "g");
 
 const RAW_TOOL_NAME_MAP: Readonly<Record<string, string>> = {
+	load_skill: "mcp_skills_load",
+	propose_create_skill: "mcp_skills_propose_create",
+	create_skill: "mcp_skills_create",
 	get_runtime_status: "mcp_godot_get_runtime_status",
 	get_godot_version: "mcp_godot_get_godot_version",
 	launch_editor: "mcp_godot_launch_editor",

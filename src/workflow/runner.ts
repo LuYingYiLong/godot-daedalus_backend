@@ -86,7 +86,7 @@ export function createPhaseParams(originalParams: AiChatParams, phase: WorkflowP
 		...originalParams,
 		message,
 		promptId: phase.promptId ?? originalParams.promptId,
-		skillId: phase.skillId,
+		skillRefs: originalParams.skillRefs,
 		options: {
 			...(originalParams.options ?? {}),
 			stream,

@@ -13,8 +13,14 @@ export const skillIdSchema = z.enum([
 	"gdscript.review",
 	"scene.builder",
 	"file.creator",
-	"backend.helper"
+	"backend.helper",
+	"skill.creator"
 ]);
+
+export const skillRefSchema = z.string()
+	.min(3)
+	.max(80)
+	.regex(/^(builtin|personal|project):[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/u, "Invalid skill reference.");
 
 export const providerIdSchema = z.string()
 	.min(1)
@@ -92,7 +98,7 @@ export const aiChatParamsSchema = z.object({
 	message: z.string(),
 	mode: z.enum(["agent", "ask", "plan"]).optional(),
 	promptId: promptIdSchema.optional(),
-	skillId: skillIdSchema.optional(),
+	skillRefs: z.array(skillRefSchema).max(4).optional(),
 	systemPrompt: z.string().optional(),
 	retryFromRequestId: z.string().min(1).optional(),
 	additionalContext: z.array(additionalContextItemSchema).max(32).optional(),
@@ -186,6 +192,7 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 			clientName: z.string().min(1).max(120).optional(),
 			workspaceRoot: z.string().min(1).optional(),
 			workspaceId: z.string().min(1).optional(),
+			godotExecutablePath: z.string().min(1).optional(),
 			editorInstanceId: z.string().min(1).max(160).optional(),
 			capabilities: z.record(z.string().min(1), z.boolean()).optional(),
 		}),
@@ -283,10 +290,42 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 	z.object({
 		type: z.literal("request"),
 		id: z.string(),
-		method: z.literal("skill.activate"),
+		method: z.literal("skill.get"),
 		params: z.object({
-			skillId: skillIdSchema.nullable(),
+			ref: skillRefSchema,
 		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("skill.set_enabled"),
+		params: z.object({
+			ref: skillRefSchema,
+			enabled: z.boolean(),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("skill.update"),
+		params: z.object({
+			ref: skillRefSchema,
+			content: z.string().min(1).max(65536),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("skill.remove"),
+		params: z.object({
+			ref: skillRefSchema,
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("skill.reload"),
+		params: z.object({}).optional(),
 	}),
 	z.object({
 		type: z.literal("request"),
@@ -307,7 +346,6 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		params: z.object({
 			title: z.string().min(1),
 			workspaceId: z.string().optional(),
-			skillId: skillIdSchema.optional(),
 		}),
 	}),
 	z.object({

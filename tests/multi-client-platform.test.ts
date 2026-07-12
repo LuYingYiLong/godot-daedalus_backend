@@ -6,7 +6,8 @@ import { GodotEditorBridge } from "../src/mcp/godot/bridges/editor-bridge.js";
 import { McpHost } from "../src/mcp/mcp-host.js";
 import { withMcpRequestContext } from "../src/mcp/request-context.js";
 import { createClientSession } from "../src/server/client-session.js";
-import { beginSessionRun, bindConnectionToSessionRuntime, finishSessionRun, getConnectionSession, registerClientConnection, subscribeSocketToSession, updateClientConnection } from "../src/server/client-connections.js";
+import { beginSessionRun, bindConnectionToSessionRuntime, finishSessionRun, getClientConnection, getConnectionSession, registerClientConnection, subscribeSocketToSession, unregisterClientConnection, updateClientConnection } from "../src/server/client-connections.js";
+import { handleClientRequest } from "../src/server/handlers/client-handlers.js";
 import { createGodotRuntimeStatus } from "../src/server/godot-runtime-status.js";
 import { sendSessionEvent } from "../src/server/session-events.js";
 import { clearDynamicMcpToolsForWorkspace, getDynamicMcpToolMapping, getDynamicMcpToolNames, replaceDynamicMcpToolsForWorkspace } from "../src/tools/dynamic-mcp-tools.js";
@@ -24,6 +25,41 @@ function createSocket(): SocketMock {
 		}
 	} as SocketMock;
 }
+
+test("Godot client hello replaces the persisted default with the project workspace", async (): Promise<void> => {
+	const socket = createSocket();
+	const diagnosticsWorkspace = createRuntimeWorkspace("D:/DaedalusDiagnosticsWorkspace");
+	const session = createClientSession(diagnosticsWorkspace);
+	registerClientConnection(socket, session);
+	let ensuredWorkspaceId: string | undefined;
+	const host = {
+		async ensureWorkspace(workspace: { id: string }): Promise<void> {
+			ensuredWorkspaceId = workspace.id;
+		}
+	} as McpHost;
+
+	try {
+		await handleClientRequest(socket, {
+			type: "request",
+			id: "hello-project",
+			method: "client.hello",
+			params: {
+				protocolVersion: 2,
+				clientType: "godot_plugin",
+				workspaceRoot: "D:/GodotProjects/example"
+			}
+		}, session, host);
+
+		assert.equal(session.activeWorkspace?.name, "example");
+		assert.equal(session.activeWorkspace?.id, ensuredWorkspaceId);
+		assert.equal(session.godotProjectPath, session.activeWorkspace?.rootPath);
+		assert.equal(getClientConnection(socket)?.workspaceId, session.activeWorkspace?.id);
+		assert.equal(getClientConnection(socket)?.workspaceRoot, session.activeWorkspace?.rootPath);
+		assert.equal(socket.sent.at(-1)?.ok, true);
+	} finally {
+		unregisterClientConnection(socket);
+	}
+});
 
 test("studio connection does not replace Godot editor tool target", async (): Promise<void> => {
 	const bridge = new GodotEditorBridge();

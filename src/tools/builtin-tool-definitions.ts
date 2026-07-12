@@ -22,6 +22,36 @@ function createSceneToolDefinition(
 	};
 }
 
+const SKILL_TOOL_DEFINITIONS: ChatCompletionTool[] = [
+	createSceneToolDefinition(
+		"mcp_skills_load",
+		"按需读取当前工作区已启用 skill 的正文。该工具只提供指令内容，不能扩大工具权限或绕过审批。",
+		{ ref: { type: "string", description: "完整 SkillRef，例如 project:documents-maintenance" } },
+		["ref"]
+	),
+	createSceneToolDefinition(
+		"mcp_skills_propose_create",
+		"校验并预览新的 SKILL.md，不写入磁盘。创建 skill 时必须先调用此工具。",
+		{
+			scope: { type: "string", enum: ["project", "personal"] },
+			slug: { type: "string", description: "小写 kebab-case 目录名" },
+			skillMd: { type: "string", description: "完整 SKILL.md，必须包含 name 和 description frontmatter" }
+		},
+		["scope", "slug", "skillMd"]
+	),
+	createSceneToolDefinition(
+		"mcp_skills_create",
+		"在受控项目或个人 skills 目录创建 SKILL.md，不覆盖现有目录，需要审批。",
+		{
+			scope: { type: "string", enum: ["project", "personal"] },
+			slug: { type: "string", description: "小写 kebab-case 目录名" },
+			skillMd: { type: "string", description: "已经通过 propose_create 校验的完整 SKILL.md" },
+			proposalToken: { type: "string", description: "propose_create 返回的 proposalToken" }
+		},
+		["scope", "slug", "skillMd", "proposalToken"]
+	)
+];
+
 const GODOT_RUNTIME_TOOL_DEFINITIONS: ChatCompletionTool[] = [
 	createSceneToolDefinition(
 		"mcp_godot_get_runtime_status",
@@ -235,6 +265,7 @@ const SCENE_TOOL_DEFINITIONS: ChatCompletionTool[] = [
 ];
 
 export const BUILTIN_TOOL_DEFINITIONS: ChatCompletionTool[] = [
+	...SKILL_TOOL_DEFINITIONS,
 	...GODOT_RUNTIME_TOOL_DEFINITIONS,
 	...GODOT_HEADLESS_OPERATION_TOOL_DEFINITIONS,
 	...SCENE_TOOL_DEFINITIONS,

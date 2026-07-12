@@ -60,6 +60,18 @@ function createDisplay(
 }
 
 export function describeToolEvent(toolName: string, args: Record<string, unknown>, workspaceId?: string | undefined): ToolEventDisplay {
+	if (toolName.startsWith("mcp_skills_")) {
+		const ref: string | undefined = getStringArg(args, "ref");
+		const slug: string | undefined = getStringArg(args, "slug");
+		const label: string = ref ?? slug ?? "skill";
+		if (toolName === "mcp_skills_load") {
+			return createDisplay("skills", "Skills", "read", "加载 Skill", `读取 ${label} 的指令`, { kind: "unknown", label });
+		}
+		if (toolName === "mcp_skills_propose_create") {
+			return createDisplay("skills", "Skills", "propose", "预览 Skill", `校验 ${label}`, { kind: "unknown", label });
+		}
+		return createDisplay("skills", "Skills", "write", "创建 Skill", `创建 ${label}`, { kind: "unknown", label });
+	}
 	if (isDynamicMcpToolName(toolName)) {
 		const metadata = getDynamicMcpToolMetadata(toolName, workspaceId);
 		const serverId: string = metadata?.serverId ?? "custom";

@@ -10,6 +10,8 @@ import {
 	type ClientType
 } from "../client-connections.js";
 import { logger } from "../../logger.js";
+import { createRuntimeWorkspace, upsertRuntimeWorkspace } from "../../workspace/registry.js";
+import type { WorkspaceConfig } from "../../workspace/types.js";
 
 function readClientType(value: unknown): ClientType {
 	return value === "godot_plugin" || value === "studio" || value === "cli" || value === "smoke"
@@ -32,15 +34,43 @@ function readCapabilities(value: unknown): ClientCapabilities {
 	return result;
 }
 
-export async function handleClientRequest(socket: WebSocket, request: ClientRequest, session: ClientSession, _mcpHost: McpHost): Promise<void> {
+export async function handleClientRequest(socket: WebSocket, request: ClientRequest, session: ClientSession, mcpHost: McpHost): Promise<void> {
 	switch (request.method) {
 		case "client.hello": {
 			const params = request.params!;
+			const clientType: ClientType = readClientType(params.clientType);
+			let workspace: WorkspaceConfig | undefined;
+			if (clientType === "godot_plugin" && params.workspaceRoot !== undefined) {
+				workspace = upsertRuntimeWorkspace(createRuntimeWorkspace(
+					params.workspaceRoot,
+					params.godotExecutablePath ?? session.godotExecutablePath
+				));
+
+				// 在异步初始化 MCP 前先绑定会话，避免后续并发请求继续使用持久化默认工作区。
+				session.activeWorkspace = workspace;
+				session.godotProjectPath = workspace.rootPath;
+				session.godotExecutablePath = workspace.godotExecutablePath ?? session.godotExecutablePath;
+				try {
+					await mcpHost.ensureWorkspace(workspace);
+				} catch (error: unknown) {
+					sendJson(socket, {
+						type: "response",
+						id: request.id,
+						ok: false,
+						error: {
+							code: "workspace_switch_failed",
+							message: error instanceof Error ? error.message : "Failed to configure Godot workspace"
+						}
+					});
+					break;
+				}
+			}
+
 			const info = updateClientConnection(socket, {
-				clientType: readClientType(params.clientType),
+				clientType,
 				clientName: params.clientName ?? (params.clientType === "studio" ? "Daedalus Studio" : "Godot Daedalus"),
-				workspaceId: params.workspaceId,
-				workspaceRoot: params.workspaceRoot,
+				workspaceId: workspace?.id ?? params.workspaceId,
+				workspaceRoot: workspace?.rootPath ?? params.workspaceRoot,
 				editorInstanceId: params.editorInstanceId,
 				capabilities: readCapabilities(params.capabilities)
 			});
@@ -60,9 +90,10 @@ export async function handleClientRequest(socket: WebSocket, request: ClientRequ
 				ok: true,
 				result: {
 					connection: info,
-				multiClient: {
-					enabled: true,
-					protocolVersion: 2
+					workspace: workspace ?? null,
+					multiClient: {
+						enabled: true,
+						protocolVersion: 2
 					}
 				}
 			});

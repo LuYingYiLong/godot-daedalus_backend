@@ -13,6 +13,7 @@ test("slash command list exposes the existing backend chat commands", (): void =
 		"/approvals",
 		"/skills",
 		"/skill",
+		"/create-skill",
 		"/reset",
 		"/init"
 	]);

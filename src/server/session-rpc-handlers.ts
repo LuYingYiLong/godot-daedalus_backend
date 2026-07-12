@@ -31,6 +31,7 @@ import { createTokenCounter } from "../tokens/token-counter-factory.js";
 import { computeInputBudget, selectMessagesWithinBudget } from "../session/session-compressor.js";
 import { composeSkillPrompt, getSkill, isSkillId, listSkills } from "../skills/registry.js";
 import type { SkillId } from "../skills/registry.js";
+import { legacySkillIdToRef } from "../skills/catalog.js";
 import {
 	createRuntimeWorkspace,
 	loadWorkspaces,
@@ -217,7 +218,7 @@ function createSessionInfoResult(session: ClientSession, mcpHost: McpHost, histo
 			rootPath: session.activeWorkspace.rootPath,
 			godotExecutablePath: session.activeWorkspace.godotExecutablePath ?? null
 		} : null,
-		activeSkillId: session.activeSkillId ?? null
+		activeSkillId: null
 	};
 }
 
@@ -259,7 +260,6 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 
 		case "session.create": {
 			const workspaceId: string | undefined = request.params.workspaceId ?? session.activeWorkspace?.id;
-			const skillId: SkillId | undefined = request.params.skillId ?? session.activeSkillId;
 			let workspace: WorkspaceConfig | undefined;
 
 			if (workspaceId) {
@@ -297,7 +297,7 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 			const metadata: SessionMetadata = await createSession(
 				request.params.title,
 				workspaceId,
-				skillId,
+				undefined,
 				workspace
 			);
 			session.sessionId = metadata.id;
@@ -317,9 +317,6 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 				}
 			}
 
-			if (skillId) {
-				session.activeSkillId = skillId;
-			}
 			session = bindConnectionToSessionRuntime(socket, metadata.id, session);
 			subscribeSocketToSession(socket, metadata.id);
 
@@ -389,9 +386,6 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 						}
 					}
 
-					session.activeSkillId = timeline.metadata.activeSkillId && isSkillId(timeline.metadata.activeSkillId)
-						? timeline.metadata.activeSkillId
-						: undefined;
 					session = bindConnectionToSessionRuntime(socket, timeline.metadata.id, session);
 				}
 				subscribeSocketToSession(socket, timeline.metadata.id);
@@ -402,7 +396,13 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 					ok: true,
 					result: {
 						opened: true,
-						metadata: timeline.metadata,
+						metadata: {
+							...timeline.metadata,
+							activeSkillId: undefined,
+							legacySkillRefs: timeline.metadata.activeSkillId === undefined
+								? []
+								: [legacySkillIdToRef(timeline.metadata.activeSkillId)].filter((ref): boolean => ref !== undefined)
+						},
 						...await createTimelinePageResult(timeline, openMessageLimit),
 						pendingGuides: session.pendingGuides.map(serializePendingGuide),
 						workspaceWarning: workspaceWarning ?? null
@@ -592,7 +592,6 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 			await waitForSessionEventPersistence(session);
 			await saveSession(session.sessionId, session.messages, {
 				...createWorkspaceMetadataSnapshot(session.activeWorkspace),
-				activeSkillId: session.activeSkillId
 			});
 			sendJson(socket, {
 				type: "response",

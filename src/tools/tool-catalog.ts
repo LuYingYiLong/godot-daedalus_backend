@@ -24,6 +24,7 @@ export type WorkflowToolGroup = "read" | "verify" | "write";
 // 这是 workflow 的保守默认工具集，不等同于同风险工具的全集。
 const DEFAULT_WORKFLOW_TOOL_NAMES: Record<WorkflowToolGroup, readonly string[]> = {
 	read: [
+		"mcp_skills_load",
 		"mcp_godot_get_runtime_status",
 		"mcp_godot_get_godot_version",
 		"mcp_godot_get_debug_output",

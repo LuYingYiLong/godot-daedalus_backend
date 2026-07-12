@@ -60,7 +60,6 @@ export async function appendFailedChatTurnToSession(
 	];
 	await saveSession(session.sessionId, session.messages, {
 		...createWorkspaceMetadataSnapshot(session.activeWorkspace),
-		activeSkillId: session.activeSkillId
 	});
 	return true;
 }
@@ -106,7 +105,6 @@ export async function appendTranscriptOnlyChatTurnToSession(
 	];
 	await saveSession(session.sessionId, session.messages, {
 		...createWorkspaceMetadataSnapshot(session.activeWorkspace),
-		activeSkillId: session.activeSkillId
 	});
 	return true;
 }
