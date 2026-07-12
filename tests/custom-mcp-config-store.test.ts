@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { mock } from "node:test";
@@ -110,7 +110,9 @@ test("custom MCP config update preserves identity and applies secret update sema
 		assert.equal(configs.length, 0, "disabled custom MCP is not launched");
 
 		const rawConfig: string = await readFile(getMcpServersConfigPath(), "utf8");
+		assert.equal(rawConfig.endsWith("\n"), true);
 		assert.doesNotMatch(rawConfig, /old-token|new-token|drop-token/);
+		assert.deepEqual((await readdir(join(process.env.USERPROFILE!, ".daedalus", "config"))).sort(), ["mcp-servers.json"]);
 
 		const stored = await listStoredCustomMcpServerConfigs();
 		assert.equal(stored[0]?.id, serverId);

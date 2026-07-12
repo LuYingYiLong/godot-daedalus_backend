@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, dirname, resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { basename, resolve } from "node:path";
 import { getDefaultWorkspaceConfigPath } from "../app-paths.js";
+import { writeJsonFileAtomicSync } from "../json-file-store.js";
 import type { WorkspaceConfig } from "./types.js";
 import { logger } from "../logger.js";
 
@@ -36,8 +37,7 @@ function loadConfiguredWorkspaces(): WorkspaceConfig[] {
 
 function saveConfiguredWorkspaces(workspaces: WorkspaceConfig[]): void {
 	const configPath: string = getDefaultWorkspaceConfigPath();
-	mkdirSync(dirname(configPath), { recursive: true });
-	writeFileSync(configPath, `${JSON.stringify(workspaces, null, 2)}\n`, "utf8");
+	writeJsonFileAtomicSync(configPath, workspaces);
 	configuredWorkspaceCache = workspaces;
 }
 

@@ -1,6 +1,6 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { readFile } from "node:fs/promises";
 import { getSkillSettingsPath } from "../app-paths.js";
+import { writeJsonFileAtomic } from "../json-file-store.js";
 import type { SkillRef, SkillSource } from "./types.js";
 
 type SkillSettings = {
@@ -28,10 +28,7 @@ async function readSettings(): Promise<SkillSettings> {
 
 async function writeSettings(settings: SkillSettings): Promise<void> {
 	const filePath: string = getSkillSettingsPath();
-	await mkdir(dirname(filePath), { recursive: true });
-	const tempPath: string = `${filePath}.${process.pid}.tmp`;
-	await writeFile(tempPath, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
-	await rename(tempPath, filePath);
+	await writeJsonFileAtomic(filePath, settings);
 }
 
 export async function isSkillEnabled(workspaceId: string, ref: SkillRef, source: SkillSource): Promise<boolean> {

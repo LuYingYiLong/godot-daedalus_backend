@@ -1,12 +1,9 @@
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { getDaedalusDir } from "../../app-paths.js";
+import { getTerminalJobsDir } from "../../app-paths.js";
+import { writeJsonFileAtomic } from "../../json-file-store.js";
 import { MAX_STDERR_CHARS, MAX_STDOUT_CHARS, tailText, truncateOutput } from "./output-tail.js";
 import type { RunningTerminalJob, TerminalJobRecord, TerminalJobStatus } from "./types.js";
-
-function getTerminalJobsDir(): string {
-	return join(getDaedalusDir(), "terminal-jobs");
-}
 
 function createJobId(): string {
 	return `terminal-job-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -37,6 +34,7 @@ function toPersistedRecord(record: TerminalJobRecord): TerminalJobRecord {
 
 export class TerminalJobStore {
 	private readonly runningJobs: Map<string, RunningTerminalJob> = new Map();
+	private persistQueue: Promise<void> = Promise.resolve();
 
 	createRecord(params: {
 		preset: string;
@@ -177,8 +175,12 @@ export class TerminalJobStore {
 	}
 
 	private async persist(record: TerminalJobRecord): Promise<void> {
-		await mkdir(getTerminalJobsDir(), { recursive: true });
-		await writeFile(getJobPath(record.jobId), `${JSON.stringify(toPersistedRecord(record), null, 2)}\n`, "utf8");
+		const operation: Promise<void> = this.persistQueue.then(async (): Promise<void> => {
+			await mkdir(getTerminalJobsDir(), { recursive: true });
+			await writeJsonFileAtomic(getJobPath(record.jobId), toPersistedRecord(record));
+		});
+		this.persistQueue = operation.catch((): void => undefined);
+		await operation;
 	}
 
 	private async read(jobId: string): Promise<TerminalJobRecord | null> {

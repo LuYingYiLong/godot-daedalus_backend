@@ -1,7 +1,7 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { readFile, rm } from "node:fs/promises";
 import keytar from "keytar";
 import { getProviderConfigPath } from "../app-paths.js";
+import { writeJsonFileAtomic } from "../json-file-store.js";
 import type { ProviderId } from "../protocol/types.js";
 import {
 	DEFAULT_PROVIDER_ID,
@@ -412,8 +412,7 @@ async function readStoredProviderConfig(): Promise<StoredProviderConfig> {
 
 async function writeStoredProviderConfig(config: StoredProviderConfig): Promise<void> {
 	const filePath: string = getProviderConfigPath();
-	await mkdir(dirname(filePath), { recursive: true });
-	await writeFile(filePath, JSON.stringify(config, null, 2), "utf8");
+	await writeJsonFileAtomic(filePath, config);
 }
 
 export async function saveProviderConfig(input: ProviderConfigInput): Promise<ProviderConfigStatus> {

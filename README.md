@@ -4,6 +4,8 @@ Godot Daedalus Backend is the TypeScript runtime service for the Godot Daedalus 
 
 This npm package is a source-runtime package. It publishes the TypeScript source and small JavaScript bin launchers, then runs the source through `tsx` at runtime. It does not publish compiled `dist/` output.
 
+For the long-term split between the lightweight Godot editor plugin and the standalone Daedalus Studio workbench, see [docs/frontend-boundary-and-studio-roadmap.md](docs/frontend-boundary-and-studio-roadmap.md).
+
 ## Requirements
 
 - Node.js 22.12.0 or newer.

@@ -56,6 +56,7 @@ npm test
 ## 路径和持久化
 
 - Daedalus 配置和会话默认放在 `%USERPROFILE%\.daedalus`，不要回退到仓库内路径，也不要读取或迁移旧目录。
+- Daedalus 自有持久化路径统一通过 `src/app-paths.ts` 的 Path Registry 暴露；新增配置、会话、日志、技能、ledger 等自有路径时先加 typed key，再由兼容 getter 或 `getDaedalusPath` 使用。
 - Godot 项目路径只能来自 workspace/env/RPC 上下文，不能硬编码个人机器路径。
 - 解析 `res://`、`user://`、绝对路径时必须校验最终路径位于允许根目录内。
 - 遇到 `user://`、项目日志、Godot editor settings、`.godot/editor` 状态时，默认脱敏本机隐私路径；只有明确 raw 参数才返回原文。

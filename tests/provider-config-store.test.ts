@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test, { mock } from "node:test";
@@ -92,6 +92,11 @@ test("provider config saves keys under provider-scoped keytar accounts", async (
 		});
 
 		assert.deepEqual(savedAccounts, ["provider:deepseek:api_key", "provider:zhipu:api_key"]);
+		const configDir: string = join(process.env.USERPROFILE!, ".daedalus", "config");
+		const rawConfig: string = await readFile(join(configDir, "provider.json"), "utf8");
+		assert.equal(rawConfig.endsWith("\n"), true);
+		assert.doesNotMatch(rawConfig, /new-key|zhipu-key/);
+		assert.deepEqual((await readdir(configDir)).sort(), ["provider.json"]);
 	});
 });
 

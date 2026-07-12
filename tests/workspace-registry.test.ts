@@ -31,6 +31,8 @@ test("workspace registry persists runtime workspaces", async (): Promise<void> =
 		const rawConfig: string = await fs.readFile(configPath, "utf8");
 		const persisted = JSON.parse(rawConfig) as Array<Record<string, unknown>>;
 
+		assert.equal(rawConfig.endsWith("\n"), true);
+		assert.deepEqual((await fs.readdir(path.dirname(configPath))).sort(), ["workspaces.json"]);
 		assert.equal(persisted.length, 1);
 		assert.equal(persisted[0]?.id, workspace.id);
 		assert.equal(persisted[0]?.name, workspace.name);

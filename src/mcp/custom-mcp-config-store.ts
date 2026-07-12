@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { readFile } from "node:fs/promises";
 import keytar from "keytar";
 import { getMcpServersConfigPath } from "../app-paths.js";
+import { writeJsonFileAtomic } from "../json-file-store.js";
 import type { WorkspaceConfig } from "../workspace/types.js";
 import type { McpServerConfig } from "./types.js";
 
@@ -216,8 +216,7 @@ async function readStoredConfigs(): Promise<StoredCustomMcpServerConfig[]> {
 
 async function writeStoredConfigs(configs: StoredCustomMcpServerConfig[]): Promise<void> {
 	const filePath: string = getMcpServersConfigPath();
-	await mkdir(dirname(filePath), { recursive: true });
-	await writeFile(filePath, JSON.stringify(configs, null, 2), "utf8");
+	await writeJsonFileAtomic(filePath, configs);
 }
 
 async function saveSecrets(serverId: string, kind: "env" | "header", values: Record<string, string>): Promise<string[]> {
