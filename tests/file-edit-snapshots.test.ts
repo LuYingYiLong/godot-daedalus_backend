@@ -6,21 +6,21 @@ import test from "node:test";
 import type { McpHost } from "../src/mcp/mcp-host.js";
 
 async function withTempWorkspace<T>(fn: (root: string) => Promise<T>): Promise<T> {
-	const previousAppData: string | undefined = process.env.APPDATA;
+	const previousUserProfile: string | undefined = process.env.USERPROFILE;
 	const previousProjectPath: string | undefined = process.env.GODOT_PROJECT_PATH;
 	const appDataDir: string = await fs.mkdtemp(path.join(os.tmpdir(), "daedalus-file-edit-appdata-"));
 	const root: string = await fs.mkdtemp(path.join(os.tmpdir(), "daedalus-file-edit-workspace-"));
-	process.env.APPDATA = appDataDir;
+	process.env.USERPROFILE = appDataDir;
 	process.env.GODOT_PROJECT_PATH = root;
 	await fs.writeFile(path.join(root, "project.godot"), "[application]\nconfig/name=\"Test\"\n", "utf8");
 
 	try {
 		return await fn(root);
 	} finally {
-		if (previousAppData === undefined) {
-			delete process.env.APPDATA;
+		if (previousUserProfile === undefined) {
+			delete process.env.USERPROFILE;
 		} else {
-			process.env.APPDATA = previousAppData;
+			process.env.USERPROFILE = previousUserProfile;
 		}
 		if (previousProjectPath === undefined) {
 			delete process.env.GODOT_PROJECT_PATH;

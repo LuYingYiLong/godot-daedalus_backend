@@ -15,9 +15,9 @@ async function withTempAppData<T>(
 		transcriptHistory: typeof import("../src/server/transcript-history.js")
 	) => Promise<T>
 ): Promise<T> {
-	const previousAppData: string | undefined = process.env.APPDATA;
+	const previousUserProfile: string | undefined = process.env.USERPROFILE;
 	const appDataDir: string = await fs.mkdtemp(path.join(os.tmpdir(), "godot-daedalus-token-budget-appdata-"));
-	process.env.APPDATA = appDataDir;
+	process.env.USERPROFILE = appDataDir;
 
 	try {
 		const suffix: string = `${Date.now()}-${Math.random()}`;
@@ -25,10 +25,10 @@ async function withTempAppData<T>(
 		const transcriptHistory = await import(`../src/server/transcript-history.js?case=${suffix}`);
 		return await fn(store, transcriptHistory);
 	} finally {
-		if (previousAppData === undefined) {
-			delete process.env.APPDATA;
+		if (previousUserProfile === undefined) {
+			delete process.env.USERPROFILE;
 		} else {
-			process.env.APPDATA = previousAppData;
+			process.env.USERPROFILE = previousUserProfile;
 		}
 		await fs.rm(appDataDir, { recursive: true, force: true });
 	}

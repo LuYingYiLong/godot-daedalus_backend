@@ -58,7 +58,7 @@ async function scanRoot(source: "personal" | "project", rootPath: string, worksp
 		const filePath: string = join(rootRealPath, slug, "SKILL.md");
 		const displayPath: string = source === "project"
 			? `res://.github/skills/${slug}/SKILL.md`
-			: `%APPDATA%/.godot_daedalus/skills/${slug}/SKILL.md`;
+			: `%USERPROFILE%/.daedalus/skills/${slug}/SKILL.md`;
 		let document;
 		let errorMessage: string | undefined;
 		let fileExists: boolean = false;

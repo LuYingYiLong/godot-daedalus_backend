@@ -14,10 +14,8 @@ export type ProviderSessionRuntime = {
 
 export function applyProviderConfigToRuntime(runtime: ProviderSessionRuntime, config: ProviderConfigWithSecret): void {
 	runtime.activeProvider = config.provider;
-	if (config.apiKey !== undefined) {
-		runtime.providerApiKey = config.apiKey;
-	}
-	runtime.providerModel = config.model;
+	runtime.providerApiKey = config.apiKey;
+	runtime.providerModel = config.model ?? getProviderDefaultModel(config.provider);
 	runtime.providerBaseUrl = normalizeConfiguredProviderBaseUrl(config.baseUrl);
 	runtime.modelProfile = resolveModelProfile(config.provider, config.model ?? getProviderDefaultModel(config.provider));
 }

@@ -6,18 +6,18 @@ import test from "node:test";
 import type { WorkspaceConfig } from "../src/workspace/types.js";
 
 async function withTempAppData<T>(fn: (registry: typeof import("../src/workspace/registry.js"), appDataDir: string) => Promise<T>): Promise<T> {
-	const previousAppData: string | undefined = process.env.APPDATA;
+	const previousUserProfile: string | undefined = process.env.USERPROFILE;
 	const appDataDir: string = await fs.mkdtemp(path.join(os.tmpdir(), "godot-daedalus-workspace-appdata-"));
-	process.env.APPDATA = appDataDir;
+	process.env.USERPROFILE = appDataDir;
 
 	try {
 		const registry = await import(`../src/workspace/registry.js?case=${Date.now()}-${Math.random()}`);
 		return await fn(registry, appDataDir);
 	} finally {
-		if (previousAppData === undefined) {
-			delete process.env.APPDATA;
+		if (previousUserProfile === undefined) {
+			delete process.env.USERPROFILE;
 		} else {
-			process.env.APPDATA = previousAppData;
+			process.env.USERPROFILE = previousUserProfile;
 		}
 		await fs.rm(appDataDir, { recursive: true, force: true });
 	}
@@ -27,7 +27,7 @@ test("workspace registry persists runtime workspaces", async (): Promise<void> =
 	await withTempAppData(async (registry, appDataDir): Promise<void> => {
 		const projectDir: string = await fs.mkdtemp(path.join(os.tmpdir(), "godot-daedalus-project-"));
 		const workspace = registry.upsertRuntimeWorkspace(registry.createRuntimeWorkspace(projectDir, "D:/Godot/Godot.exe"));
-		const configPath: string = path.join(appDataDir, ".godot_daedalus", "config", "workspaces.json");
+		const configPath: string = path.join(appDataDir, ".daedalus", "config", "workspaces.json");
 		const rawConfig: string = await fs.readFile(configPath, "utf8");
 		const persisted = JSON.parse(rawConfig) as Array<Record<string, unknown>>;
 

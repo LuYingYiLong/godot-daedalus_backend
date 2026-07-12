@@ -36,6 +36,11 @@ type RawEndpointConfig = {
 	adapterFamily: AdapterFamily;
 	modelsPath?: string | undefined;
 	tokenEstimatePath?: string | undefined;
+	requiredToolChoice?: "auto" | "omit" | undefined;
+	temperature?: {
+		min?: unknown;
+		max?: unknown;
+	} | undefined;
 };
 
 type RawModelCatalogEntry = {
@@ -93,6 +98,28 @@ function isAdapterFamily(value: unknown): value is AdapterFamily {
 	return value === "openai-compatible" || value === "openai-responses";
 }
 
+function parseTemperatureConstraint(value: unknown, providerId: string, endpointType: string): ProviderEndpointConfig["temperature"] {
+	if (value === undefined) {
+		return undefined;
+	}
+	if (!isRecord(value)) {
+		throw new Error(`Provider ${providerId} endpoint ${endpointType} temperature must be an object`);
+	}
+	const min: unknown = value.min;
+	const max: unknown = value.max;
+	if (
+		typeof min !== "number"
+		|| typeof max !== "number"
+		|| !Number.isFinite(min)
+		|| !Number.isFinite(max)
+		|| min < 0
+		|| max < min
+	) {
+		throw new Error(`Provider ${providerId} endpoint ${endpointType} has invalid temperature range`);
+	}
+	return { min, max };
+}
+
 function parseEndpointConfig(value: unknown, providerId: string, endpointType: string): ProviderEndpointConfig {
 	if (!isRecord(value)) {
 		throw new Error(`Provider ${providerId} endpoint ${endpointType} must be an object`);
@@ -113,6 +140,16 @@ function parseEndpointConfig(value: unknown, providerId: string, endpointType: s
 	};
 	if (typeof value.tokenEstimatePath === "string" && value.tokenEstimatePath.trim().length > 0) {
 		config.tokenEstimatePath = value.tokenEstimatePath.trim();
+	}
+	if (value.requiredToolChoice !== undefined) {
+		if (value.requiredToolChoice !== "auto" && value.requiredToolChoice !== "omit") {
+			throw new Error(`Provider ${providerId} endpoint ${endpointType} has unsupported requiredToolChoice`);
+		}
+		config.requiredToolChoice = value.requiredToolChoice;
+	}
+	const temperature = parseTemperatureConstraint(value.temperature, providerId, endpointType);
+	if (temperature !== undefined) {
+		config.temperature = temperature;
 	}
 	return config;
 }

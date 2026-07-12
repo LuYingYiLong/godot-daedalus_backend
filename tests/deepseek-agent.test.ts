@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createToolProtocolCorrectionMessage, shouldDisableThinkingForToolCalls, shouldSkipRequiredToolChoice } from "../src/providers/deepseek-agent.js";
+import { createToolProtocolCorrectionMessage, resolveRequiredToolChoice, shouldDisableThinkingForToolCalls, shouldSkipRequiredToolChoice } from "../src/providers/deepseek-agent.js";
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
 
 test("DeepSeek V4 thinking models skip required tool_choice", (): void => {
@@ -50,6 +50,16 @@ test("DeepSeek V4 thinking models skip required tool_choice", (): void => {
 		apiKey: "test-key",
 		model: "kimi-k2.7-code"
 	}, tools), false);
+	assert.equal(shouldSkipRequiredToolChoice({
+		provider: "zhipu",
+		apiKey: "test-key",
+		model: "glm-5.2"
+	}), false);
+	assert.equal(resolveRequiredToolChoice({
+		provider: "zhipu",
+		apiKey: "test-key",
+		model: "glm-5.2"
+	}), "auto");
 });
 
 test("tool protocol correction prompt distinguishes tool and no-tool phases", (): void => {

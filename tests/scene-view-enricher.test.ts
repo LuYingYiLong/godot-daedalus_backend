@@ -7,15 +7,15 @@ import { createClientSession } from "../src/server/client-session.js";
 import { createSceneViewToolResultEnricher } from "../src/server/workflow/scene-view-enricher.js";
 
 async function withTempAppData(run: () => Promise<void>): Promise<void> {
-	const previousAppData: string | undefined = process.env.APPDATA;
-	process.env.APPDATA = await mkdtemp(join(tmpdir(), "daedalus-scene-view-"));
+	const previousUserProfile: string | undefined = process.env.USERPROFILE;
+	process.env.USERPROFILE = await mkdtemp(join(tmpdir(), "daedalus-scene-view-"));
 	try {
 		await run();
 	} finally {
-		if (previousAppData === undefined) {
-			delete process.env.APPDATA;
+		if (previousUserProfile === undefined) {
+			delete process.env.USERPROFILE;
 		} else {
-			process.env.APPDATA = previousAppData;
+			process.env.USERPROFILE = previousUserProfile;
 		}
 	}
 }

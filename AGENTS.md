@@ -47,15 +47,15 @@ npm test
 
 ## LLM Provider 与模型配置
 
-- 当前 provider id 为 `deepseek` 和 `moonshot`；新增 provider 时必须同步更新协议 schema、provider registry、模型 profile/fallback、token estimator（如支持）、前端供应商/模型控件和测试。
+- 当前内置 provider id 为 `deepseek`、`moonshot`、`openai` 和 `zhipu`；新增 provider 时必须同步更新 JSON catalog、协议 schema、adapter 能力、模型 profile/fallback、前端供应商/模型控件和测试。
 - 模型列表不得在前端写死为唯一来源；前端应通过 `provider.models.list` 动态获取，并只把内置列表作为失败或离线 fallback。
-- Provider 配置使用 v2 结构：`activeProvider` 加各 provider 的 `model/baseUrl/keyStorage/updatedAt/modelsCache`；API Key 只存 keytar，账号名使用 `provider:<provider>:api_key`，不得写入 provider.json 或日志。
+- Provider 配置使用 v3 结构：保存 active model ref 与各 provider 的 `model/baseUrl/keyStorage/updatedAt/modelsCache` 等元数据；API Key 只存 keytar，账号名使用 `provider:<provider>:api_key`，不得写入配置文件或日志。
 - 不保留旧 `provider.json` 或旧 keytar 账号兼容逻辑；迁移需求必须显式提出后再实现。
-- 供应商特定参数限制（例如 temperature、token 估算接口差异）应在 provider client 或共享请求边界统一归一化，避免业务层散落判断。
+- 供应商特定参数限制（例如 temperature、tool choice、token 估算接口差异）应由 JSON catalog 和 provider client 的共享请求边界统一归一化，避免业务层散落判断。
 
 ## 路径和持久化
 
-- Daedalus 配置和会话默认放在 `%APPDATA%\.godot_daedalus`，不要回退到仓库内路径。
+- Daedalus 配置和会话默认放在 `%USERPROFILE%\.daedalus`，不要回退到仓库内路径，也不要读取或迁移旧目录。
 - Godot 项目路径只能来自 workspace/env/RPC 上下文，不能硬编码个人机器路径。
 - 解析 `res://`、`user://`、绝对路径时必须校验最终路径位于允许根目录内。
 - 遇到 `user://`、项目日志、Godot editor settings、`.godot/editor` 状态时，默认脱敏本机隐私路径；只有明确 raw 参数才返回原文。

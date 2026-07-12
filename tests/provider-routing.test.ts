@@ -106,4 +106,15 @@ test("moonshot chat options normalize unsupported temperature values", (): void 
 		{ provider: "deepseek", apiKey: "test-key", model: "deepseek-v4-flash" }
 	);
 	assert.equal(deepseekRequest.temperature, 0.2);
+
+	const zhipuRequest: ChatCompletionCreateParamsBase = {
+		model: "glm-5.2",
+		messages: []
+	};
+	applyChatOptions(
+		zhipuRequest,
+		{ message: "你好", options: { temperature: 0 } },
+		{ provider: "zhipu", apiKey: "test-key", model: "glm-5.2" }
+	);
+	assert.equal(zhipuRequest.temperature, 0.01);
 });

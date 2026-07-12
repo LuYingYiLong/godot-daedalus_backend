@@ -1,6 +1,6 @@
 # Godot Daedalus Backend
 
-Godot Daedalus Backend is the TypeScript runtime service for the Godot Daedalus editor plugin. It provides the WebSocket/RPC backend, DeepSeek chat integration, approval-gated Godot project tools, session persistence, MCP host support, and Godot MCP servers.
+Godot Daedalus Backend is the TypeScript runtime service for the Godot Daedalus editor plugin. It provides the WebSocket/RPC backend, multi-provider chat integration, approval-gated Godot project tools, session persistence, MCP host support, and Godot MCP servers.
 
 This npm package is a source-runtime package. It publishes the TypeScript source and small JavaScript bin launchers, then runs the source through `tsx` at runtime. It does not publish compiled `dist/` output.
 
@@ -44,7 +44,13 @@ $env:PORT = "38180"
 godot-daedalus-backend
 ```
 
-The Godot plugin connects to this backend over WebSocket. Provider configuration, including the DeepSeek API key, is normally saved from the plugin settings UI.
+The Godot plugin connects to this backend over WebSocket. Provider configuration, including API keys, is normally saved from the plugin settings UI.
+
+## Providers
+
+The built-in catalog includes DeepSeek, Moonshot, OpenAI, and Zhipu AI. Zhipu AI uses the standard PaaS OpenAI-compatible base URL `https://open.bigmodel.cn/api/paas/v4`; its default text model is `glm-5.2`. Set an image-capable model such as `glm-5v-turbo` for the Image Recognition task when sending screenshots or other image attachments.
+
+API keys are stored in keytar only. They are never written to `%USERPROFILE%\.daedalus` configuration files. A custom base URL remains available for a compatible proxy or specialized provider endpoint.
 
 If the package is installed locally in another project, use npm exec or the local `.bin` command:
 
@@ -83,7 +89,7 @@ godot-daedalus-manager --json backend stop
 godot-daedalus-manager --json backend rollback
 ```
 
-Backend installs are versioned under `%APPDATA%\.godot_daedalus\backend\versions\<version>`. The manager switches `%APPDATA%\.godot_daedalus\backend\current.json` after a new version is staged, avoiding in-place edits of a running `node_modules` directory.
+Backend installs are versioned under `%USERPROFILE%\.daedalus\backend\versions\<version>`. The manager switches `%USERPROFILE%\.daedalus\backend\current.json` after a new version is staged, avoiding in-place edits of a running `node_modules` directory.
 
 Frontend plugin updates are staged rather than hot-applied. GitHub releases should provide:
 
@@ -94,7 +100,7 @@ godot-daedalus-plugin-vX.Y.Z.manifest.json
 
 The zip must contain `addons/godot_daedalus/plugin.cfg`. The manifest must include `version`, `tag`, `sha256`, `assetName`, and `minGodotVersion`.
 
-Manager logs and runtime state live under `%APPDATA%\.godot_daedalus`. If a frontend update is blocked by a Godot file lock, close Godot and run the pending update again. Rollback commands are available for both backend and frontend:
+Manager logs and runtime state live under `%USERPROFILE%\.daedalus`. If a frontend update is blocked by a Godot file lock, close Godot and run the pending update again. Rollback commands are available for both backend and frontend:
 
 ```powershell
 godot-daedalus-manager --json backend rollback
@@ -145,7 +151,7 @@ See [`docs/automation-mcp.md`](docs/automation-mcp.md) for Codex MCP configurati
 Daedalus discovers skills from three sources:
 
 - Project: `<project>/.github/skills/<slug>/SKILL.md`
-- Personal: `%APPDATA%/.godot_daedalus/skills/<slug>/SKILL.md`
+- Personal: `%USERPROFILE%/.daedalus/skills/<slug>/SKILL.md`
 - Built-in: trusted skills shipped with the backend
 
 Every `SKILL.md` starts with strict frontmatter containing non-empty `name` and `description` fields, followed by a non-empty instruction body. Project and built-in skills are enabled by default per workspace; personal skills are opt-in for each workspace.

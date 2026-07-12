@@ -26,6 +26,7 @@ import { containsDsmlToolCalls } from "./deepseek-dsml-tools.js";
 import { containsLooseToolCalls, isKnownLooseToolTagName, isPotentialLooseToolTagName, normalizeKnownToolName } from "./deepseek-loose-tools.js";
 import type { ApprovedToolResult, ChatCompletionsAgentContinuation, ProviderAgentResult } from "./agent-types.js";
 import { createToolResultLimitFallback, createToolResultLimitReason, fitToolResultContent } from "./tool-result-budget.js";
+import { getProviderEndpointConfig } from "./provider-registry.js";
 
 const FINALIZE_AFTER_TOOL_LIMIT_PROMPT: string =
 	"工具调用阶段已经达到后端限制。请停止请求更多工具，基于目前已经获得的工具结果直接回答用户。"
@@ -56,7 +57,19 @@ function shouldRequireToolCallOnStep(params: AiChatParams, step: number, startSt
 
 export function shouldSkipRequiredToolChoice(options: DeepSeekChatOptions): boolean {
 	const model: string = resolveChatModel(options).toLowerCase();
-	return options.provider === "moonshot" || (options.provider === "deepseek" && model.startsWith("deepseek-v4"));
+	const configuredMode = getProviderEndpointConfig(options.provider, options.endpointType).requiredToolChoice;
+	return configuredMode === "omit" || (options.provider === "deepseek" && model.startsWith("deepseek-v4"));
+}
+
+export function resolveRequiredToolChoice(options: DeepSeekChatOptions): "required" | "auto" | undefined {
+	const configuredMode = getProviderEndpointConfig(options.provider, options.endpointType).requiredToolChoice;
+	if (configuredMode === "auto") {
+		return "auto";
+	}
+	if (shouldSkipRequiredToolChoice(options)) {
+		return undefined;
+	}
+	return "required";
 }
 
 export function shouldDisableThinkingForToolCalls(options: DeepSeekChatOptions, tools: readonly ChatCompletionTool[]): boolean {
@@ -93,11 +106,12 @@ function applyToolChoiceForStep(
 		return;
 	}
 
-	if (shouldSkipRequiredToolChoice(options)) {
+	const toolChoice = resolveRequiredToolChoice(options);
+	if (toolChoice === undefined) {
 		return;
 	}
 
-	requestBody.tool_choice = "required";
+	requestBody.tool_choice = toolChoice;
 }
 
 function extractTextContent(content: ChatCompletionMessageParam["content"]): string {

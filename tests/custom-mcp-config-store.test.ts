@@ -15,10 +15,10 @@ import type { McpServerConfig } from "../src/mcp/types.js";
 import type { WorkspaceConfig } from "../src/workspace/types.js";
 
 async function withTempAppData(run: (secrets: Map<string, string>) => Promise<void>): Promise<void> {
-	const previousAppData: string | undefined = process.env.APPDATA;
+	const previousUserProfile: string | undefined = process.env.USERPROFILE;
 	const appDataDir: string = await mkdtemp(join(tmpdir(), "daedalus-custom-mcp-"));
 	const secrets: Map<string, string> = new Map();
-	process.env.APPDATA = appDataDir;
+	process.env.USERPROFILE = appDataDir;
 	mock.method(keytar, "setPassword", async (_service: string, account: string, password: string): Promise<void> => {
 		secrets.set(account, password);
 	});
@@ -33,10 +33,10 @@ async function withTempAppData(run: (secrets: Map<string, string>) => Promise<vo
 	try {
 		await run(secrets);
 	} finally {
-		if (previousAppData === undefined) {
-			delete process.env.APPDATA;
+		if (previousUserProfile === undefined) {
+			delete process.env.USERPROFILE;
 		} else {
-			process.env.APPDATA = previousAppData;
+			process.env.USERPROFILE = previousUserProfile;
 		}
 		mock.restoreAll();
 		await rm(appDataDir, { recursive: true, force: true });

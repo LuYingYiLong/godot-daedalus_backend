@@ -7,8 +7,8 @@ import { parseSkillDocument } from "../src/skills/frontmatter.js";
 import { listSkillSummaries, resolveCatalogSkill } from "../src/skills/catalog.js";
 import { createSkill, removePersonalSkill, setWorkspaceSkillEnabled, updateSkillContent } from "../src/skills/management.js";
 
-const appDataRoot: string = await mkdtemp(join(tmpdir(), "daedalus-skills-appdata-"));
-process.env.APPDATA = appDataRoot;
+const userProfileRoot: string = await mkdtemp(join(tmpdir(), "daedalus-skills-userprofile-"));
+process.env.USERPROFILE = userProfileRoot;
 
 function skillDocument(name: string, description: string): string {
 	return `---\nname: ${name}\ndescription: "${description}"\n---\n\n# ${name}\n\nFollow this workflow.`;
@@ -25,7 +25,7 @@ test("strict skill frontmatter requires name, description, and body", (): void =
 test("catalog discovers project, personal, and builtin skills without shadowing", async (): Promise<void> => {
 	const projectRoot: string = await mkdtemp(join(tmpdir(), "daedalus-skills-project-"));
 	const projectSkillDir: string = join(projectRoot, ".github", "skills", "shared-name");
-	const personalSkillDir: string = join(appDataRoot, ".godot_daedalus", "skills", "shared-name");
+	const personalSkillDir: string = join(userProfileRoot, ".daedalus", "skills", "shared-name");
 	await mkdir(projectSkillDir, { recursive: true });
 	await mkdir(personalSkillDir, { recursive: true });
 	await writeFile(join(projectSkillDir, "SKILL.md"), skillDocument("Project Skill", "Project scoped."), "utf8");

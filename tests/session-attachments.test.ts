@@ -6,15 +6,15 @@ import test from "node:test";
 import { aiChatParamsSchema } from "../src/protocol/schema.js";
 
 async function withTempAppData(run: () => Promise<void>): Promise<void> {
-	const previousAppData: string | undefined = process.env.APPDATA;
-	process.env.APPDATA = await mkdtemp(join(tmpdir(), "daedalus-session-attachments-"));
+	const previousUserProfile: string | undefined = process.env.USERPROFILE;
+	process.env.USERPROFILE = await mkdtemp(join(tmpdir(), "daedalus-session-attachments-"));
 	try {
 		await run();
 	} finally {
-		if (previousAppData === undefined) {
-			delete process.env.APPDATA;
+		if (previousUserProfile === undefined) {
+			delete process.env.USERPROFILE;
 		} else {
-			process.env.APPDATA = previousAppData;
+			process.env.USERPROFILE = previousUserProfile;
 		}
 	}
 }

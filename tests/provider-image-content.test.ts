@@ -9,15 +9,15 @@ import { createCurrentUserMessage, getImageAttachments, ProviderImageInputError 
 import { preprocessImageAttachmentsForTextModel } from "../src/providers/image-recognition.js";
 
 async function withTempAppData(run: () => Promise<void>): Promise<void> {
-	const previousAppData: string | undefined = process.env.APPDATA;
-	process.env.APPDATA = await mkdtemp(join(tmpdir(), "daedalus-image-routing-"));
+	const previousUserProfile: string | undefined = process.env.USERPROFILE;
+	process.env.USERPROFILE = await mkdtemp(join(tmpdir(), "daedalus-image-routing-"));
 	try {
 		await run();
 	} finally {
-		if (previousAppData === undefined) {
-			delete process.env.APPDATA;
+		if (previousUserProfile === undefined) {
+			delete process.env.USERPROFILE;
 		} else {
-			process.env.APPDATA = previousAppData;
+			process.env.USERPROFILE = previousUserProfile;
 		}
 	}
 }

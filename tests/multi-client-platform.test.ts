@@ -61,6 +61,44 @@ test("Godot client hello replaces the persisted default with the project workspa
 	}
 });
 
+test("Godot client hello replies only after its workspace MCP initialization completes", async (): Promise<void> => {
+	const socket = createSocket();
+	const session = createClientSession(undefined);
+	registerClientConnection(socket, session);
+	let ensureEntered: boolean = false;
+	let releaseInitialization: (() => void) | undefined;
+	const initialization = new Promise<void>((resolve: () => void): void => {
+		releaseInitialization = resolve;
+	});
+	const host = {
+		async ensureWorkspace(): Promise<void> {
+			ensureEntered = true;
+			await initialization;
+		}
+	} as unknown as McpHost;
+
+	try {
+		const hello = handleClientRequest(socket, {
+			type: "request",
+			id: "hello-awaits-workspace",
+			method: "client.hello",
+			params: {
+				protocolVersion: 2,
+				clientType: "godot_plugin",
+				workspaceRoot: "D:/GodotProjects/example"
+			}
+		}, session, host);
+		assert.equal(ensureEntered, true);
+		assert.equal(socket.sent.length, 0);
+
+		releaseInitialization?.();
+		await hello;
+		assert.equal(socket.sent.at(-1)?.ok, true);
+	} finally {
+		unregisterClientConnection(socket);
+	}
+});
+
 test("studio connection does not replace Godot editor tool target", async (): Promise<void> => {
 	const bridge = new GodotEditorBridge();
 	const godotSocket = createSocket();

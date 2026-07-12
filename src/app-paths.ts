@@ -1,45 +1,44 @@
 import { join } from "node:path";
 
-const APP_DIR_NAME: string = ".godot_daedalus";
-const DATA_V2_DIR_NAME: string = "v2";
+const DAEDALUS_DIR_NAME: string = ".daedalus";
 
-export function getAppDataDir(): string {
-	const windowsAppData: string | undefined = process.env.APPDATA;
-	if (!windowsAppData || windowsAppData.trim().length === 0) {
-		throw new Error("APPDATA is not configured");
+export function getDaedalusDir(): string {
+	const userProfile: string | undefined = process.env.USERPROFILE;
+	if (!userProfile || userProfile.trim().length === 0) {
+		throw new Error("USERPROFILE is not configured");
 	}
 
-	return join(windowsAppData, APP_DIR_NAME);
+	return join(userProfile, DAEDALUS_DIR_NAME);
 }
 
 export function getDefaultWorkspaceConfigPath(): string {
-	return join(getAppDataDir(), "config", "workspaces.json");
+	return join(getDaedalusDir(), "config", "workspaces.json");
 }
 
 export function getProviderConfigPath(): string {
-	return join(getAppDataDir(), "config", "provider.json");
+	return join(getDaedalusDir(), "config", "provider.json");
 }
 
 export function getMcpServersConfigPath(): string {
-	return join(getAppDataDir(), "config", "mcp-servers.json");
+	return join(getDaedalusDir(), "config", "mcp-servers.json");
 }
 
 export function getPersonalSkillsDir(): string {
-	return join(getAppDataDir(), "skills");
+	return join(getDaedalusDir(), "skills");
 }
 
 export function getSkillSettingsPath(): string {
-	return join(getAppDataDir(), "config", "skill-settings.json");
+	return join(getDaedalusDir(), "config", "skill-settings.json");
 }
 
 export function getDefaultSessionsDir(): string {
-	return join(getAppDataDir(), "data", DATA_V2_DIR_NAME, "sessions");
+	return join(getDaedalusDir(), "sessions");
 }
 
 export function getDefaultArchivedSessionsDir(): string {
-	return join(getAppDataDir(), "data", DATA_V2_DIR_NAME, "archived_sessions");
+	return join(getDaedalusDir(), "archived_sessions");
 }
 
 export function getToolExecutionLedgerPath(): string {
-	return join(getAppDataDir(), "data", DATA_V2_DIR_NAME, "tool-executions.jsonl");
+	return join(getDaedalusDir(), "tool-executions.jsonl");
 }

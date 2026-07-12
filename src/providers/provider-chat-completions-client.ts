@@ -10,7 +10,7 @@ import type { AiChatParams, ChatMessage } from "../protocol/types.js";
 import { createProviderMessages } from "./provider-image-content.js";
 import { normalizeConfiguredProviderBaseUrl, resolveProviderBaseUrl } from "./provider-base-url.js";
 import type { ProviderChatOptions } from "./provider-types.js";
-import { getProviderDefaultModel } from "./provider-registry.js";
+import { getProviderDefaultModel, getProviderEndpointConfig } from "./provider-registry.js";
 
 export function createOpenAICompatibleClient(options: ProviderChatOptions): OpenAI {
 	const clientOptions: ConstructorParameters<typeof OpenAI>[0] = {
@@ -29,11 +29,12 @@ export function createMessages(params: AiChatParams, history: ChatMessage[], sys
 }
 
 function normalizeTemperature(options: ProviderChatOptions, temperature: number): number {
-	if (options.provider === "moonshot") {
-		return 1;
+	const constraint = getProviderEndpointConfig(options.provider, options.endpointType).temperature;
+	if (constraint === undefined) {
+		return temperature;
 	}
 
-	return temperature;
+	return Math.min(constraint.max, Math.max(constraint.min, temperature));
 }
 
 export function applyChatOptions(requestBody: ChatCompletionCreateParamsBase, params: AiChatParams, options: ProviderChatOptions): void {

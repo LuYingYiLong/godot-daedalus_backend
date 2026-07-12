@@ -6,18 +6,18 @@ import test from "node:test";
 import type { ChatMessage } from "../src/protocol/types.js";
 
 async function withTempAppData<T>(fn: (store: typeof import("../src/session/session-store.js")) => Promise<T>): Promise<T> {
-	const previousAppData: string | undefined = process.env.APPDATA;
+	const previousUserProfile: string | undefined = process.env.USERPROFILE;
 	const appDataDir: string = await fs.mkdtemp(path.join(os.tmpdir(), "godot-daedalus-session-appdata-"));
-	process.env.APPDATA = appDataDir;
+	process.env.USERPROFILE = appDataDir;
 
 	try {
 		const store = await import(`../src/session/session-store.js?case=${Date.now()}-${Math.random()}`);
 		return await fn(store);
 	} finally {
-		if (previousAppData === undefined) {
-			delete process.env.APPDATA;
+		if (previousUserProfile === undefined) {
+			delete process.env.USERPROFILE;
 		} else {
-			process.env.APPDATA = previousAppData;
+			process.env.USERPROFILE = previousUserProfile;
 		}
 		await fs.rm(appDataDir, { recursive: true, force: true });
 	}

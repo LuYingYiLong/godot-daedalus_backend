@@ -6,9 +6,9 @@ import test from "node:test";
 import type { FileEditBatchDraft } from "../src/tools/file-edit-snapshots.js";
 
 async function withTempAppData<T>(fn: (store: typeof import("../src/session/session-store.js"), batches: typeof import("../src/server/file-edit-batches.js")) => Promise<T>): Promise<T> {
-	const previousAppData: string | undefined = process.env.APPDATA;
+	const previousUserProfile: string | undefined = process.env.USERPROFILE;
 	const appDataDir: string = await fs.mkdtemp(path.join(os.tmpdir(), "daedalus-file-edit-batches-"));
-	process.env.APPDATA = appDataDir;
+	process.env.USERPROFILE = appDataDir;
 
 	try {
 		const suffix: string = `${Date.now()}-${Math.random()}`;
@@ -16,10 +16,10 @@ async function withTempAppData<T>(fn: (store: typeof import("../src/session/sess
 		const batches = await import(`../src/server/file-edit-batches.js?case=${suffix}`);
 		return await fn(store, batches);
 	} finally {
-		if (previousAppData === undefined) {
-			delete process.env.APPDATA;
+		if (previousUserProfile === undefined) {
+			delete process.env.USERPROFILE;
 		} else {
-			process.env.APPDATA = previousAppData;
+			process.env.USERPROFILE = previousUserProfile;
 		}
 		await fs.rm(appDataDir, { recursive: true, force: true });
 	}

@@ -138,5 +138,115 @@
     "maxOutputTokens": 128000,
     "capabilities": { "imageInput": true, "reasoning": true },
     "ownedBy": "openai"
+  },
+  {
+    "id": "glm-5.2",
+    "displayName": "GLM-5.2",
+    "provider": "zhipu",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 1000000,
+    "maxOutputTokens": 128000,
+    "capabilities": { "reasoning": true },
+    "ownedBy": "zhipu"
+  },
+  {
+    "id": "glm-5.1",
+    "displayName": "GLM-5.1",
+    "provider": "zhipu",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 200000,
+    "maxOutputTokens": 128000,
+    "capabilities": { "reasoning": true },
+    "ownedBy": "zhipu"
+  },
+  {
+    "id": "glm-5",
+    "displayName": "GLM-5",
+    "provider": "zhipu",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 200000,
+    "maxOutputTokens": 128000,
+    "capabilities": { "reasoning": true },
+    "ownedBy": "zhipu"
+  },
+  {
+    "id": "glm-5-turbo",
+    "displayName": "GLM-5 Turbo",
+    "provider": "zhipu",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 200000,
+    "maxOutputTokens": 128000,
+    "capabilities": { "reasoning": true },
+    "ownedBy": "zhipu"
+  },
+  {
+    "id": "glm-4.7",
+    "displayName": "GLM-4.7",
+    "provider": "zhipu",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 200000,
+    "maxOutputTokens": 128000,
+    "capabilities": { "reasoning": true },
+    "ownedBy": "zhipu"
+  },
+  {
+    "id": "glm-4.7-flashx",
+    "displayName": "GLM-4.7 FlashX",
+    "provider": "zhipu",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 200000,
+    "maxOutputTokens": 128000,
+    "capabilities": { "reasoning": true },
+    "ownedBy": "zhipu"
+  },
+  {
+    "id": "glm-4.6",
+    "displayName": "GLM-4.6",
+    "provider": "zhipu",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 200000,
+    "maxOutputTokens": 128000,
+    "capabilities": { "reasoning": true },
+    "ownedBy": "zhipu"
+  },
+  {
+    "id": "glm-5v-turbo",
+    "displayName": "GLM-5V Turbo",
+    "provider": "zhipu",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 200000,
+    "maxOutputTokens": 128000,
+    "capabilities": { "imageInput": true, "reasoning": true },
+    "ownedBy": "zhipu"
+  },
+  {
+    "id": "glm-4.6v",
+    "displayName": "GLM-4.6V",
+    "provider": "zhipu",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 128000,
+    "maxOutputTokens": 32000,
+    "capabilities": { "imageInput": true, "reasoning": true },
+    "ownedBy": "zhipu"
+  },
+  {
+    "id": "glm-4.6v-flash",
+    "displayName": "GLM-4.6V Flash",
+    "provider": "zhipu",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 128000,
+    "maxOutputTokens": 32000,
+    "capabilities": { "imageInput": true, "reasoning": true },
+    "ownedBy": "zhipu"
+  },
+  {
+    "id": "glm-4.1v-thinking-flashx",
+    "displayName": "GLM-4.1V Thinking FlashX",
+    "provider": "zhipu",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 64000,
+    "maxOutputTokens": 16000,
+    "capabilities": { "imageInput": true, "reasoning": true },
+    "ownedBy": "zhipu"
   }
 ]

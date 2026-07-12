@@ -82,10 +82,45 @@ export type ProviderConfigProviderStatus = {
 	modelsCacheUpdatedAt: string | null;
 };
 
+export type CurrentProviderConfigStatus = {
+	provider: ProviderId;
+	displayName: string;
+	configured: boolean;
+	model: string;
+	modelDisplayName: string;
+	baseUrl: string;
+	apiKeyMasked: string | null;
+	keyStorage: "keytar";
+	updatedAt: string | null;
+};
+
+export type ProviderModelSelectionProviderStatus = {
+	provider: ProviderId;
+	displayName: string;
+	configured: boolean;
+	selected: boolean;
+	selectedModel: string | null;
+	selectedModelDisplayName: string | null;
+	defaultModel: string;
+	baseUrl: string;
+	apiKeyMasked: string | null;
+	models: ProviderModelInfo[];
+	modelsSource: "cache" | "fallback";
+	modelsCacheUpdatedAt: string | null;
+};
+
+export type ProviderModelSelectionStatus = {
+	activeModel: ModelRef;
+	current: CurrentProviderConfigStatus;
+	providers: ProviderModelSelectionProviderStatus[];
+	modelRouting: ProviderModelRouting;
+};
+
 export type ProviderConfigStatus = {
 	schemaVersion: 3;
 	activeModel: ModelRef;
 	activeProvider: ProviderId;
+	current: CurrentProviderConfigStatus;
 	providers: ProviderConfigProviderStatus[];
 	modelRouting: ProviderModelRouting;
 	provider: ProviderId;
@@ -122,6 +157,10 @@ function maskApiKey(apiKey: string | null): string | null {
 	}
 
 	return `${apiKey.slice(0, 3)}...${apiKey.slice(-4)}`;
+}
+
+function getModelDisplayName(models: readonly ProviderModelInfo[], modelId: string): string {
+	return models.find((model: ProviderModelInfo): boolean => model.id === modelId)?.displayName ?? modelId;
 }
 
 function createModelRef(provider: ProviderId = DEFAULT_PROVIDER_ID, model?: string | undefined): ModelRef {
@@ -464,11 +503,24 @@ export async function getProviderConfigStatus(): Promise<ProviderConfigStatus> {
 
 	const activeStatus: ProviderConfigProviderStatus = providers.find((item: ProviderConfigProviderStatus): boolean => item.provider === stored.activeModel.providerId)
 		?? providers[0]!;
+	const activeModels: ProviderModelInfo[] = activeStatus.modelsCache.length > 0 ? activeStatus.modelsCache : [...activeStatus.fallbackModels];
+	const current: CurrentProviderConfigStatus = {
+		provider: activeStatus.provider,
+		displayName: activeStatus.displayName,
+		configured: activeStatus.configured,
+		model: stored.activeModel.modelId,
+		modelDisplayName: getModelDisplayName(activeModels, stored.activeModel.modelId),
+		baseUrl: activeStatus.baseUrl ?? activeStatus.defaultBaseUrl,
+		apiKeyMasked: activeStatus.apiKeyMasked,
+		keyStorage: "keytar",
+		updatedAt: activeStatus.updatedAt
+	};
 
 	return {
 		schemaVersion: 3,
 		activeModel: stored.activeModel,
 		activeProvider: stored.activeModel.providerId,
+		current,
 		providers,
 		modelRouting: stored.modelRouting,
 		provider: activeStatus.provider,
@@ -479,6 +531,39 @@ export async function getProviderConfigStatus(): Promise<ProviderConfigStatus> {
 		keyStorage: "keytar",
 		configPath: getProviderConfigPath(),
 		updatedAt: activeStatus.updatedAt
+	};
+}
+
+export async function getProviderModelSelectionStatus(): Promise<ProviderModelSelectionStatus> {
+	const status: ProviderConfigStatus = await getProviderConfigStatus();
+
+	return {
+		activeModel: status.activeModel,
+		current: status.current,
+		providers: status.providers.map((providerStatus: ProviderConfigProviderStatus): ProviderModelSelectionProviderStatus => {
+			const modelsSource: "cache" | "fallback" = providerStatus.modelsCache.length > 0 ? "cache" : "fallback";
+			const models: ProviderModelInfo[] = modelsSource === "cache" ? providerStatus.modelsCache : [...providerStatus.fallbackModels];
+			const selected: boolean = providerStatus.provider === status.activeModel.providerId;
+			const selectedModel: string | null = selected
+				? status.activeModel.modelId
+				: providerStatus.model ?? null;
+
+			return {
+				provider: providerStatus.provider,
+				displayName: providerStatus.displayName,
+				configured: providerStatus.configured,
+				selected,
+				selectedModel,
+				selectedModelDisplayName: selectedModel === null ? null : getModelDisplayName(models, selectedModel),
+				defaultModel: providerStatus.defaultModel,
+				baseUrl: providerStatus.baseUrl ?? providerStatus.defaultBaseUrl,
+				apiKeyMasked: providerStatus.apiKeyMasked,
+				models,
+				modelsSource,
+				modelsCacheUpdatedAt: providerStatus.modelsCacheUpdatedAt
+			};
+		}),
+		modelRouting: status.modelRouting
 	};
 }
 

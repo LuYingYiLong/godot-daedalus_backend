@@ -6,7 +6,7 @@ import { sendJson } from "../send-json.js";
 import type { ProviderId } from "../../protocol/types.js";
 import { resolveModelProfile } from "../../tokens/model-profiles.js";
 import { getProviderDefaultModel } from "../../providers/provider-registry.js";
-import { clearProviderConfig, getProviderConfigStatus, loadProviderConfigWithSecret, saveProviderConfig, type ProviderConfigWithSecret } from "../../providers/provider-config-store.js";
+import { clearProviderConfig, getProviderConfigStatus, getProviderModelSelectionStatus, loadProviderConfigWithSecret, saveProviderConfig, type ProviderConfigWithSecret } from "../../providers/provider-config-store.js";
 import { listProviderModels } from "../../providers/provider-models.js";
 import { normalizeConfiguredProviderBaseUrl } from "../../providers/provider-base-url.js";
 import { applyProviderConfigToRuntime, ensureProviderConfigured, resetProviderRuntime } from "../../application/provider-session-service.js";
@@ -46,8 +46,8 @@ export async function handleProviderRequest(socket: WebSocket, request: ClientRe
 	case "provider.config.get":
 		try {
 			const config: ProviderConfigWithSecret | null = await loadProviderConfigWithSecret();
-			if (config !== null && config.apiKey !== undefined) {
-			applyProviderConfigToRuntime(session, config);
+			if (config !== null) {
+				applyProviderConfigToRuntime(session, config);
 			}
 
 			sendJson(socket, {
@@ -69,11 +69,38 @@ export async function handleProviderRequest(socket: WebSocket, request: ClientRe
 		}
 		break;
 
+	case "provider.current.get":
+	case "provider.modelSelection.get":
+		try {
+			const config: ProviderConfigWithSecret | null = await loadProviderConfigWithSecret();
+			if (config !== null) {
+				applyProviderConfigToRuntime(session, config);
+			}
+
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: true,
+				result: await getProviderModelSelectionStatus()
+			});
+		} catch (error: unknown) {
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: false,
+				error: {
+					code: "provider_config_error",
+					message: error instanceof Error ? error.message : "Failed to read provider model selection"
+				}
+			});
+		}
+		break;
+
 	case "provider.config.set":
 		try {
 			await saveProviderConfig(request.params);
 			const config: ProviderConfigWithSecret | null = await loadProviderConfigWithSecret();
-			if (config !== null && config.apiKey !== undefined) {
+			if (config !== null) {
 				applyProviderConfigToRuntime(session, config);
 			}
 			logger.info("provider", "config_saved", {

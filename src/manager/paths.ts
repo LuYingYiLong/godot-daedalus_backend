@@ -1,5 +1,5 @@
 import { join, resolve, sep } from "node:path";
-import { getAppDataDir } from "../app-paths.js";
+import { getDaedalusDir } from "../app-paths.js";
 import { FRONTEND_ADDON_DIR_NAME } from "./types.js";
 import { ManagerError } from "./manager-error.js";
 
@@ -24,7 +24,7 @@ export function getManagerAppDir(): string {
 		return resolve(override);
 	}
 
-	return getAppDataDir();
+	return getDaedalusDir();
 }
 
 export function getManagerPaths(): ManagerPaths {

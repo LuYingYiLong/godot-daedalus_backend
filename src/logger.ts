@@ -1,7 +1,7 @@
 import { mkdirSync, createWriteStream, type WriteStream } from "node:fs";
 import { join } from "node:path";
 import { inspect } from "node:util";
-import { getAppDataDir } from "./app-paths.js";
+import { getDaedalusDir } from "./app-paths.js";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -65,7 +65,7 @@ function resolveLogDir(): string | null {
 	}
 
 	try {
-		return join(getAppDataDir(), "logs");
+		return join(getDaedalusDir(), "logs");
 	} catch {
 		return null;
 	}

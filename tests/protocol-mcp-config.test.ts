@@ -104,6 +104,20 @@ test("mcp.config.update schema rejects invalid update payloads", (): void => {
 test("provider.config.set schema accepts task model routing", (): void => {
 	assert.equal(clientRequestSchema.safeParse({
 		type: "request",
+		id: "provider-current",
+		method: "provider.current.get",
+		params: {}
+	}).success, true);
+
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "provider-model-selection",
+		method: "provider.modelSelection.get",
+		params: {}
+	}).success, true);
+
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
 		id: "provider-routing",
 		method: "provider.config.set",
 		params: {

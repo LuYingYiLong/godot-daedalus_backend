@@ -31,6 +31,11 @@ export type ProviderEndpointConfig = {
 	adapterFamily: AdapterFamily;
 	modelsPath: string;
 	tokenEstimatePath?: string | undefined;
+	requiredToolChoice?: "auto" | "omit" | undefined;
+	temperature?: {
+		min: number;
+		max: number;
+	} | undefined;
 };
 
 export type ProviderDefinition = {

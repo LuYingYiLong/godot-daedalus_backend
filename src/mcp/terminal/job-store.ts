@@ -1,11 +1,11 @@
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { getAppDataDir } from "../../app-paths.js";
+import { getDaedalusDir } from "../../app-paths.js";
 import { MAX_STDERR_CHARS, MAX_STDOUT_CHARS, tailText, truncateOutput } from "./output-tail.js";
 import type { RunningTerminalJob, TerminalJobRecord, TerminalJobStatus } from "./types.js";
 
 function getTerminalJobsDir(): string {
-	return join(getAppDataDir(), "data", "terminal-jobs");
+	return join(getDaedalusDir(), "terminal-jobs");
 }
 
 function createJobId(): string {

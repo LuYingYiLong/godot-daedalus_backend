@@ -60,6 +60,7 @@ export class McpHost {
 	private workspaceSessions: Map<string, Map<string, McpSession>> = new Map();
 	private workspaceCustomTools: Map<string, Map<string, DynamicMcpToolSource[]>> = new Map();
 	private customServerStatuses: Map<string, CustomMcpServerRuntimeStatus> = new Map();
+	private workspaceInitializations: Map<string, Promise<void>> = new Map();
 	private activeWorkspaceId?: string | undefined;
 	private readonly editorBridge: GodotEditorBridge = new GodotEditorBridge();
 	private readonly diagnosticsBridge: GodotDiagnosticsBridge = new GodotDiagnosticsBridge();
@@ -93,7 +94,24 @@ export class McpHost {
 		if (this.workspaceSessions.has(workspace.id)) {
 			return;
 		}
+		const pendingInitialization: Promise<void> | undefined = this.workspaceInitializations.get(workspace.id);
+		if (pendingInitialization !== undefined) {
+			await pendingInitialization;
+			return;
+		}
 
+		const initialization: Promise<void> = this.initializeWorkspace(workspace);
+		this.workspaceInitializations.set(workspace.id, initialization);
+		try {
+			await initialization;
+		} finally {
+			if (this.workspaceInitializations.get(workspace.id) === initialization) {
+				this.workspaceInitializations.delete(workspace.id);
+			}
+		}
+	}
+
+	private async initializeWorkspace(workspace: WorkspaceConfig): Promise<void> {
 		const configs: McpServerConfig[] = [
 			...buildMcpServerConfigs(workspace),
 			...await buildCustomMcpServerConfigs(workspace)

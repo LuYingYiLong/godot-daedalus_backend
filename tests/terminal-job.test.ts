@@ -47,16 +47,16 @@ function nodePreset(command: string): { preset: CommandPreset; command: string[]
 }
 
 async function withAppData<T>(fn: () => Promise<T>): Promise<T> {
-	const previousAppData: string | undefined = process.env.APPDATA;
+	const previousUserProfile: string | undefined = process.env.USERPROFILE;
 	const root: string = await mkdtemp(join(tmpdir(), "terminal-job-"));
-	process.env.APPDATA = root;
+	process.env.USERPROFILE = root;
 	try {
 		return await fn();
 	} finally {
-		if (previousAppData === undefined) {
-			delete process.env.APPDATA;
+		if (previousUserProfile === undefined) {
+			delete process.env.USERPROFILE;
 		} else {
-			process.env.APPDATA = previousAppData;
+			process.env.USERPROFILE = previousUserProfile;
 		}
 		await rm(root, { recursive: true, force: true });
 	}

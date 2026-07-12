@@ -31,6 +31,7 @@ test("Godot runtime and headless operation tools keep commands scoped and shell-
 	const previousProjectPath: string | undefined = process.env.GODOT_PROJECT_PATH;
 	const previousExecutablePath: string | undefined = process.env.GODOT_EXECUTABLE_PATH;
 	const previousAppData: string | undefined = process.env.APPDATA;
+	const previousUserProfile: string | undefined = process.env.USERPROFILE;
 	const root: string = await mkdtemp(path.join(tmpdir(), "godot-runtime-"));
 	const projectRoot: string = path.join(root, "project");
 	const appDataRoot: string = path.join(root, "appdata");
@@ -42,6 +43,7 @@ test("Godot runtime and headless operation tools keep commands scoped and shell-
 	process.env.GODOT_PROJECT_PATH = projectRoot;
 	process.env.GODOT_EXECUTABLE_PATH = "fake-godot";
 	process.env.APPDATA = appDataRoot;
+	process.env.USERPROFILE = appDataRoot;
 
 	try {
 		const runtimeTools = await import("../src/mcp/godot/tools/runtime-tools.js");
@@ -118,6 +120,11 @@ test("Godot runtime and headless operation tools keep commands scoped and shell-
 			delete process.env.APPDATA;
 		} else {
 			process.env.APPDATA = previousAppData;
+		}
+		if (previousUserProfile === undefined) {
+			delete process.env.USERPROFILE;
+		} else {
+			process.env.USERPROFILE = previousUserProfile;
 		}
 		await rm(root, { recursive: true, force: true });
 	}
