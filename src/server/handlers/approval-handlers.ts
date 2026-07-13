@@ -336,6 +336,10 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 			}
 
 			const { fileEditDraft: _fileEditDraft, ...publicApprovalResult } = result;
+			setWorkbenchActiveRun(session, {
+				status: pendingContinuation !== undefined ? "streaming" : "idle",
+				requestId: pendingContinuation?.requestId ?? request.id
+			});
 			sendJson(socket, {
 				type: "response",
 				id: request.id,
@@ -347,10 +351,6 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 					continued: pendingContinuation !== undefined,
 					workbench: serializeWorkbench(session)
 				}
-			});
-			setWorkbenchActiveRun(session, {
-				status: pendingContinuation !== undefined ? "streaming" : "idle",
-				requestId: pendingContinuation?.requestId ?? request.id
 			});
 			emitWorkbenchUpdated(socket, request.id, session);
 			const continuationRunId: string = pendingContinuation?.workflowState?.plan.id ?? pendingContinuation?.requestId ?? request.id;
@@ -455,6 +455,8 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 					abortController.signal,
 					[approvedToolObservation]
 				);
+				setWorkbenchActiveRun(session, { status: "idle" });
+				emitWorkbenchUpdated(socket, request.id, session);
 				break;
 			}
 
@@ -466,11 +468,17 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 				agentResult,
 				pendingContinuation
 			);
+			setWorkbenchActiveRun(session, { status: "idle" });
+			emitWorkbenchUpdated(socket, request.id, session);
 		} catch (error: unknown) {
 			if (isCancellationError(error, abortController.signal)) {
+				setWorkbenchActiveRun(session, { status: "idle" });
+				emitWorkbenchUpdated(socket, request.id, session);
 				sendAgentCancelled(socket, request.id, session);
 				break;
 			}
+			setWorkbenchActiveRun(session, { status: "idle" });
+			emitWorkbenchUpdated(socket, request.id, session);
 			if (session.sessionId !== undefined) {
 				await appendApprovalEvent(session.sessionId, request.params.approvalId, request.id, "failed", {
 					message: error instanceof Error ? error.message : "Approval failed"
@@ -514,6 +522,7 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 					rejectedAt: new Date().toISOString()
 				});
 			}
+			setWorkbenchActiveRun(session, { status: "idle" });
 			sendJson(socket, {
 				type: "response",
 				id: request.id,
@@ -525,7 +534,6 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 					workbench: serializeWorkbench(session)
 				}
 			});
-			setWorkbenchActiveRun(session, { status: "idle" });
 			emitWorkbenchUpdated(socket, request.id, session);
 			sendSessionEvent(socket, request.id, session, "agent.tool.rejected", {
 				type: "agent.tool.rejected",

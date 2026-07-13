@@ -7,6 +7,7 @@ import {
 	emitMessageQueueUpdated,
 	enqueueMessage,
 	removeQueuedMessage,
+	type QueueMutationResult,
 	serializeMessageQueue,
 	serializeQueuedMessage,
 	setQueuedMessageStatus,
@@ -41,23 +42,23 @@ export function handleMessageQueueRequest(socket: WebSocket, request: ClientRequ
 	case "message.queue.add": {
 		const item: QueuedMessage = enqueueMessage(session, request.params.text, request.params.additionalContext);
 		bumpWorkbenchRevision(session);
-		emitMessageQueueUpdated(socket, request.id, session);
-		emitWorkbenchUpdated(socket, request.id, session);
 		sendQueueResult(socket, request, session, {
 			queueAdded: true,
 			item: serializeQueuedMessage(item)
 		});
+		emitMessageQueueUpdated(socket, request.id, session);
+		emitWorkbenchUpdated(socket, request.id, session);
 		break;
 	}
 
 	case "message.queue.update": {
-		const item: QueuedMessage | undefined = updateQueuedMessage(
+		const result: QueueMutationResult = updateQueuedMessage(
 			session,
 			parseQueueId(request.params.queueId),
 			request.params.text,
 			request.params.additionalContext
 		);
-		if (item === undefined) {
+		if (result.item === undefined) {
 			sendJson(socket, {
 				type: "response",
 				id: request.id,
@@ -66,35 +67,43 @@ export function handleMessageQueueRequest(socket: WebSocket, request: ClientRequ
 			});
 			break;
 		}
-		bumpWorkbenchRevision(session);
-		emitMessageQueueUpdated(socket, request.id, session);
-		emitWorkbenchUpdated(socket, request.id, session);
+		if (result.changed) {
+			bumpWorkbenchRevision(session);
+		}
 		sendQueueResult(socket, request, session, {
-			queueUpdated: true,
-			item: serializeQueuedMessage(item)
+			queueUpdated: result.changed,
+			item: serializeQueuedMessage(result.item)
 		});
+		if (result.changed) {
+			emitMessageQueueUpdated(socket, request.id, session);
+			emitWorkbenchUpdated(socket, request.id, session);
+		}
 		break;
 	}
 
 	case "message.queue.remove": {
 		const removed: boolean = removeQueuedMessage(session, parseQueueId(request.params.queueId));
-		bumpWorkbenchRevision(session);
-		emitMessageQueueUpdated(socket, request.id, session);
-		emitWorkbenchUpdated(socket, request.id, session);
+		if (removed) {
+			bumpWorkbenchRevision(session);
+		}
 		sendQueueResult(socket, request, session, {
-			queueRemoved: true,
+			queueRemoved: removed,
 			removed
 		});
+		if (removed) {
+			emitMessageQueueUpdated(socket, request.id, session);
+			emitWorkbenchUpdated(socket, request.id, session);
+		}
 		break;
 	}
 
 	case "message.queue.status": {
-		const item: QueuedMessage | undefined = setQueuedMessageStatus(
+		const result: QueueMutationResult = setQueuedMessageStatus(
 			session,
 			parseQueueId(request.params.queueId),
 			request.params.status as QueuedMessageStatus
 		);
-		if (item === undefined) {
+		if (result.item === undefined) {
 			sendJson(socket, {
 				type: "response",
 				id: request.id,
@@ -103,13 +112,17 @@ export function handleMessageQueueRequest(socket: WebSocket, request: ClientRequ
 			});
 			break;
 		}
-		bumpWorkbenchRevision(session);
-		emitMessageQueueUpdated(socket, request.id, session);
-		emitWorkbenchUpdated(socket, request.id, session);
+		if (result.changed) {
+			bumpWorkbenchRevision(session);
+		}
 		sendQueueResult(socket, request, session, {
-			queueStatusUpdated: true,
-			item: serializeQueuedMessage(item)
+			queueStatusUpdated: result.changed,
+			item: serializeQueuedMessage(result.item)
 		});
+		if (result.changed) {
+			emitMessageQueueUpdated(socket, request.id, session);
+			emitWorkbenchUpdated(socket, request.id, session);
+		}
 		break;
 	}
 

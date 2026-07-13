@@ -5,6 +5,11 @@ import { sendSessionEvent } from "./session-events.js";
 
 const MAX_QUEUE_TEXT_CHARS: number = 20000;
 
+export type QueueMutationResult = {
+	item?: QueuedMessage | undefined;
+	changed: boolean;
+};
+
 export function serializeQueuedMessage(message: QueuedMessage): Record<string, unknown> {
 	return {
 		id: message.id,
@@ -56,40 +61,56 @@ export function updateQueuedMessage(
 	queueId: number,
 	text: string,
 	additionalContext: AdditionalContextItem[] | undefined
-): QueuedMessage | undefined {
+): QueueMutationResult {
 	const index: number = findQueuedMessageIndex(session, queueId);
 	if (index < 0) {
-		return undefined;
+		return { changed: false };
+	}
+
+	const existing: QueuedMessage = session.queuedMessages[index] as QueuedMessage;
+	const nextText: string = text.trim().slice(0, MAX_QUEUE_TEXT_CHARS);
+	const nextAdditionalContext: AdditionalContextItem[] = additionalContext ?? [];
+	if (
+		existing.text === nextText
+		&& JSON.stringify(existing.additionalContext ?? []) === JSON.stringify(nextAdditionalContext)
+		&& existing.status === "pending"
+	) {
+		return { item: existing, changed: false };
 	}
 
 	const next: QueuedMessage = {
-		...(session.queuedMessages[index] as QueuedMessage),
-		text: text.trim().slice(0, MAX_QUEUE_TEXT_CHARS),
-		additionalContext: additionalContext ?? [],
+		...existing,
+		text: nextText,
+		additionalContext: nextAdditionalContext,
 		status: "pending",
 		updatedAt: new Date().toISOString()
 	};
 	session.queuedMessages[index] = next;
-	return next;
+	return { item: next, changed: true };
 }
 
 export function setQueuedMessageStatus(
 	session: ClientSession,
 	queueId: number,
 	status: QueuedMessageStatus
-): QueuedMessage | undefined {
+): QueueMutationResult {
 	const index: number = findQueuedMessageIndex(session, queueId);
 	if (index < 0) {
-		return undefined;
+		return { changed: false };
+	}
+
+	const existing: QueuedMessage = session.queuedMessages[index] as QueuedMessage;
+	if (existing.status === status) {
+		return { item: existing, changed: false };
 	}
 
 	const next: QueuedMessage = {
-		...(session.queuedMessages[index] as QueuedMessage),
+		...existing,
 		status,
 		updatedAt: new Date().toISOString()
 	};
 	session.queuedMessages[index] = next;
-	return next;
+	return { item: next, changed: true };
 }
 
 export function removeQueuedMessage(session: ClientSession, queueId: number): boolean {

@@ -1,7 +1,8 @@
 import type WebSocket from "ws";
 import type { AdditionalContextItem, ProviderId } from "../protocol/types.js";
-import { getProviderDisplayName } from "../providers/provider-registry.js";
+import { getProviderDefaultModel, getProviderDisplayName } from "../providers/provider-registry.js";
 import type { PendingApproval } from "../tools/approval-gateway.js";
+import { resolveModelProfile } from "../tokens/model-profiles.js";
 import type {
 	ClientSession,
 	WorkbenchActiveRun,
@@ -23,6 +24,7 @@ export type WorkbenchAdditionalContextAction =
 	| { action: "clearUnpinned" };
 
 export type WorkbenchPatch = {
+	clientSequence?: number | undefined;
 	composer?: {
 		text?: string | undefined;
 		chatMode?: "agent" | "ask" | "plan" | undefined;
@@ -196,6 +198,35 @@ function deriveActiveRun(session: ClientSession): WorkbenchActiveRun {
 	return session.workbenchActiveRun;
 }
 
+function applyWorkbenchModelSelection(
+	session: ClientSession,
+	provider: ProviderId | undefined,
+	model: string | undefined
+): boolean {
+	const nextProvider: ProviderId = provider ?? session.activeProvider;
+	const providerChanged: boolean = nextProvider !== session.activeProvider;
+	const currentModel: string = session.providerModel ?? getProviderDefaultModel(session.activeProvider);
+	const nextModel: string = (model ?? (providerChanged ? getProviderDefaultModel(nextProvider) : currentModel)).trim();
+	if (nextModel.length === 0) {
+		return false;
+	}
+
+	if (!providerChanged && nextModel === currentModel) {
+		return false;
+	}
+
+	session.activeProvider = nextProvider;
+	session.providerModel = nextModel;
+	session.modelProfile = resolveModelProfile(nextProvider, nextModel);
+	session.workbenchComposer.provider = undefined;
+	session.workbenchComposer.model = undefined;
+	if (providerChanged) {
+		session.providerApiKey = undefined;
+		session.providerBaseUrl = undefined;
+	}
+	return true;
+}
+
 export function serializeWorkbench(session: ClientSession): Record<string, unknown> {
 	return {
 		revision: session.workbenchRevision,
@@ -203,9 +234,9 @@ export function serializeWorkbench(session: ClientSession): Record<string, unkno
 		composer: {
 			text: session.workbenchComposer.text,
 			chatMode: session.workbenchComposer.chatMode ?? null,
-			provider: session.workbenchComposer.provider ?? session.activeProvider,
-			providerDisplayName: getProviderDisplayName(session.workbenchComposer.provider ?? session.activeProvider),
-			model: session.workbenchComposer.model ?? session.providerModel ?? session.modelProfile.model,
+			provider: session.activeProvider,
+			providerDisplayName: getProviderDisplayName(session.activeProvider),
+			model: session.providerModel ?? session.modelProfile.model,
 			additionalContext: cloneContexts(session.workbenchComposer.additionalContext),
 			updatedAt: session.workbenchComposer.updatedAt
 		},
@@ -236,13 +267,8 @@ export function applyWorkbenchPatch(session: ClientSession, patch: WorkbenchPatc
 			session.workbenchComposer.chatMode = patch.composer.chatMode;
 			changed = true;
 		}
-		if (patch.composer.provider !== undefined) {
-			session.workbenchComposer.provider = patch.composer.provider;
-			changed = true;
-		}
-		if (patch.composer.model !== undefined) {
-			session.workbenchComposer.model = patch.composer.model;
-			changed = true;
+		if (patch.composer.provider !== undefined || patch.composer.model !== undefined) {
+			changed = applyWorkbenchModelSelection(session, patch.composer.provider, patch.composer.model) || changed;
 		}
 		if (patch.composer.additionalContext !== undefined) {
 			session.workbenchComposer.additionalContext = normalizeContexts(patch.composer.additionalContext);

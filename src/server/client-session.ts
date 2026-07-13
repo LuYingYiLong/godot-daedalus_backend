@@ -95,6 +95,7 @@ export type ClientSession = {
 	workbenchComposer: WorkbenchComposer;
 	workbenchActiveRun: WorkbenchActiveRun;
 	workbenchNextStepHints: WorkbenchNextStepHints;
+	workbenchClientPatchSequences: Map<string, number>;
 	fullSessionLoadPromise?: Promise<void> | undefined;
 	activeRunRequestId?: string | undefined;
 };
@@ -127,6 +128,7 @@ export function createClientSession(defaultWorkspace: WorkspaceConfig | undefine
 		workbenchNextStepHints: {
 			hints: []
 		},
+		workbenchClientPatchSequences: new Map(),
 		eventPersistQueue: Promise.resolve()
 	};
 }
@@ -149,6 +151,7 @@ export function clearActiveSession(session: ClientSession): void {
 	};
 	session.workbenchActiveRun = { status: "idle" };
 	session.workbenchNextStepHints = { hints: [] };
+	session.workbenchClientPatchSequences.clear();
 	session.aiDeltaEventBuffers.clear();
 	session.thinkingEventBuffers.clear();
 }

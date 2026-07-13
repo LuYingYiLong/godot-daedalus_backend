@@ -144,6 +144,7 @@ const workbenchAdditionalContextActionSchema = z.discriminatedUnion("action", [
 	})
 ]);
 const workbenchPatchParamsSchema = z.object({
+	clientSequence: z.number().int().nonnegative().optional(),
 	composer: z.object({
 		text: z.string().max(20000).optional(),
 		chatMode: z.enum(["agent", "ask", "plan"]).optional(),

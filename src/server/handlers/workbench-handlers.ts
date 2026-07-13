@@ -2,6 +2,7 @@ import type WebSocket from "ws";
 import type { ClientRequest } from "../../protocol/types.js";
 import type { McpHost } from "../../mcp/mcp-host.js";
 import type { ClientSession } from "../client-session.js";
+import { getClientConnection } from "../client-connections.js";
 import { sendJson } from "../send-json.js";
 import {
 	applyWorkbenchPatch,
@@ -10,16 +11,38 @@ import {
 	type WorkbenchPatch
 } from "../workbench.js";
 
-function sendWorkbenchResult(socket: WebSocket, request: ClientRequest, session: ClientSession, changed: boolean = false): void {
+function sendWorkbenchResult(
+	socket: WebSocket,
+	request: ClientRequest,
+	session: ClientSession,
+	changed: boolean = false,
+	stale: boolean = false
+): void {
 	sendJson(socket, {
 		type: "response",
 		id: request.id,
 		ok: true,
 		result: {
 			workbench: serializeWorkbench(session),
-			changed
+			changed,
+			...(stale ? { stale: true } : {})
 		}
 	});
+}
+
+function isStaleWorkbenchPatch(socket: WebSocket, session: ClientSession, patch: WorkbenchPatch): boolean {
+	if (patch.clientSequence === undefined) {
+		return false;
+	}
+
+	const connectionId: string = getClientConnection(socket)?.connectionId ?? "legacy";
+	const lastSequence: number = session.workbenchClientPatchSequences.get(connectionId) ?? -1;
+	if (patch.clientSequence <= lastSequence) {
+		return true;
+	}
+
+	session.workbenchClientPatchSequences.set(connectionId, patch.clientSequence);
+	return false;
 }
 
 export function handleWorkbenchRequest(socket: WebSocket, request: ClientRequest, session: ClientSession, _mcpHost: McpHost): void {
@@ -29,11 +52,16 @@ export function handleWorkbenchRequest(socket: WebSocket, request: ClientRequest
 		break;
 
 	case "session.workbench.patch": {
-		const changed: boolean = applyWorkbenchPatch(session, request.params as WorkbenchPatch);
+		const patch: WorkbenchPatch = request.params as WorkbenchPatch;
+		if (isStaleWorkbenchPatch(socket, session, patch)) {
+			sendWorkbenchResult(socket, request, session, false, true);
+			break;
+		}
+		const changed: boolean = applyWorkbenchPatch(session, patch);
+		sendWorkbenchResult(socket, request, session, changed);
 		if (changed) {
 			emitWorkbenchUpdated(socket, request.id, session);
 		}
-		sendWorkbenchResult(socket, request, session, changed);
 		break;
 	}
 
