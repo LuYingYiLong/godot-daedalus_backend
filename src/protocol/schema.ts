@@ -48,6 +48,12 @@ const providerModelRoutingSchema = z.object({
 	sessionTitle: providerTaskModelRefSchema.nullable().optional()
 });
 
+const sessionUiMetadataParamsSchema = z.object({
+	provider: providerIdSchema.optional(),
+	model: z.string().min(1).optional(),
+	chatMode: z.enum(["agent", "ask", "plan"]).optional()
+}).strict();
+
 export const additionalContextItemSchema = z.object({
 	id: z.string().min(1).max(160),
 	kind: z.enum(["editor_selection", "scene", "node", "file", "folder", "script", "script_selection", "filesystem_selection", "image"]),
@@ -188,7 +194,7 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		method: z.literal("client.hello"),
 		params: z.object({
 			protocolVersion: z.literal(2),
-			clientType: z.enum(["godot_plugin", "studio", "cli", "smoke"]).optional(),
+			clientType: z.enum(["godot_plugin", "studio", "cli", "smoke", "external_mcp"]).optional(),
 			clientName: z.string().min(1).max(120).optional(),
 			workspaceRoot: z.string().min(1).optional(),
 			workspaceId: z.string().min(1).optional(),
@@ -296,6 +302,20 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 	z.object({
 		type: z.literal("request"),
 		id: z.string(),
+		method: z.literal("userPrompt.get"),
+		params: z.object({}).optional(),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("userPrompt.set"),
+		params: z.object({
+			prompt: z.string().max(20000),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
 		method: z.literal("skill.list"),
 		params: z.object({}).optional(),
 	}),
@@ -358,7 +378,7 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		params: z.object({
 			title: z.string().min(1),
 			workspaceId: z.string().optional(),
-		}),
+		}).merge(sessionUiMetadataParamsSchema),
 	}),
 	z.object({
 		type: z.literal("request"),
@@ -444,7 +464,7 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		type: z.literal("request"),
 		id: z.string(),
 		method: z.literal("session.save"),
-		params: z.object({}).optional(),
+		params: sessionUiMetadataParamsSchema.optional(),
 	}),
 	z.object({
 		type: z.literal("request"),
@@ -572,6 +592,25 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		params: z.object({
 			serverId: z.string().min(1),
 			enabled: z.boolean(),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("tool.catalog.list"),
+		params: z.object({
+			mode: z.enum(["minimal", "lite", "full"]).optional(),
+		}).optional(),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("tool.execute"),
+		params: z.object({
+			mode: z.enum(["minimal", "lite", "full"]).optional(),
+			toolName: z.string().min(1),
+			args: z.record(z.string(), z.unknown()).optional(),
+			toolCallId: z.string().min(1).optional(),
 		}),
 	}),
 	z.object({

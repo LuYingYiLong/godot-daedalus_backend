@@ -4,10 +4,10 @@ import type { ServerEvent } from "../protocol/types.js";
 import type { ClientSession } from "./client-session.js";
 import { sendJson } from "./send-json.js";
 
-export type ClientType = "godot_plugin" | "studio" | "cli" | "smoke" | "legacy";
+export type ClientType = "godot_plugin" | "studio" | "cli" | "smoke" | "external_mcp" | "legacy";
 
 export type ClientCapabilities = Partial<Record<
-	"editorTools" | "editorUndoRedo" | "sceneViewCapture" | "inlineDiffUndo" | "inlineDiffView" | "sessionSubscribe" | "approval",
+	"editorTools" | "editorUndoRedo" | "sceneViewCapture" | "inlineDiffUndo" | "inlineDiffView" | "sessionSubscribe" | "approval" | "externalMcp",
 	boolean
 >>;
 
@@ -116,6 +116,10 @@ export function getClientConnection(socket: WebSocket): ClientConnectionInfo | n
 
 export function getConnectionSession(socket: WebSocket): ClientSession | undefined {
 	return socketConnections.get(socket)?.session;
+}
+
+export function getActiveConnectionSessions(): ClientSession[] {
+	return Array.from(new Set(Array.from(socketConnections.values()).map((record: ConnectionRecord): ClientSession => record.session)));
 }
 
 export function hasOtherConnectionsForSession(socket: WebSocket, sessionId: string | undefined): boolean {

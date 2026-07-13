@@ -93,7 +93,7 @@ import {
 	type PendingGuide,
 	type ThinkingEventBuffer
 } from "../client-session.js";
-import { getToolPolicy } from "../../tools/tool-policy.js";
+import { getToolPolicy, type ApprovalMode } from "../../tools/tool-policy.js";
 import type { PendingApproval } from "../../tools/approval-gateway.js";
 import { getLlmToolExecutionIdentity } from "../../tools/tool-idempotency.js";
 import { resolveToolMapping } from "../../tools/tool-mapping.js";
@@ -203,11 +203,26 @@ function createSessionInfoResult(session: ClientSession, mcpHost: McpHost, histo
 }
 
 import { createProviderRuntimeContext, createSafeMarkdownFence, createMcpSystemContext } from "../prompt-context.js";
+import { getApprovalMode, setApprovalMode } from "../../approval-settings-store.js";
+import { getActiveConnectionSessions } from "../client-connections.js";
+
+async function applyGlobalApprovalMode(session: ClientSession): Promise<ApprovalMode> {
+	const mode: ApprovalMode = await getApprovalMode();
+	session.approvalGateway.setMode(mode);
+	return mode;
+}
+
+function applyApprovalModeToActiveSessions(mode: ApprovalMode): void {
+	for (const activeSession of getActiveConnectionSessions()) {
+		activeSession.approvalGateway.setMode(mode);
+	}
+}
 
 export async function handleApprovalRequest(socket: WebSocket, request: ClientRequest, session: ClientSession, mcpHost: McpHost): Promise<void> {
 	switch (request.method) {
 	case "approval.list":
 	{
+		const mode = await applyGlobalApprovalMode(session);
 		const hydrated = await loadHydratedPendingApprovalStates(session);
 		sendJson(socket, {
 			type: "response",
@@ -215,20 +230,21 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 			ok: true,
 			result: {
 				pending: hydrated.states.map(serializePendingApprovalState),
-				mode: session.approvalGateway.getMode()
+				mode
 			}
 		});
 		break;
 	}
 
 	case "approval.mode.set":
-		session.approvalGateway.setMode(request.params.mode);
+		await setApprovalMode(request.params.mode);
+		applyApprovalModeToActiveSessions(request.params.mode);
 		sendJson(socket, {
 			type: "response",
 			id: request.id,
 			ok: true,
 			result: {
-				mode: session.approvalGateway.getMode(),
+				mode: request.params.mode,
 				pendingApprovals: session.approvalGateway.listPending().length
 			}
 		});

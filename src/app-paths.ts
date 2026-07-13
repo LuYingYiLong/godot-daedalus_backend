@@ -7,6 +7,8 @@ export type DaedalusPathKey =
 	| "config.provider"
 	| "config.mcpServers"
 	| "config.skillSettings"
+	| "config.userPrompt"
+	| "config.approval"
 	| "skills.root"
 	| "sessions.activeRoot"
 	| "sessions.archivedRoot"
@@ -33,6 +35,8 @@ function buildDaedalusPathRegistry(): DaedalusPathRegistry {
 		"config.provider": join(configRoot, "provider.json"),
 		"config.mcpServers": join(configRoot, "mcp-servers.json"),
 		"config.skillSettings": join(configRoot, "skill-settings.json"),
+		"config.userPrompt": join(configRoot, "user-prompt.json"),
+		"config.approval": join(configRoot, "approval.json"),
 		"skills.root": join(root, "skills"),
 		"sessions.activeRoot": join(root, "sessions"),
 		"sessions.archivedRoot": join(root, "archived_sessions"),
@@ -64,6 +68,14 @@ export function getPersonalSkillsDir(): string {
 
 export function getSkillSettingsPath(): string {
 	return getDaedalusPath("config.skillSettings");
+}
+
+export function getUserPromptConfigPath(): string {
+	return getDaedalusPath("config.userPrompt");
+}
+
+export function getApprovalConfigPath(): string {
+	return getDaedalusPath("config.approval");
 }
 
 export function getDefaultSessionsDir(): string {

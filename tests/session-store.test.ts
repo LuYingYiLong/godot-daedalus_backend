@@ -114,6 +114,31 @@ test("session store persists workspace metadata snapshot", async (): Promise<voi
 	});
 });
 
+test("session store persists frontend session metadata", async (): Promise<void> => {
+	await withTempAppData(async (store): Promise<void> => {
+		const metadata = await store.createSession("Configured session", undefined, undefined, undefined, {
+			provider: "moonshot",
+			model: "kimi-k2.7-code",
+			chatMode: "ask"
+		});
+
+		assert.equal(metadata.provider, "moonshot");
+		assert.equal(metadata.model, "kimi-k2.7-code");
+		assert.equal(metadata.chatMode, "ask");
+
+		await store.saveSession(metadata.id, [], {
+			provider: "deepseek",
+			model: "deepseek-v4-pro",
+			chatMode: "plan"
+		});
+
+		const opened = await store.openSession(metadata.id);
+		assert.equal(opened.metadata.provider, "deepseek");
+		assert.equal(opened.metadata.model, "deepseek-v4-pro");
+		assert.equal(opened.metadata.chatMode, "plan");
+	});
+});
+
 test("session store rejects unsafe session ids", async (): Promise<void> => {
 	await withTempAppData(async (store): Promise<void> => {
 		await assert.rejects(() => store.openSession("../session-escape"), /Invalid session id/);

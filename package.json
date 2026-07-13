@@ -24,7 +24,7 @@
     "start": "tsx src/main.ts",
     "dev": "tsx src/main.ts",
     "ping": "tsx src/ping-client.ts",
-    "mcp": "tsx src/mcp/godot/server.ts",
+    "mcp": "tsx src/mcp/external/server.ts",
     "terminal:mcp": "tsx src/mcp/terminal/server.ts",
     "automation:mcp": "tsx src/mcp/automation/server.ts",
     "typecheck": "tsc --noEmit",

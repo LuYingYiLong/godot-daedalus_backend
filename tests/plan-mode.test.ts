@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createPlanDecision, createPlannerSystemPrompt, createPlanVisibleDeltaFilter } from "../src/server/plan-mode.js";
+import { createApprovedPlanExecutionParams, createPlanDecision, createPlannerSystemPrompt, createPlanVisibleDeltaFilter } from "../src/server/plan-mode.js";
 import { createPlanMetadata } from "../src/server/plan-store.js";
+import type { StoredPlan } from "../src/server/plan-store.js";
 import type { ProviderChatOptions } from "../src/providers/deepseek-client.js";
 import { shouldPersistSessionEvent } from "../src/server/session-events.js";
 
@@ -66,4 +67,26 @@ test("plan events are persisted for timeline recovery", (): void => {
 	assert.equal(shouldPersistSessionEvent("plan.clarification.required"), true);
 	assert.equal(shouldPersistSessionEvent("plan.generated"), true);
 	assert.equal(shouldPersistSessionEvent("plan.revised"), true);
+});
+
+test("approved plan execution forces agent multi-phase workflow", (): void => {
+	const plan: StoredPlan = {
+		metadata: createPlanMetadata({
+			sessionId: "session-20260712-test",
+			requestId: "request-1",
+			status: "ready",
+			title: "审批测试计划",
+			originalMessage: "审批",
+			previewMarkdown: "Summary"
+		}),
+		markdown: "# 审批测试计划\n\n## Summary\n执行一次需要审批的写入测试。"
+	};
+	const params = createApprovedPlanExecutionParams(plan);
+
+	assert.equal(params.mode, "agent");
+	assert.equal(params.options?.workflow, "multi_phase");
+	assert.equal(params.options?.toolBudget, "project_edit");
+	assert.match(params.message, /执行用户已经批准的计划/);
+	assert.match(params.message, /原始用户请求：\n审批/);
+	assert.match(params.systemPrompt ?? "", /执行阶段必须以该计划为主要约束/);
 });

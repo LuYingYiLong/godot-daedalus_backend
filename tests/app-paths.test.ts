@@ -3,6 +3,7 @@ import test from "node:test";
 import {
 	getDaedalusPath,
 	getDaedalusDir,
+	getApprovalConfigPath,
 	getDefaultArchivedSessionsDir,
 	getDefaultWorkspaceConfigPath,
 	getDefaultSessionsDir,
@@ -12,7 +13,8 @@ import {
 	getProviderConfigPath,
 	getSkillSettingsPath,
 	getTerminalJobsDir,
-	getToolExecutionLedgerPath
+	getToolExecutionLedgerPath,
+	getUserPromptConfigPath
 } from "../src/app-paths.js";
 
 test("Daedalus state uses USERPROFILE without legacy appdata or v2 paths", (): void => {
@@ -27,6 +29,8 @@ test("Daedalus state uses USERPROFILE without legacy appdata or v2 paths", (): v
 		assert.equal(getProviderConfigPath(), "D:\\Users\\TestUser\\.daedalus\\config\\provider.json");
 		assert.equal(getMcpServersConfigPath(), "D:\\Users\\TestUser\\.daedalus\\config\\mcp-servers.json");
 		assert.equal(getSkillSettingsPath(), "D:\\Users\\TestUser\\.daedalus\\config\\skill-settings.json");
+		assert.equal(getUserPromptConfigPath(), "D:\\Users\\TestUser\\.daedalus\\config\\user-prompt.json");
+		assert.equal(getApprovalConfigPath(), "D:\\Users\\TestUser\\.daedalus\\config\\approval.json");
 		assert.equal(getPersonalSkillsDir(), "D:\\Users\\TestUser\\.daedalus\\skills");
 		assert.equal(getDefaultSessionsDir(), "D:\\Users\\TestUser\\.daedalus\\sessions");
 		assert.equal(getDefaultArchivedSessionsDir(), "D:\\Users\\TestUser\\.daedalus\\archived_sessions");
@@ -38,6 +42,8 @@ test("Daedalus state uses USERPROFILE without legacy appdata or v2 paths", (): v
 		assert.equal(getDaedalusPath("config.provider"), getProviderConfigPath());
 		assert.equal(getDaedalusPath("config.mcpServers"), getMcpServersConfigPath());
 		assert.equal(getDaedalusPath("config.skillSettings"), getSkillSettingsPath());
+		assert.equal(getDaedalusPath("config.userPrompt"), getUserPromptConfigPath());
+		assert.equal(getDaedalusPath("config.approval"), getApprovalConfigPath());
 		assert.equal(getDaedalusPath("skills.root"), getPersonalSkillsDir());
 		assert.equal(getDaedalusPath("sessions.activeRoot"), getDefaultSessionsDir());
 		assert.equal(getDaedalusPath("sessions.archivedRoot"), getDefaultArchivedSessionsDir());

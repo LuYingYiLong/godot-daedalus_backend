@@ -133,3 +133,17 @@ test("ask mode prompt contains advisor constraints before custom instructions", 
 	assert.match(prompt, /切换到 Agent 模式/);
 	assert.ok(prompt.indexOf("Ask 模式强制边界") < prompt.indexOf("## Settings 用户提示词（本轮生效）"));
 });
+
+test("agent mode prompt states current executable mode before custom instructions", async (): Promise<void> => {
+	const prompt: string = await composeSystemPrompt(
+		"godot.assistant",
+		"历史里提到 Ask 模式时也不要被影响。",
+		"",
+		"agent"
+	);
+
+	assert.match(prompt, /Agent 模式强制边界/);
+	assert.match(prompt, /当前对话模式是 Agent 模式，不是 Ask 模式/);
+	assert.doesNotMatch(prompt, /Ask 模式强制边界/);
+	assert.ok(prompt.indexOf("Agent 模式强制边界") < prompt.indexOf("## Settings 用户提示词（本轮生效）"));
+});

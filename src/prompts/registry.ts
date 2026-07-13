@@ -42,6 +42,7 @@ const promptContentCache: Map<PromptId, string> = new Map();
 const extraPromptContentCache: Map<string, string> = new Map();
 
 export const promptModeTemplatePaths = [
+	"src/prompts/templates/modes/agent-mode.md",
 	"src/prompts/templates/modes/ask-mode.md"
 ] as const;
 
@@ -59,7 +60,10 @@ export const promptTemplatePaths: readonly string[] = [
 	...promptModeTemplatePaths
 ];
 
-const ASK_MODE_PROMPT_PATH: string = promptModeTemplatePaths[0];
+const MODE_PROMPT_PATHS: Partial<Record<"agent" | "ask" | "plan", string>> = {
+	agent: promptModeTemplatePaths[0],
+	ask: promptModeTemplatePaths[1]
+};
 const CORE_PROMPT_PATH: string = promptFragmentPaths[0];
 const CUSTOM_INSTRUCTIONS_BOUNDARY_PROMPT_PATH: string = promptFragmentPaths[1];
 
@@ -105,14 +109,17 @@ export async function composeSystemPrompt(
 	const runtimeContextSection: string = trimmedRuntimeContext.length > 0
 		? `\n\n## Runtime 当前模型上下文\n\n${trimmedRuntimeContext}`
 		: "";
-	const askModePrompt: string = chatMode === "ask"
-		? await loadExtraPromptTemplate(ASK_MODE_PROMPT_PATH)
+	const modePromptPath: string | undefined = chatMode === undefined
+		? undefined
+		: MODE_PROMPT_PATHS[chatMode];
+	const modePrompt: string = modePromptPath !== undefined
+		? await loadExtraPromptTemplate(modePromptPath)
 		: "";
-	const askModeSection: string = chatMode === "ask"
-		? `\n\n## Ask 模式\n\n${askModePrompt}`
+	const modeSection: string = modePrompt.length > 0
+		? `\n\n## 当前对话模式\n\n${modePrompt}`
 		: "";
 	const corePrompt: string = await loadCorePrompt();
-	const prioritizedTemplateContent: string = `${corePrompt}\n\n${templateContent}${runtimeContextSection}${askModeSection}`;
+	const prioritizedTemplateContent: string = `${corePrompt}\n\n${templateContent}${runtimeContextSection}${modeSection}`;
 
 	if (trimmedExtraPrompt.length === 0) {
 		return prioritizedTemplateContent;

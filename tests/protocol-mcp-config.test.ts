@@ -154,3 +154,64 @@ test("provider.config.set schema accepts task model routing", (): void => {
 		}
 	}).success, true);
 });
+
+test("session create and save schema accept frontend session metadata", (): void => {
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "session-create-metadata",
+		method: "session.create",
+		params: {
+			title: "Session with UI state",
+			provider: "deepseek",
+			model: "deepseek-v4-pro",
+			chatMode: "agent"
+		}
+	}).success, true);
+
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "session-save-metadata",
+		method: "session.save",
+		params: {
+			provider: "moonshot",
+			model: "kimi-k2.7-code",
+			chatMode: "plan"
+		}
+	}).success, true);
+
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "session-save-bad-mode",
+		method: "session.save",
+		params: {
+			chatMode: "code"
+		}
+	}).success, false);
+
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "session-save-approval-mode",
+		method: "session.save",
+		params: {
+			approvalMode: "auto-safe"
+		}
+	}).success, false);
+});
+
+test("user prompt schema accepts backend singleton prompt updates", (): void => {
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "user-prompt-get",
+		method: "userPrompt.get",
+		params: {}
+	}).success, true);
+
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "user-prompt-set",
+		method: "userPrompt.set",
+		params: {
+			prompt: "请优先用中文回答。"
+		}
+	}).success, true);
+});

@@ -10,6 +10,7 @@ import { listSkillSummaries } from "../../skills/catalog.js";
 import { getSkillContent, removePersonalSkill, setWorkspaceSkillEnabled, updateSkillContent } from "../../skills/management.js";
 import type { SkillWorkspace } from "../../skills/types.js";
 import { sendGlobalEvent } from "../session-events.js";
+import { getUserPromptConfig, setUserPrompt } from "../../user-prompt-store.js";
 
 function getSkillWorkspace(session: ClientSession): SkillWorkspace {
 	if (session.activeWorkspace !== undefined) {
@@ -62,6 +63,24 @@ export async function handleCoreRequest(socket: WebSocket, request: ClientReques
 			result: {
 				prompts: listPromptTemplates()
 			}
+		});
+		break;
+
+	case "userPrompt.get":
+		sendJson(socket, {
+			type: "response",
+			id: request.id,
+			ok: true,
+			result: await getUserPromptConfig()
+		});
+		break;
+
+	case "userPrompt.set":
+		sendJson(socket, {
+			type: "response",
+			id: request.id,
+			ok: true,
+			result: await setUserPrompt(request.params.prompt)
 		});
 		break;
 

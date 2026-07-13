@@ -2,7 +2,8 @@ import type { AiChatParams, ChatMessage, ModelProfile, ProviderId } from "../pro
 import type { SessionMetadata } from "../session/session-store.js";
 import type { PendingAiContinuation } from "../session/pending-continuation.js";
 import { ApprovalGateway } from "../tools/approval-gateway.js";
-import { getDefaultModelProfile } from "../tokens/model-profiles.js";
+import { getDefaultModelProfile, resolveModelProfile } from "../tokens/model-profiles.js";
+import { getProviderDefaultModel, isProviderId } from "../providers/provider-registry.js";
 import type { WorkspaceConfig } from "../workspace/types.js";
 
 export type PendingGuide = {
@@ -83,4 +84,11 @@ export function clearActiveSession(session: ClientSession): void {
 export function applySessionMetadata(session: ClientSession, metadata: SessionMetadata): void {
 	session.sessionId = metadata.id;
 	session.sessionTitle = metadata.title;
+	if (metadata.provider !== undefined && isProviderId(metadata.provider)) {
+		session.activeProvider = metadata.provider;
+		session.providerModel = metadata.model ?? getProviderDefaultModel(metadata.provider);
+		session.modelProfile = resolveModelProfile(metadata.provider, session.providerModel);
+		session.providerApiKey = undefined;
+		session.providerBaseUrl = undefined;
+	}
 }

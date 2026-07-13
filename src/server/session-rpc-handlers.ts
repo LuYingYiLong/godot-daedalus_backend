@@ -48,6 +48,7 @@ import {
 	appendSessionEvent, appendApprovalEvent, appendWorkflowEvent, appendAgentEvent, clearSessionEvents, readApprovalEvents,
 	createWorkspaceMetadataSnapshot,
 	openSessionRecentTimeline, openSessionTimelinePage,
+	type SessionChatMode,
 	type SessionMetadata,
 	type SessionSummary,
 	type StoredMessage,
@@ -70,7 +71,7 @@ import {
 	modelSupportsImageInput,
 	ProviderImageInputError
 } from "../providers/provider-image-content.js";
-import { getProviderDefaultBaseUrl, getProviderDefaultModel, getProviderDisplayName } from "../providers/provider-registry.js";
+import { getProviderDefaultBaseUrl, getProviderDefaultModel, getProviderDisplayName, isProviderId } from "../providers/provider-registry.js";
 import { classifyProviderError, createProviderStatusEvent } from "../providers/provider-error.js";
 import { generateSessionTitle, shouldApplyGeneratedSessionTitle } from "./session-title.js";
 import { createSingleAnswerPlan, planWorkflow, READ_TOOLS, VERIFY_TOOLS, WRITE_TOOLS } from "../workflow/planner.js";
@@ -94,6 +95,7 @@ import {
 import { countWorkflowAutoRepairRounds, insertWorkflowAutoRepairPhases } from "../workflow/repair.js";
 import type { WorkflowPhase, WorkflowPhaseOutput, WorkflowPlan, WorkflowRunState, WorkflowToolObservation } from "../workflow/types.js";
 import {
+	applySessionMetadata,
 	clearActiveSession,
 	type ClientSession,
 	type PendingAiContinuation,
@@ -169,8 +171,9 @@ import { runWorkflowPhase, createWorkflowPhasePrompt } from "./workflow/phase-ru
 import { createWorkflowPendingContinuation, continueWorkflowExecution } from "./workflow/continuation.js";
 import { startWorkflowExecution } from "./workflow/executor.js";
 import { ensureProviderConfigured } from "../application/provider-session-service.js";
-import { bindConnectionToSessionRuntime, getSessionRuntime, getSessionSubscriberInfos, subscribeSocketToSession, unsubscribeSocketFromSession } from "./client-connections.js";
+import { bindConnectionToSessionRuntime, getClientConnection, getSessionRuntime, getSessionSubscriberInfos, subscribeSocketToSession, unsubscribeSocketFromSession } from "./client-connections.js";
 import { logger } from "../logger.js";
+import { getApprovalMode } from "../approval-settings-store.js";
 
 function restoreWorkspaceFromSessionMetadata(metadata: SessionMetadata): WorkspaceConfig | undefined {
 	if (metadata.workspaceId === undefined || metadata.workspaceRoot === undefined) {
@@ -185,6 +188,29 @@ function restoreWorkspaceFromSessionMetadata(metadata: SessionMetadata): Workspa
 		rootPath: metadata.workspaceRoot,
 		godotExecutablePath: metadata.godotExecutablePath
 	});
+}
+
+function createSessionUiMetadata(params: {
+	provider?: ProviderId | undefined;
+	model?: string | undefined;
+	chatMode?: SessionChatMode | undefined;
+} | undefined): Partial<SessionMetadata> {
+	if (params === undefined) {
+		return {};
+	}
+
+	const metadata: Partial<SessionMetadata> = {};
+	if (params.provider !== undefined && isProviderId(params.provider)) {
+		metadata.provider = params.provider;
+	}
+	if (params.model !== undefined) {
+		metadata.model = params.model;
+	}
+	if (params.chatMode !== undefined) {
+		metadata.chatMode = params.chatMode;
+	}
+
+	return metadata;
 }
 
 function createSessionInfoResult(session: ClientSession, mcpHost: McpHost, historyTokensStored: number | null = null): Record<string, unknown> {
@@ -249,6 +275,7 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 		case "session.info":
 			await waitForFullSessionLoad(session);
 			await ensureProviderConfigured(session);
+			session.approvalGateway.setMode(await getApprovalMode());
 			await loadHydratedPendingApprovalStates(session);
 			sendJson(socket, {
 				type: "response",
@@ -259,7 +286,23 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 			break;
 
 		case "session.create": {
-			const workspaceId: string | undefined = request.params.workspaceId ?? session.activeWorkspace?.id;
+			const requestedWorkspaceId: string | undefined = request.params.workspaceId;
+			let workspaceId: string | undefined = requestedWorkspaceId ?? session.activeWorkspace?.id;
+			const clientConnection = getClientConnection(socket);
+			if (
+				clientConnection?.clientType === "godot_plugin"
+				&& session.activeWorkspace !== undefined
+				&& requestedWorkspaceId !== undefined
+				&& requestedWorkspaceId !== session.activeWorkspace.id
+			) {
+				logger.warn("session", "godot_workspace_override_ignored", {
+					requestedWorkspaceId,
+					activeWorkspaceId: session.activeWorkspace.id,
+					activeWorkspaceRoot: session.activeWorkspace.rootPath,
+					sessionId: session.sessionId
+				});
+				workspaceId = session.activeWorkspace.id;
+			}
 			let workspace: WorkspaceConfig | undefined;
 
 			if (workspaceId) {
@@ -298,10 +341,11 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 				request.params.title,
 				workspaceId,
 				undefined,
-				workspace
+				workspace,
+				createSessionUiMetadata(request.params)
 			);
-			session.sessionId = metadata.id;
-			session.sessionTitle = metadata.title;
+			applySessionMetadata(session, metadata);
+			session.approvalGateway.setMode(await getApprovalMode());
 			session.messages = [];
 			session.fullSessionLoadPromise = undefined;
 			session.summaryMessage = undefined;
@@ -366,8 +410,8 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 				}
 
 				if (!reusingRuntime) {
-					session.sessionId = timeline.metadata.id;
-					session.sessionTitle = timeline.metadata.title;
+					applySessionMetadata(session, timeline.metadata);
+					session.approvalGateway.setMode(await getApprovalMode());
 					session.messages = timeline.messages.map(toChatMessage);
 					const storedForGuides: Awaited<ReturnType<typeof openSession>> = await openSession(request.params.sessionId);
 					session.pendingGuides = hydratePendingGuides(storedForGuides.events);
@@ -388,6 +432,8 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 
 					session = bindConnectionToSessionRuntime(socket, timeline.metadata.id, session);
 				}
+				applySessionMetadata(session, timeline.metadata);
+				session.approvalGateway.setMode(await getApprovalMode());
 				subscribeSocketToSession(socket, timeline.metadata.id);
 
 				sendJson(socket, {
@@ -590,9 +636,20 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 				break;
 			}
 			await waitForSessionEventPersistence(session);
+			const sessionUiMetadata: Partial<SessionMetadata> = createSessionUiMetadata(request.params);
 			await saveSession(session.sessionId, session.messages, {
 				...createWorkspaceMetadataSnapshot(session.activeWorkspace),
+				...sessionUiMetadata,
 			});
+			if (Object.keys(sessionUiMetadata).length > 0) {
+				applySessionMetadata(session, {
+					id: session.sessionId,
+					title: session.sessionTitle ?? "Untitled",
+					createdAt: "",
+					updatedAt: "",
+					...sessionUiMetadata
+				});
+			}
 			sendJson(socket, {
 				type: "response",
 				id: request.id,

@@ -49,6 +49,10 @@ const handleMcpRequest: RequestHandler = createLazyHandler(async (): Promise<Req
 	return (await import("./handlers/mcp-handlers.js")).handleMcpRequest;
 });
 
+const handleToolRequest: RequestHandler = createLazyHandler(async (): Promise<RequestHandler> => {
+	return (await import("./handlers/tool-handlers.js")).handleToolRequest;
+});
+
 const handleFileChangeRequest: RequestHandler = createLazyHandler(async (): Promise<RequestHandler> => {
 	return (await import("./handlers/file-change-handlers.js")).handleFileChangeRequest;
 });
@@ -98,6 +102,8 @@ export const REQUEST_HANDLER_METHODS: readonly ClientRequest["method"][] = [
 	"ai.next_step_hints",
 	"ai.cancel",
 	"prompt.list",
+	"userPrompt.get",
+	"userPrompt.set",
 	"skill.list",
 	"skill.get",
 	"skill.set_enabled",
@@ -134,6 +140,8 @@ export const REQUEST_HANDLER_METHODS: readonly ClientRequest["method"][] = [
 	"mcp.config.update",
 	"mcp.config.remove",
 	"mcp.config.setEnabled",
+	"tool.catalog.list",
+	"tool.execute",
 	"fileChange.create",
 	"fileChange.overwrite",
 	"fileChange.delete",
@@ -163,6 +171,8 @@ export const REQUEST_HANDLERS: ReadonlyMap<ClientRequest["method"], RequestHandl
 	["client.hello", handleClientRequest],
 	["client.info", handleClientRequest],
 	["prompt.list", handleCoreRequest],
+	["userPrompt.get", handleCoreRequest],
+	["userPrompt.set", handleCoreRequest],
 	["skill.list", handleCoreRequest],
 	["skill.get", handleCoreRequest],
 	["skill.set_enabled", handleCoreRequest],
@@ -209,6 +219,8 @@ export const REQUEST_HANDLERS: ReadonlyMap<ClientRequest["method"], RequestHandl
 	["mcp.config.update", handleMcpRequest],
 	["mcp.config.remove", handleMcpRequest],
 	["mcp.config.setEnabled", handleMcpRequest],
+	["tool.catalog.list", handleToolRequest],
+	["tool.execute", handleToolRequest],
 	["fileChange.create", handleFileChangeRequest],
 	["fileChange.overwrite", handleFileChangeRequest],
 	["fileChange.delete", handleFileChangeRequest],

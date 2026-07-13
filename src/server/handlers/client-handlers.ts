@@ -14,7 +14,7 @@ import { createRuntimeWorkspace, upsertRuntimeWorkspace } from "../../workspace/
 import type { WorkspaceConfig } from "../../workspace/types.js";
 
 function readClientType(value: unknown): ClientType {
-	return value === "godot_plugin" || value === "studio" || value === "cli" || value === "smoke"
+	return value === "godot_plugin" || value === "studio" || value === "cli" || value === "smoke" || value === "external_mcp"
 		? value
 		: "legacy";
 }

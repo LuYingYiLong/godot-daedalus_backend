@@ -94,6 +94,8 @@ test("agent prompt does not include ask mode constraints", async (): Promise<voi
 	);
 
 	assert.doesNotMatch(prompt, /Ask 模式强制边界/);
+	assert.match(prompt, /Agent 模式强制边界/);
+	assert.match(prompt, /当前对话模式是 Agent 模式，不是 Ask 模式/);
 	assert.match(prompt, /# CORE/);
 	assert.match(prompt, /冲突处理优先级/);
 });

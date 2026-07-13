@@ -173,6 +173,8 @@ import { beginSessionRun, finishSessionRun } from "./client-connections.js";
 import { logger } from "../logger.js";
 import { createInitialPlan } from "./plan-mode.js";
 import { createPlanGetResult, type StoredPlan } from "./plan-store.js";
+import { getUserPrompt } from "../user-prompt-store.js";
+import { getApprovalMode } from "../approval-settings-store.js";
 
 function createSessionInfoResult(session: ClientSession, mcpHost: McpHost, historyTokensStored: number | null = null): Record<string, unknown> {
 	return {
@@ -311,7 +313,11 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 						sendSessionEvent(socket, request.id, session, "ai.status", progress);
 					}
 				);
-				const effectiveParams: AiChatParams = imagePreprocess.params;
+				const storedUserPrompt: string = await getUserPrompt();
+				const effectiveParams: AiChatParams = {
+					...imagePreprocess.params,
+					systemPrompt: imagePreprocess.params.systemPrompt ?? (storedUserPrompt.length > 0 ? storedUserPrompt : undefined)
+				};
 				logger.info("ai", "chat_started", {
 					requestId: request.id,
 					sessionId: session.sessionId,
@@ -572,6 +578,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 			}
 
 			const apiKey: string | undefined = await ensureProviderConfigured(session);
+			session.approvalGateway.setMode(await getApprovalMode());
 			if (!apiKey) {
 				sendJson(socket, {
 					type: "response",

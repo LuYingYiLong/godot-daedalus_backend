@@ -17,7 +17,7 @@ import {
 import {
 	applyPlanClarification,
 	applyPlanRevision,
-	createApprovedPlanSystemPrompt,
+	createApprovedPlanExecutionParams,
 	sendPlanMessageDelta,
 	sendPlanMessageDone
 } from "../plan-mode.js";
@@ -202,17 +202,7 @@ export async function handlePlanRequest(socket: WebSocket, request: ClientReques
 					}
 				});
 
-				const executionParams: AiChatParams = {
-					message: plan.metadata.originalMessage,
-					mode: "agent",
-					promptId: "godot.assistant",
-					systemPrompt: createApprovedPlanSystemPrompt(plan.markdown),
-					options: {
-						stream: true,
-						toolBudget: "project_edit",
-						workflow: "auto"
-					}
-				};
+				const executionParams: AiChatParams = createApprovedPlanExecutionParams(plan);
 				const executionRequest: ClientRequest = {
 					type: "request",
 					id: executionRequestId,

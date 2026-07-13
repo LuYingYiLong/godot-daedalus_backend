@@ -30,7 +30,7 @@ Chat Completions 映射：
 ## 目录结构
 
 - `templates/base/`：长期角色模板，例如 Godot assistant、GDScript reviewer、scene architect、backend helper。
-- `templates/modes/`：模式 overlay，例如 Ask mode，未来 Plan mode 放这里。
+- `templates/modes/`：模式 overlay，例如 Agent mode、Ask mode，未来 Plan mode 放这里。
 - `templates/fragments/`：可复用系统片段，例如工具沟通约定、指令优先级、Settings 自定义提示词边界。
 - `templates/internal/`：内部任务模板，例如 session compressor。
 - `TOOLS.md`：工具能力说明，代码源头仍是 `src/tools/builtin-tool-definitions.ts`、`src/tools/tool-mapping.ts`、`src/workflow/planner.ts`、`src/tools/tool-policy.ts`。
@@ -53,8 +53,8 @@ Chat Completions 映射：
 1. CORE 核心行为准则 fragment。
 2. base 模板。
 3. Runtime 当前模型上下文。
-4. mode overlay，例如 Ask 模式。
+4. mode overlay，例如 Agent 模式或 Ask 模式。
 5. Settings 用户提示词边界 fragment。
 6. Settings 用户提示词正文。
 
-Ask 模式等安全边界必须出现在 Settings 用户提示词之前，且不得被自定义提示词覆盖。
+Agent/Ask 模式等模式边界必须出现在 Settings 用户提示词之前，且不得被自定义提示词覆盖。Agent 模式也必须显式声明当前不是 Ask 模式，避免历史 Ask 回复污染当前轮。

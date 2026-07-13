@@ -25,7 +25,7 @@ export async function ensureProviderConfigured(runtime: ProviderSessionRuntime):
 		return runtime.providerApiKey;
 	}
 
-	const config: ProviderConfigWithSecret | null = await loadProviderConfigWithSecret();
+	const config: ProviderConfigWithSecret | null = await loadProviderConfigWithSecret(runtime.activeProvider);
 	if (config === null || config.apiKey === undefined) {
 		return undefined;
 	}

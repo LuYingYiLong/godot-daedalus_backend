@@ -1,6 +1,7 @@
 import { access, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getDefaultArchivedSessionsDir, getDefaultSessionsDir } from "../app-paths.js";
+import { writeJsonFileAtomic } from "../json-file-store.js";
 import type { ChatMessage } from "../protocol/types.js";
 import type { WorkspaceConfig } from "../workspace/types.js";
 import { buildCanonicalTimelineBlocks, type TimelineBlock } from "./timeline-blocks.js";
@@ -8,6 +9,8 @@ import { buildCanonicalTimelineBlocks, type TimelineBlock } from "./timeline-blo
 const SESSIONS_DIR: string = getDefaultSessionsDir();
 const ARCHIVED_SESSIONS_DIR: string = getDefaultArchivedSessionsDir();
 const SESSION_ID_PATTERN: RegExp = /^session-[a-zA-Z0-9_-]+$/;
+
+export type SessionChatMode = "agent" | "ask" | "plan";
 
 let ensureSessionsDirPromise: Promise<void> | null = null;
 let ensureArchivedSessionsDirPromise: Promise<void> | null = null;
@@ -23,6 +26,7 @@ export type SessionMetadata = {
 	activeSkillId?: string | undefined;
 	provider?: string | undefined;
 	model?: string | undefined;
+	chatMode?: SessionChatMode | undefined;
 	archivedAt?: string | undefined;
 	createdAt: string;
 	updatedAt: string;
@@ -204,12 +208,19 @@ function mergeSessionMetadata(existing: SessionMetadata, metadata?: Partial<Sess
 	return updated;
 }
 
-export async function createSession(title: string, workspaceId?: string, skillId?: string, workspaceSnapshot?: WorkspaceConfig | undefined): Promise<SessionMetadata> {
+export async function createSession(
+	title: string,
+	workspaceId?: string,
+	skillId?: string,
+	workspaceSnapshot?: WorkspaceConfig | undefined,
+	initialMetadata?: Partial<SessionMetadata> | undefined
+): Promise<SessionMetadata> {
 	const timestamp: string = new Date().toISOString();
 	const dateStr: string = timestamp.slice(0, 10).replace(/-/g, "");
 	const id: string = `session-${dateStr}-${Date.now().toString(36)}`;
 
 	const metadata: SessionMetadata = {
+		...initialMetadata,
 		id,
 		title,
 		workspaceId,
@@ -219,7 +230,7 @@ export async function createSession(title: string, workspaceId?: string, skillId
 	};
 
 	const dir: string = await createSessionDir(id);
-	await writeFile(join(dir, "metadata.json"), JSON.stringify(metadata, null, 2), "utf8");
+	await writeJsonFileAtomic(join(dir, "metadata.json"), metadata);
 	await writeFile(join(dir, "messages.jsonl"), "", "utf8");
 	await writeFile(join(dir, "events.jsonl"), "", "utf8");
 	await writeFile(join(dir, "approval-events.jsonl"), "", "utf8");
@@ -366,7 +377,7 @@ export async function saveSession(sessionId: string, messages: ChatMessage[], me
 
 	const existing: StoredSession = await openSession(sessionId);
 	const updated: SessionMetadata = mergeSessionMetadata(existing.metadata, metadata);
-	await writeFile(metaFile, JSON.stringify(updated, null, 2), "utf8");
+	await writeJsonFileAtomic(metaFile, updated);
 
 	const timestamp: string = new Date().toISOString();
 	const lines: string[] = [];
@@ -569,7 +580,7 @@ export async function archiveSession(sessionId: string): Promise<SessionMetadata
 		updatedAt: archivedAt
 	};
 	await rename(sourceDir, targetDir);
-	await writeFile(join(targetDir, "metadata.json"), JSON.stringify(metadata, null, 2), "utf8");
+	await writeJsonFileAtomic(join(targetDir, "metadata.json"), metadata);
 	return metadata;
 }
 
@@ -591,7 +602,7 @@ export async function restoreArchivedSession(sessionId: string): Promise<Session
 		updatedAt: new Date().toISOString()
 	};
 	await rename(sourceDir, targetDir);
-	await writeFile(join(targetDir, "metadata.json"), JSON.stringify(metadata, null, 2), "utf8");
+	await writeJsonFileAtomic(join(targetDir, "metadata.json"), metadata);
 	return metadata;
 }
 
@@ -626,7 +637,7 @@ export async function renameSession(sessionId: string, newTitle: string): Promis
 	};
 
 	const metaFile: string = metaPath(sessionId);
-	await writeFile(metaFile, JSON.stringify(updated, null, 2), "utf8");
+	await writeJsonFileAtomic(metaFile, updated);
 
 	return updated;
 }

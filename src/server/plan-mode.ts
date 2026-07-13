@@ -567,3 +567,22 @@ export function createApprovedPlanSystemPrompt(markdown: string): string {
 		markdown.trim()
 	].join("\n");
 }
+
+export function createApprovedPlanExecutionParams(plan: StoredPlan): AiChatParams {
+	return {
+		message: [
+			"执行用户已经批准的计划。",
+			"",
+			"原始用户请求：",
+			plan.metadata.originalMessage
+		].join("\n"),
+		mode: "agent",
+		promptId: "godot.assistant",
+		systemPrompt: createApprovedPlanSystemPrompt(plan.markdown),
+		options: {
+			stream: true,
+			toolBudget: "project_edit",
+			workflow: "multi_phase"
+		}
+	};
+}
