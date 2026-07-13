@@ -45,6 +45,14 @@ const handleGuideRequest: RequestHandler = createLazyHandler(async (): Promise<R
 	return (await import("./handlers/guide-handlers.js")).handleGuideRequest;
 });
 
+const handleWorkbenchRequest: RequestHandler = createLazyHandler(async (): Promise<RequestHandler> => {
+	return (await import("./handlers/workbench-handlers.js")).handleWorkbenchRequest;
+});
+
+const handleMessageQueueRequest: RequestHandler = createLazyHandler(async (): Promise<RequestHandler> => {
+	return (await import("./handlers/message-queue-handlers.js")).handleMessageQueueRequest;
+});
+
 const handleMcpRequest: RequestHandler = createLazyHandler(async (): Promise<RequestHandler> => {
 	return (await import("./handlers/mcp-handlers.js")).handleMcpRequest;
 });
@@ -128,9 +136,16 @@ export const REQUEST_HANDLER_METHODS: readonly ClientRequest["method"][] = [
 	"session.rename",
 	"session.compress",
 	"session.summary",
+	"session.workbench.get",
+	"session.workbench.patch",
 	"session.guide.add",
 	"session.guide.update",
 	"session.guide.delete",
+	"message.queue.list",
+	"message.queue.add",
+	"message.queue.update",
+	"message.queue.remove",
+	"message.queue.status",
 	"mcp.listTools",
 	"mcp.callTool",
 	"mcp.listResources",
@@ -207,9 +222,16 @@ export const REQUEST_HANDLERS: ReadonlyMap<ClientRequest["method"], RequestHandl
 	["session.rename", handleSessionRequest],
 	["session.compress", handleSessionRequest],
 	["session.summary", handleSessionRequest],
+	["session.workbench.get", handleWorkbenchRequest],
+	["session.workbench.patch", handleWorkbenchRequest],
 	["session.guide.add", handleGuideRequest],
 	["session.guide.update", handleGuideRequest],
 	["session.guide.delete", handleGuideRequest],
+	["message.queue.list", handleMessageQueueRequest],
+	["message.queue.add", handleMessageQueueRequest],
+	["message.queue.update", handleMessageQueueRequest],
+	["message.queue.remove", handleMessageQueueRequest],
+	["message.queue.status", handleMessageQueueRequest],
 	["mcp.listTools", handleMcpRequest],
 	["mcp.callTool", handleMcpRequest],
 	["mcp.listResources", handleMcpRequest],

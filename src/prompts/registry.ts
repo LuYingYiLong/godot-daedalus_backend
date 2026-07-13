@@ -66,6 +66,11 @@ const MODE_PROMPT_PATHS: Partial<Record<"agent" | "ask" | "plan", string>> = {
 };
 const CORE_PROMPT_PATH: string = promptFragmentPaths[0];
 const CUSTOM_INSTRUCTIONS_BOUNDARY_PROMPT_PATH: string = promptFragmentPaths[1];
+const MODE_LABELS: Record<"agent" | "ask" | "plan", string> = {
+	agent: "Agent",
+	ask: "Ask",
+	plan: "Plan"
+};
 
 export function listPromptTemplates(): PromptTemplate[] {
 	return Object.values(promptTemplates);
@@ -115,11 +120,22 @@ export async function composeSystemPrompt(
 	const modePrompt: string = modePromptPath !== undefined
 		? await loadExtraPromptTemplate(modePromptPath)
 		: "";
+	const modeFactSection: string = chatMode === undefined
+		? ""
+		: [
+			"## Runtime 会话模式事实",
+			"",
+			`- conversationMode: ${chatMode}`,
+			`- 当前对话模式是 ${MODE_LABELS[chatMode]} 模式。`,
+			"- 这是后端协议传入的运行时事实，是判断当前模式的唯一来源。",
+			"- 当前 workflow 阶段的 allowedTools、实际可用工具数量、审批等待状态或只读阶段都不是会话模式来源。",
+			`- 如果用户询问当前模式，必须回答当前是 ${MODE_LABELS[chatMode]} 模式；不要根据工具列表、历史助手消息或阶段名称推断成其他模式。`
+		].join("\n");
 	const modeSection: string = modePrompt.length > 0
 		? `\n\n## 当前对话模式\n\n${modePrompt}`
 		: "";
 	const corePrompt: string = await loadCorePrompt();
-	const prioritizedTemplateContent: string = `${corePrompt}\n\n${templateContent}${runtimeContextSection}${modeSection}`;
+	const prioritizedTemplateContent: string = `${corePrompt}\n\n${templateContent}${runtimeContextSection}${modeFactSection.length > 0 ? `\n\n${modeFactSection}` : ""}${modeSection}`;
 
 	if (trimmedExtraPrompt.length === 0) {
 		return prioritizedTemplateContent;

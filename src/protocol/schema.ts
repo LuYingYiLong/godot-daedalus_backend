@@ -121,6 +121,46 @@ export const aiChatParamsSchema = z.object({
 });
 
 const guideTextSchema = z.string().min(1).max(4000);
+const workbenchAdditionalContextActionSchema = z.discriminatedUnion("action", [
+	z.object({
+		action: z.literal("set"),
+		items: z.array(additionalContextItemSchema).max(10)
+	}),
+	z.object({
+		action: z.literal("addOrReplace"),
+		item: additionalContextItemSchema
+	}),
+	z.object({
+		action: z.literal("remove"),
+		contextId: z.string().min(1).max(160)
+	}),
+	z.object({
+		action: z.literal("pin"),
+		contextId: z.string().min(1).max(160),
+		pinned: z.boolean()
+	}),
+	z.object({
+		action: z.literal("clearUnpinned")
+	})
+]);
+const workbenchPatchParamsSchema = z.object({
+	composer: z.object({
+		text: z.string().max(20000).optional(),
+		chatMode: z.enum(["agent", "ask", "plan"]).optional(),
+		provider: providerIdSchema.optional(),
+		model: z.string().min(1).optional(),
+		additionalContext: z.array(additionalContextItemSchema).max(10).optional()
+	}).strict().optional(),
+	additionalContextAction: workbenchAdditionalContextActionSchema.optional(),
+	nextStepHintsAction: z.literal("clear").optional(),
+	activeRun: z.object({
+		status: z.enum(["idle", "streaming", "paused", "approval", "cancelling"]).optional(),
+		requestId: z.string().min(1).optional(),
+		startedAt: z.string().min(1).optional(),
+		queueItemId: z.number().int().positive().optional(),
+		statusCode: z.string().max(80).optional()
+	}).strict().optional()
+}).strict();
 const customMcpSecretRecordSchema = z.record(z.string().min(1).max(160), z.string().max(20000))
 	.refine((value: Record<string, string>): boolean => Object.keys(value).length <= 64, "Too many secret entries");
 const customMcpSecretUpdateRecordSchema = z.record(z.string().min(1).max(160), z.union([z.string().max(20000), z.null()]))
@@ -500,6 +540,18 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 	z.object({
 		type: z.literal("request"),
 		id: z.string(),
+		method: z.literal("session.workbench.get"),
+		params: z.object({}).optional(),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("session.workbench.patch"),
+		params: workbenchPatchParamsSchema,
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
 		method: z.literal("session.guide.add"),
 		params: z.object({
 			clientGuideId: z.string().min(1).max(128),
@@ -522,6 +574,48 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		method: z.literal("session.guide.delete"),
 		params: z.object({
 			guideId: z.string().min(1),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("message.queue.list"),
+		params: z.object({}).optional(),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("message.queue.add"),
+		params: z.object({
+			text: z.string().min(1).max(20000),
+			additionalContext: z.array(additionalContextItemSchema).max(32).optional(),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("message.queue.update"),
+		params: z.object({
+			queueId: z.number().int().positive(),
+			text: z.string().min(1).max(20000),
+			additionalContext: z.array(additionalContextItemSchema).max(32).optional(),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("message.queue.remove"),
+		params: z.object({
+			queueId: z.number().int().positive(),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("message.queue.status"),
+		params: z.object({
+			queueId: z.number().int().positive(),
+			status: z.enum(["pending", "sending", "approval", "failed", "cancelled", "rejected"]),
 		}),
 	}),
 	z.object({

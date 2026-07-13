@@ -117,6 +117,8 @@ import {
 	handleSlashCommand,
 	type SlashCommandResult
 } from "./slash-commands.js";
+import { serializeMessageQueue } from "./message-queue.js";
+import { clearWorkbenchComposer, emitWorkbenchUpdated, serializeWorkbench, setWorkbenchActiveRun, setWorkbenchNextStepHints } from "./workbench.js";
 
 import { normalizeChatParamsForMode, resolveAllowedToolsForChatParams } from "./chat-mode.js";
 import { logPromptTrace, logProjectInstructionTrace } from "./prompt-trace.js";
@@ -194,6 +196,8 @@ function createSessionInfoResult(session: ClientSession, mcpHost: McpHost, histo
 		approvalMode: session.approvalGateway.getMode(),
 		pendingApprovals: session.approvalGateway.listPending().length,
 		pendingGuides: session.pendingGuides.length,
+		messageQueue: serializeMessageQueue(session),
+		workbench: serializeWorkbench(session),
 		mcpServers: mcpHost.getConnectedServerIds(session.activeWorkspace?.id),
 		customMcpServerStatus: mcpHost.getCustomServerStatusesForWorkspace(session.activeWorkspace?.id),
 		godotDiagnostics: mcpHost.getDiagnosticsBridge().getCachedStatus(),
@@ -218,6 +222,11 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 		case "ai.cancel": {
 			const controller: AbortController | undefined = session.activeAbortControllers.get(request.params.requestId);
 			if (controller !== undefined) {
+				setWorkbenchActiveRun(session, {
+					status: "cancelling",
+					requestId: request.params.requestId
+				});
+				emitWorkbenchUpdated(socket, request.id, session);
 				controller.abort();
 				session.activeAbortControllers.delete(request.params.requestId);
 			}
@@ -246,9 +255,15 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				break;
 			}
 
-			const params: AiChatParams = normalizeChatParamsForMode(slashCommandResult.type === "ai"
+			const rawParams: AiChatParams = slashCommandResult.type === "ai"
 				? slashCommandResult.params
-				: request.params);
+				: request.params;
+			const params: AiChatParams = normalizeChatParamsForMode({
+				...rawParams,
+				message: rawParams.message.length > 0 ? rawParams.message : session.workbenchComposer.text,
+				mode: rawParams.mode ?? session.workbenchComposer.chatMode,
+				additionalContext: rawParams.additionalContext ?? session.workbenchComposer.additionalContext
+			});
 			const apiKey: string | undefined = await ensureProviderConfigured(session);
 
 			if (!apiKey) {
@@ -301,6 +316,12 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 			session.activeRunRequestId = request.id;
 			const runStartedAtMs: number = Date.now();
 			const turnStartedAt: string = new Date().toISOString();
+			setWorkbenchActiveRun(session, {
+				status: "streaming",
+				requestId: request.id,
+				startedAt: turnStartedAt
+			});
+			emitWorkbenchUpdated(socket, request.id, session);
 
 			try {
 				const options: ProviderChatOptions = createProviderChatOptions(session, apiKey);
@@ -478,6 +499,8 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 					workspaceId: session.activeWorkspace?.id,
 					durationMs: Date.now() - runStartedAtMs
 				});
+				clearWorkbenchComposer(session, true);
+				emitWorkbenchUpdated(socket, request.id, session);
 				break;
 			} catch (error: unknown) {
 				if (isCancellationError(error, abortController.signal)) {
@@ -548,6 +571,11 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				if (session.activeRunRequestId === request.id) {
 					session.activeRunRequestId = undefined;
 				}
+				setWorkbenchActiveRun(session, {
+					status: session.approvalGateway.listPending().length > 0 ? "approval" : "idle",
+					requestId: request.id
+				});
+				emitWorkbenchUpdated(socket, request.id, session);
 				finishSessionRun(session.sessionId, request.id);
 			}
 			break;
@@ -603,6 +631,8 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 					request.params?.anchorRequestId,
 					abortController.signal
 				);
+				setWorkbenchNextStepHints(session, hints, request.params?.trigger ?? "done", request.params?.anchorRequestId);
+				emitWorkbenchUpdated(socket, request.id, session);
 				sendJson(socket, {
 					type: "response",
 					id: request.id,

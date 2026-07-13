@@ -96,6 +96,8 @@ export type ServerEvent = {
 		| "editor.instance.offline"
 		| "session.subscriber.updated"
 		| "session.run.busy"
+		| "session.workbench.updated"
+		| "message.queue.updated"
 		| "plan.clarification.required"
 		| "plan.generated"
 		| "plan.revised"

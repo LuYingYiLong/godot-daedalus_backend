@@ -96,10 +96,23 @@ export function createPhaseParams(originalParams: AiChatParams, phase: WorkflowP
 	};
 }
 
-export function createPhasePrompt(phase: WorkflowPhase, skillPrompt: string, mcpSystemContext: string): string {
+function formatConversationMode(mode: string | undefined): string {
+	if (mode === "ask") {
+		return "Ask";
+	}
+	if (mode === "plan") {
+		return "Plan";
+	}
+	return "Agent";
+}
+
+export function createPhasePrompt(phase: WorkflowPhase, skillPrompt: string, mcpSystemContext: string, conversationMode?: string | undefined): string {
 	const toolGroupRules: string[] = createPhaseToolGroupRules(phase);
+	const modeLabel: string = formatConversationMode(conversationMode);
 	return [
 		"## 工作流阶段约束",
+		`- 当前会话模式：${modeLabel} 模式。`,
+		"- 当前阶段可用工具只是 workflow 阶段限制，不代表会话模式；不要因为当前阶段只有只读工具或没有写工具就声称当前是 Ask 模式。",
 		`- 当前阶段：${phase.title}（${phase.id}）`,
 		`- 阶段目标：${phase.instruction}`,
 		`- 验收标准：${formatAcceptanceCriteria(phase.acceptanceCriteria)}`,

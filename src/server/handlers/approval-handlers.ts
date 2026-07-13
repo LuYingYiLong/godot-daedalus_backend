@@ -205,6 +205,7 @@ function createSessionInfoResult(session: ClientSession, mcpHost: McpHost, histo
 import { createProviderRuntimeContext, createSafeMarkdownFence, createMcpSystemContext } from "../prompt-context.js";
 import { getApprovalMode, setApprovalMode } from "../../approval-settings-store.js";
 import { getActiveConnectionSessions } from "../client-connections.js";
+import { emitWorkbenchUpdated, serializeWorkbench, setWorkbenchActiveRun } from "../workbench.js";
 
 async function applyGlobalApprovalMode(session: ClientSession): Promise<ApprovalMode> {
 	const mode: ApprovalMode = await getApprovalMode();
@@ -230,7 +231,8 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 			ok: true,
 			result: {
 				pending: hydrated.states.map(serializePendingApprovalState),
-				mode
+				mode,
+				workbench: serializeWorkbench(session)
 			}
 		});
 		break;
@@ -245,7 +247,8 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 			ok: true,
 			result: {
 				mode: request.params.mode,
-				pendingApprovals: session.approvalGateway.listPending().length
+				pendingApprovals: session.approvalGateway.listPending().length,
+				workbench: serializeWorkbench(session)
 			}
 		});
 		break;
@@ -341,9 +344,15 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 					approved: true,
 					approvalId: request.params.approvalId,
 					result: publicApprovalResult,
-					continued: pendingContinuation !== undefined
+					continued: pendingContinuation !== undefined,
+					workbench: serializeWorkbench(session)
 				}
 			});
+			setWorkbenchActiveRun(session, {
+				status: pendingContinuation !== undefined ? "streaming" : "idle",
+				requestId: pendingContinuation?.requestId ?? request.id
+			});
+			emitWorkbenchUpdated(socket, request.id, session);
 			const continuationRunId: string = pendingContinuation?.workflowState?.plan.id ?? pendingContinuation?.requestId ?? request.id;
 			const continuationStepRunId: string = pendingContinuation?.workflowState?.activePhaseRunId ?? pendingContinuation?.requestId ?? request.id;
 			const resultPersistRequestId: string = pendingContinuation?.requestId ?? request.id;
@@ -509,8 +518,15 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 				type: "response",
 				id: request.id,
 				ok: true,
-				result: { rejected: true, approvalId: request.params.approvalId, toolName: rejected.llmToolName }
+				result: {
+					rejected: true,
+					approvalId: request.params.approvalId,
+					toolName: rejected.llmToolName,
+					workbench: serializeWorkbench(session)
+				}
 			});
+			setWorkbenchActiveRun(session, { status: "idle" });
+			emitWorkbenchUpdated(socket, request.id, session);
 			sendSessionEvent(socket, request.id, session, "agent.tool.rejected", {
 				type: "agent.tool.rejected",
 				runId: pendingState?.requestId ?? request.id,

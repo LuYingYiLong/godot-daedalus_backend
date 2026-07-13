@@ -1,4 +1,4 @@
-import type { AiChatParams, ChatMessage, ModelProfile, ProviderId } from "../protocol/types.js";
+import type { AdditionalContextItem, AiChatParams, ChatMessage, ModelProfile, ProviderId } from "../protocol/types.js";
 import type { SessionMetadata } from "../session/session-store.js";
 import type { PendingAiContinuation } from "../session/pending-continuation.js";
 import { ApprovalGateway } from "../tools/approval-gateway.js";
@@ -13,6 +13,48 @@ export type PendingGuide = {
 	anchorRequestId?: string | undefined;
 	createdAt: string;
 	updatedAt: string;
+};
+
+export type QueuedMessageStatus = "pending" | "sending" | "approval" | "failed" | "cancelled" | "rejected";
+
+export type QueuedMessage = {
+	id: number;
+	text: string;
+	additionalContext: AiChatParams["additionalContext"];
+	status: QueuedMessageStatus;
+	createdAt: string;
+	updatedAt: string;
+};
+
+export type WorkbenchComposer = {
+	text: string;
+	chatMode?: "agent" | "ask" | "plan" | undefined;
+	provider?: ProviderId | undefined;
+	model?: string | undefined;
+	additionalContext: AdditionalContextItem[];
+	updatedAt: string;
+};
+
+export type WorkbenchActiveRunStatus = "idle" | "streaming" | "paused" | "approval" | "cancelling";
+
+export type WorkbenchActiveRun = {
+	status: WorkbenchActiveRunStatus;
+	requestId?: string | undefined;
+	startedAt?: string | undefined;
+	queueItemId?: number | undefined;
+	statusCode?: string | undefined;
+};
+
+export type WorkbenchNextStepHint = {
+	title: string;
+	message: string;
+};
+
+export type WorkbenchNextStepHints = {
+	hints: WorkbenchNextStepHint[];
+	anchorRequestId?: string | undefined;
+	trigger?: string | undefined;
+	generatedAt?: string | undefined;
 };
 
 export type ThinkingEventBuffer = {
@@ -47,6 +89,12 @@ export type ClientSession = {
 	completedRequestIds: Map<string, number>;
 	eventPersistQueue: Promise<void>;
 	pendingGuides: PendingGuide[];
+	queuedMessages: QueuedMessage[];
+	messageQueueNextId: number;
+	workbenchRevision: number;
+	workbenchComposer: WorkbenchComposer;
+	workbenchActiveRun: WorkbenchActiveRun;
+	workbenchNextStepHints: WorkbenchNextStepHints;
 	fullSessionLoadPromise?: Promise<void> | undefined;
 	activeRunRequestId?: string | undefined;
 };
@@ -65,6 +113,20 @@ export function createClientSession(defaultWorkspace: WorkspaceConfig | undefine
 		inFlightRequestIds: new Set(),
 		completedRequestIds: new Map(),
 		pendingGuides: [],
+		queuedMessages: [],
+		messageQueueNextId: 0,
+		workbenchRevision: 0,
+		workbenchComposer: {
+			text: "",
+			additionalContext: [],
+			updatedAt: new Date().toISOString()
+		},
+		workbenchActiveRun: {
+			status: "idle"
+		},
+		workbenchNextStepHints: {
+			hints: []
+		},
 		eventPersistQueue: Promise.resolve()
 	};
 }
@@ -77,6 +139,16 @@ export function clearActiveSession(session: ClientSession): void {
 	session.summaryMessage = undefined;
 	session.summaryCoveredMessageCount = undefined;
 	session.pendingGuides = [];
+	session.queuedMessages = [];
+	session.messageQueueNextId = 0;
+	session.workbenchRevision = 0;
+	session.workbenchComposer = {
+		text: "",
+		additionalContext: [],
+		updatedAt: new Date().toISOString()
+	};
+	session.workbenchActiveRun = { status: "idle" };
+	session.workbenchNextStepHints = { hints: [] };
 	session.aiDeltaEventBuffers.clear();
 	session.thinkingEventBuffers.clear();
 }

@@ -9,6 +9,7 @@ param(
 $ErrorActionPreference = "Stop"
 chcp 65001 | Out-Null
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 
 if ([string]::IsNullOrWhiteSpace($GodotExecutablePath)) {
 	$GodotExecutablePath = "D:\Godot_v4.7-stable_win64.exe\Godot_v4.7-stable_win64.exe"
@@ -33,6 +34,29 @@ $logStamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $backendLog = Join-Path $logDir ("backend-{0}.stdout.log" -f $logStamp)
 $backendErrorLog = Join-Path $logDir ("backend-{0}.stderr.log" -f $logStamp)
 
+function Invoke-GodotSmokeCommand {
+	param(
+		[string]$Label,
+		[string[]]$GodotArguments
+	)
+
+	Write-Host "Running $Label"
+	$output = & $GodotExecutablePath @GodotArguments 2>&1
+	$exitCode = $LASTEXITCODE
+	$text = ($output | Out-String)
+	if ($text.Trim().Length -gt 0) {
+		Write-Host $text
+	}
+
+	if ($exitCode -ne 0) {
+		throw "$Label failed with exit code $exitCode."
+	}
+
+	if ($text -match "SCRIPT ERROR|\bERROR:") {
+		throw "$Label emitted Godot errors."
+	}
+}
+
 Write-Host "Starting backend on $backendUrl"
 $env:PORT = [string]$Port
 $backendProcess = Start-Process -FilePath (Get-Command node).Source `
@@ -48,7 +72,7 @@ try {
 	$healthy = $false
 	while ((Get-Date) -lt $deadline) {
 		$env:WS_URL = $backendUrl
-		npm run --silent ping | Out-Null
+		npm run --silent ping *> $null
 		if ($LASTEXITCODE -eq 0) {
 			$healthy = $true
 			break
@@ -60,32 +84,30 @@ try {
 		throw "Backend did not become healthy before timeout. Logs: $backendLog ; $backendErrorLog"
 	}
 
-	Write-Host "Running Godot script checks"
-	& $GodotExecutablePath --headless --path $GodotProjectPath --check-only --script "res://addons/godot_daedalus/scripts/main.gd"
-	if ($LASTEXITCODE -ne 0) {
-		throw "Godot main.gd check-only failed."
+	Write-Host "Running Godot plugin checks"
+	Invoke-GodotSmokeCommand `
+		-Label "main.gd check-only" `
+		-GodotArguments @("--headless", "--path", $GodotProjectPath, "--check-only", "--script", "res://addons/godot_daedalus/scripts/main.gd")
+
+	$pluginTestsDir = Join-Path $PluginDir "tests"
+	if (-not (Test-Path -LiteralPath $pluginTestsDir -PathType Container)) {
+		throw "Godot Daedalus plugin tests directory was not found: $pluginTestsDir"
 	}
 
-	& $GodotExecutablePath --headless --path $GodotProjectPath --script "res://addons/godot_daedalus/tests/main_helpers_test.gd"
-	if ($LASTEXITCODE -ne 0) {
-		throw "main_helpers_test.gd failed."
-	}
-
-	& $GodotExecutablePath --headless --path $GodotProjectPath --script "res://addons/godot_daedalus/tests/rpc_methods_test.gd"
-	if ($LASTEXITCODE -ne 0) {
-		throw "rpc_methods_test.gd failed."
-	}
-
-	& $GodotExecutablePath --headless --path $GodotProjectPath --script "res://addons/godot_daedalus/tests/additional_context_item_test.gd"
-	if ($LASTEXITCODE -ne 0) {
-		throw "additional_context_item_test.gd failed."
+	$pluginTests = Get-ChildItem -LiteralPath $pluginTestsDir -Filter "*.gd" |
+		Where-Object { $_.Name -ne "backend_websocket_smoke_test.gd" } |
+		Sort-Object Name
+	foreach ($pluginTest in $pluginTests) {
+		$resourcePath = "res://addons/godot_daedalus/tests/$($pluginTest.Name)"
+		Invoke-GodotSmokeCommand `
+			-Label $pluginTest.Name `
+			-GodotArguments @("--headless", "--path", $GodotProjectPath, "--script", $resourcePath)
 	}
 
 	$env:DAEDALUS_TEST_BACKEND_URL = $backendUrl
-	& $GodotExecutablePath --headless --path $GodotProjectPath --script "res://addons/godot_daedalus/tests/backend_websocket_smoke_test.gd"
-	if ($LASTEXITCODE -ne 0) {
-		throw "backend_websocket_smoke_test.gd failed. Backend logs: $backendLog ; $backendErrorLog"
-	}
+	Invoke-GodotSmokeCommand `
+		-Label "backend_websocket_smoke_test.gd" `
+		-GodotArguments @("--headless", "--path", $GodotProjectPath, "--script", "res://addons/godot_daedalus/tests/backend_websocket_smoke_test.gd")
 
 	Write-Host "Beta smoke passed. Backend logs: $backendLog ; $backendErrorLog"
 } finally {

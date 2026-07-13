@@ -112,7 +112,7 @@ export async function createWorkflowPhasePrompt(
 	const additionalContextSection: string = createAdditionalContextPromptSection(params.additionalContext);
 	const fullSystemPrompt: string = [
 		systemPrompt,
-		createPhasePrompt(phase, skillPrompt, mcpSystemContext),
+		createPhasePrompt(phase, skillPrompt, mcpSystemContext, params.mode),
 		additionalContextSection,
 		guidePromptSection
 	].join("\n\n");

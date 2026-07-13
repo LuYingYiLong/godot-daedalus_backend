@@ -119,6 +119,8 @@ import {
 	handleSlashCommand,
 	type SlashCommandResult
 } from "./slash-commands.js";
+import { serializeMessageQueue } from "./message-queue.js";
+import { bumpWorkbenchRevision, serializeWorkbench } from "./workbench.js";
 
 import { normalizeChatParamsForMode, resolveAllowedToolsForChatParams } from "./chat-mode.js";
 import { logPromptTrace, logProjectInstructionTrace } from "./prompt-trace.js";
@@ -231,6 +233,8 @@ function createSessionInfoResult(session: ClientSession, mcpHost: McpHost, histo
 		approvalMode: session.approvalGateway.getMode(),
 		pendingApprovals: session.approvalGateway.listPending().length,
 		pendingGuides: session.pendingGuides.length,
+		messageQueue: serializeMessageQueue(session),
+		workbench: serializeWorkbench(session),
 		mcpServers: mcpHost.getConnectedServerIds(session.activeWorkspace?.id),
 		customMcpServerStatus: mcpHost.getCustomServerStatusesForWorkspace(session.activeWorkspace?.id),
 		godotDiagnostics: mcpHost.getDiagnosticsBridge().getCachedStatus(),
@@ -258,6 +262,16 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 			session.summaryMessage = undefined;
 			session.summaryCoveredMessageCount = undefined;
 			session.pendingGuides = [];
+			session.queuedMessages = [];
+			session.messageQueueNextId = 0;
+			session.workbenchComposer = {
+				text: "",
+				additionalContext: [],
+				updatedAt: new Date().toISOString()
+			};
+			session.workbenchActiveRun = { status: "idle" };
+			session.workbenchNextStepHints = { hints: [] };
+			bumpWorkbenchRevision(session);
 			if (session.sessionId) {
 				await clearSessionEvents(session.sessionId);
 			}
@@ -267,7 +281,9 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 				ok: true,
 				result: {
 					reset: true,
-					historyMessagesStored: session.messages.length
+					historyMessagesStored: session.messages.length,
+					messageQueue: serializeMessageQueue(session),
+					workbench: serializeWorkbench(session)
 				}
 			});
 			break;
@@ -351,6 +367,19 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 			session.summaryMessage = undefined;
 			session.summaryCoveredMessageCount = undefined;
 			session.pendingGuides = [];
+			session.queuedMessages = [];
+			session.messageQueueNextId = 0;
+			session.workbenchRevision = 0;
+			session.workbenchComposer = {
+				text: "",
+				chatMode: request.params.chatMode,
+				provider: request.params.provider,
+				model: request.params.model,
+				additionalContext: [],
+				updatedAt: new Date().toISOString()
+			};
+			session.workbenchActiveRun = { status: "idle" };
+			session.workbenchNextStepHints = { hints: [] };
 
 			if (workspace) {
 				session.activeWorkspace = workspace;
@@ -368,7 +397,10 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 				type: "response",
 				id: request.id,
 				ok: true,
-				result: metadata
+				result: {
+					...metadata,
+					workbench: serializeWorkbench(session)
+				}
 			});
 			break;
 		}
@@ -415,6 +447,19 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 					session.messages = timeline.messages.map(toChatMessage);
 					const storedForGuides: Awaited<ReturnType<typeof openSession>> = await openSession(request.params.sessionId);
 					session.pendingGuides = hydratePendingGuides(storedForGuides.events);
+					session.queuedMessages = [];
+					session.messageQueueNextId = 0;
+					session.workbenchRevision = 0;
+					session.workbenchComposer = {
+						text: "",
+						chatMode: timeline.metadata.chatMode,
+						provider: timeline.metadata.provider,
+						model: timeline.metadata.model,
+						additionalContext: [],
+						updatedAt: new Date().toISOString()
+					};
+					session.workbenchActiveRun = { status: "idle" };
+					session.workbenchNextStepHints = { hints: [] };
 					startFullSessionLoad(session, timeline.metadata.id);
 
 					const summary = await readSummary(request.params.sessionId);
@@ -451,6 +496,8 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 						},
 						...await createTimelinePageResult(timeline, openMessageLimit),
 						pendingGuides: session.pendingGuides.map(serializePendingGuide),
+						messageQueue: serializeMessageQueue(session),
+						workbench: serializeWorkbench(session),
 						workspaceWarning: workspaceWarning ?? null
 					}
 				});

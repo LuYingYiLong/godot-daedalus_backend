@@ -35,7 +35,7 @@ npm run dev:llm -- model_id=deepseek-v4-pro
 
 ## 手动验收
 
-- 从干净 `%APPDATA%\.godot_daedalus` 启动 Godot，启用 `GodotDaedalus` 插件。
+- 从干净 `%USERPROFILE%\.daedalus` 启动 Godot，启用 `GodotDaedalus` 插件；若机器上存在旧 `%APPDATA%\.godot_daedalus` 开发安装，也一并清理或确认不会被 fallback 命中。
 - 打开 Backend Manager，确认 backend install、start、health、stop、rollback 都返回可读结果。
 - 在 Settings 保存至少一个真实 provider API Key，刷新模型列表，完成一次真实纯文本对话。
 - 切换 Ask 模式，确认不会执行写工具。

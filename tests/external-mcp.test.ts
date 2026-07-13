@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
+import { mkdtemp, rm } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { WebSocketServer, WebSocket } from "ws";
 import type { ClientRequest } from "../src/protocol/types.js";
@@ -16,6 +19,7 @@ import {
 import { ExternalMcpRpcClient } from "../src/mcp/external/rpc-client.js";
 import { createClientSession } from "../src/server/client-session.js";
 import { handleToolRequest } from "../src/server/handlers/tool-handlers.js";
+import { setApprovalMode } from "../src/approval-settings-store.js";
 
 function createCaptureSocket(): { socket: WebSocket; messages: Record<string, unknown>[] } {
 	const messages: Record<string, unknown>[] = [];
@@ -165,25 +169,39 @@ test("tool execute RPC denies unknown and mode-disallowed tools before execution
 });
 
 test("tool execute RPC returns approval_required for manual write tools in full mode", async (): Promise<void> => {
+	const previousUserProfile: string | undefined = process.env.USERPROFILE;
+	const appDataDir: string = await mkdtemp(join(tmpdir(), "daedalus-external-mcp-approval-"));
 	const { socket, messages } = createCaptureSocket();
 	const session = createClientSession(undefined);
 
-	await handleToolRequest(socket, {
-		type: "request",
-		id: "write",
-		method: "tool.execute",
-		params: {
-			mode: "full",
-			toolName: "mcp_godot_create_text_file",
-			args: { relativePath: "scripts/player.gd", content: "extends Node\n" }
-		}
-	} as ClientRequest, session, {} as McpHost);
+	try {
+		process.env.USERPROFILE = appDataDir;
+		await setApprovalMode("manual");
 
-	const response = getOnlyResponse(messages);
-	assert.equal(response.ok, true);
-	const result = response.result as { status: string; approvalId: string; toolName: string };
-	assert.equal(result.status, "approval_required");
-	assert.equal(result.toolName, "mcp_godot_create_text_file");
-	assert.match(result.approvalId, /^approval-/u);
-	assert.equal(session.approvalGateway.listPending().length, 1);
+		await handleToolRequest(socket, {
+			type: "request",
+			id: "write",
+			method: "tool.execute",
+			params: {
+				mode: "full",
+				toolName: "mcp_godot_create_text_file",
+				args: { relativePath: "scripts/player.gd", content: "extends Node\n" }
+			}
+		} as ClientRequest, session, {} as McpHost);
+
+		const response = getOnlyResponse(messages);
+		assert.equal(response.ok, true);
+		const result = response.result as { status: string; approvalId: string; toolName: string };
+		assert.equal(result.status, "approval_required");
+		assert.equal(result.toolName, "mcp_godot_create_text_file");
+		assert.match(result.approvalId, /^approval-/u);
+		assert.equal(session.approvalGateway.listPending().length, 1);
+	} finally {
+		if (previousUserProfile === undefined) {
+			delete process.env.USERPROFILE;
+		} else {
+			process.env.USERPROFILE = previousUserProfile;
+		}
+		await rm(appDataDir, { recursive: true, force: true });
+	}
 });

@@ -3,8 +3,27 @@ import { createWorkspaceMetadataSnapshot, saveSession } from "../session/session
 import type { ClientSession } from "./client-session.js";
 import { cloneAdditionalContextItems } from "./additional-context.js";
 
+function containsRuntimeModeSelfDiagnosis(content: string): boolean {
+	const normalizedContent: string = content.trim();
+	if (normalizedContent.length === 0) {
+		return false;
+	}
+
+	const assertsCurrentMode: boolean = /(当前|现在|目前|本轮|本次|此会话|会话).{0,24}(是|处于|属于|运行在).{0,12}(Ask|Agent|Plan|ask|agent|plan).{0,8}模式/u.test(normalizedContent);
+	const infersModeFromTools: boolean = /(工具列表|可用工具|只读工具|没有任何写操作工具|没有写工具)/u.test(normalizedContent);
+	return assertsCurrentMode && infersModeFromTools;
+}
+
+export function isRuntimeModeSelfDiagnosisMessage(message: ChatMessage): boolean {
+	return message.role === "assistant" && containsRuntimeModeSelfDiagnosis(message.content);
+}
+
 export function isLlmContextMessage(message: ChatMessage): boolean {
-	return message.excludeFromLlmContext !== true;
+	if (message.excludeFromLlmContext === true) {
+		return false;
+	}
+	// 会话模式是本轮运行时事实，旧的助手自诊断不能参与后续推理。
+	return !isRuntimeModeSelfDiagnosisMessage(message);
 }
 
 export function filterLlmContextMessages(messages: readonly ChatMessage[]): ChatMessage[] {

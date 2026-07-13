@@ -12,6 +12,7 @@ import {
 	persistGuideEvent,
 	serializePendingGuide
 } from "../pending-guides.js";
+import { bumpWorkbenchRevision, emitWorkbenchUpdated, serializeWorkbench } from "../workbench.js";
 
 export async function handleGuideRequest(socket: WebSocket, request: ClientRequest, session: ClientSession, _mcpHost: McpHost): Promise<void> {
 	switch (request.method) {
@@ -36,7 +37,8 @@ export async function handleGuideRequest(socket: WebSocket, request: ClientReque
 					guideAdded: true,
 					duplicate: true,
 					guide: serializePendingGuide(existingGuide),
-					pendingGuides: session.pendingGuides.map(serializePendingGuide)
+					pendingGuides: session.pendingGuides.map(serializePendingGuide),
+					workbench: serializeWorkbench(session)
 				}
 			});
 			break;
@@ -53,6 +55,8 @@ export async function handleGuideRequest(socket: WebSocket, request: ClientReque
 			...serializePendingGuide(guide)
 		};
 		await persistGuideEvent(session, request.id, "guide.added", data);
+		bumpWorkbenchRevision(session);
+		emitWorkbenchUpdated(socket, request.id, session);
 		sendJson(socket, {
 			type: "response",
 			id: request.id,
@@ -60,7 +64,8 @@ export async function handleGuideRequest(socket: WebSocket, request: ClientReque
 			result: {
 				guideAdded: true,
 				guide: serializePendingGuide(guide),
-				pendingGuides: session.pendingGuides.map(serializePendingGuide)
+				pendingGuides: session.pendingGuides.map(serializePendingGuide),
+				workbench: serializeWorkbench(session)
 			}
 		});
 		break;
@@ -97,6 +102,8 @@ export async function handleGuideRequest(socket: WebSocket, request: ClientReque
 			...serializePendingGuide(guide)
 		};
 		await persistGuideEvent(session, request.id, "guide.updated", data);
+		bumpWorkbenchRevision(session);
+		emitWorkbenchUpdated(socket, request.id, session);
 		sendJson(socket, {
 			type: "response",
 			id: request.id,
@@ -104,7 +111,8 @@ export async function handleGuideRequest(socket: WebSocket, request: ClientReque
 			result: {
 				guideUpdated: true,
 				guide: serializePendingGuide(guide),
-				pendingGuides: session.pendingGuides.map(serializePendingGuide)
+				pendingGuides: session.pendingGuides.map(serializePendingGuide),
+				workbench: serializeWorkbench(session)
 			}
 		});
 		break;
@@ -132,6 +140,8 @@ export async function handleGuideRequest(socket: WebSocket, request: ClientReque
 			deletedAt: new Date().toISOString()
 		};
 		await persistGuideEvent(session, request.id, "guide.deleted", data);
+		bumpWorkbenchRevision(session);
+		emitWorkbenchUpdated(socket, request.id, session);
 		sendJson(socket, {
 			type: "response",
 			id: request.id,
@@ -140,7 +150,8 @@ export async function handleGuideRequest(socket: WebSocket, request: ClientReque
 				guideDeleted: true,
 				found: deletedGuide !== undefined,
 				guideId: request.params.guideId,
-				pendingGuides: session.pendingGuides.map(serializePendingGuide)
+				pendingGuides: session.pendingGuides.map(serializePendingGuide),
+				workbench: serializeWorkbench(session)
 			}
 		});
 		break;

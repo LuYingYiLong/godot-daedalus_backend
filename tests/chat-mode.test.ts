@@ -6,7 +6,11 @@ import { composeSystemPrompt } from "../src/prompts/registry.js";
 import { clearDynamicMcpToolsForWorkspace, getPlanSafeDynamicMcpToolNames, replaceDynamicMcpToolsForWorkspace } from "../src/tools/dynamic-mcp-tools.js";
 import { CUSTOM_MCP_TOOLS_SENTINEL } from "../src/tools/tool-sentinels.js";
 import { READ_TOOLS, VERIFY_TOOLS, WRITE_TOOLS } from "../src/workflow/planner.js";
+import { createPhasePrompt } from "../src/workflow/runner.js";
+import type { WorkflowPhase } from "../src/workflow/types.js";
 import { normalizeChatParamsForMode, resolveAllowedToolsForChatParams } from "../src/server/chat-mode.js";
+import { filterLlmContextMessages, isRuntimeModeSelfDiagnosisMessage } from "../src/server/transcript-history.js";
+import type { ChatMessage } from "../src/protocol/types.js";
 
 test("ai.chat schema accepts ask and plan modes and rejects unknown modes", (): void => {
 	const askResult = aiChatParamsSchema.safeParse({
@@ -144,6 +148,52 @@ test("agent mode prompt states current executable mode before custom instruction
 
 	assert.match(prompt, /Agent 模式强制边界/);
 	assert.match(prompt, /当前对话模式是 Agent 模式，不是 Ask 模式/);
+	assert.match(prompt, /Runtime 会话模式事实/);
+	assert.match(prompt, /conversationMode: agent/);
+	assert.match(prompt, /判断当前模式的唯一来源/);
+	assert.match(prompt, /不要根据工具列表、历史助手消息或阶段名称推断成其他模式/);
 	assert.doesNotMatch(prompt, /Ask 模式强制边界/);
 	assert.ok(prompt.indexOf("Agent 模式强制边界") < prompt.indexOf("## Settings 用户提示词（本轮生效）"));
+});
+
+test("agent workflow phase prompt does not let stage tools masquerade as ask mode", (): void => {
+	const phase: WorkflowPhase = {
+		id: "answer",
+		title: "判断当前是否为Agent模式",
+		toolGroup: "summarize",
+		toolBudget: "simple",
+		allowedTools: [],
+		instruction: "回答用户当前是否处于 Agent 模式。",
+		acceptanceCriteria: ["已回答当前模式。"]
+	};
+	const prompt: string = createPhasePrompt(phase, "", "", "agent");
+
+	assert.match(prompt, /当前会话模式：Agent 模式/);
+	assert.match(prompt, /当前阶段可用工具只是 workflow 阶段限制，不代表会话模式/);
+	assert.match(prompt, /不要因为当前阶段只有只读工具或没有写工具就声称当前是 Ask 模式/);
+});
+
+test("runtime mode self-diagnosis from old assistant history is excluded from LLM context", (): void => {
+	const pollutedAssistantMessage: ChatMessage = {
+		role: "assistant",
+		content: "当前是 Ask 模式。\n\n判断依据：当前阶段可用工具仅为 mcp_skills_load（只读），没有任何写操作工具。",
+		requestId: "old"
+	};
+	const normalAssistantMessage: ChatMessage = {
+		role: "assistant",
+		content: "Agent 模式和 Ask 模式的区别是：Agent 可以按审批边界执行写入，Ask 只提供建议。",
+		requestId: "normal"
+	};
+	const userMessage: ChatMessage = {
+		role: "user",
+		content: "现在是 agent 模式吗",
+		requestId: "current"
+	};
+
+	assert.equal(isRuntimeModeSelfDiagnosisMessage(pollutedAssistantMessage), true);
+	assert.equal(isRuntimeModeSelfDiagnosisMessage(normalAssistantMessage), false);
+	assert.deepEqual(filterLlmContextMessages([pollutedAssistantMessage, normalAssistantMessage, userMessage]), [
+		normalAssistantMessage,
+		userMessage
+	]);
 });
