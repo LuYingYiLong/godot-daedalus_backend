@@ -33,10 +33,7 @@ import { composeSkillPrompt, getSkill, isSkillId, listSkills } from "../skills/r
 import type { SkillId } from "../skills/registry.js";
 import { legacySkillIdToRef } from "../skills/catalog.js";
 import {
-	createRuntimeWorkspace,
-	loadWorkspaces,
 	findWorkspace,
-	getDefaultWorkspace,
 	upsertRuntimeWorkspace
 } from "../workspace/registry.js";
 import type { WorkspaceConfig } from "../workspace/types.js";
@@ -174,6 +171,7 @@ import { createWorkflowPendingContinuation, continueWorkflowExecution } from "./
 import { startWorkflowExecution } from "./workflow/executor.js";
 import { ensureProviderConfigured } from "../application/provider-session-service.js";
 import { bindConnectionToSessionRuntime, getClientConnection, getSessionRuntime, getSessionSubscriberInfos, subscribeSocketToSession, unsubscribeSocketFromSession } from "./client-connections.js";
+import { createSessionBrowserSnapshot } from "./session-browser-snapshot.js";
 import { logger } from "../logger.js";
 import { getApprovalMode } from "../approval-settings-store.js";
 
@@ -618,7 +616,16 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 				type: "response",
 				id: request.id,
 				ok: true,
-				result: { sessions: await listSessions() }
+				result: await createSessionBrowserSnapshot(session, mcpHost)
+			});
+			break;
+
+		case "session.browser.snapshot":
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: true,
+				result: await createSessionBrowserSnapshot(session, mcpHost)
 			});
 			break;
 

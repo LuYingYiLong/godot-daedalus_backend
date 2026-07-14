@@ -47,3 +47,32 @@ test("workspace registry persists runtime workspaces", async (): Promise<void> =
 		await fs.rm(projectDir, { recursive: true, force: true });
 	});
 });
+
+test("workspace registry hydrates missing runtime workspaces from session metadata", async (): Promise<void> => {
+	await withTempAppData(async (registry): Promise<void> => {
+		const hydrated: WorkspaceConfig[] = registry.hydrateWorkspacesFromSessionMetadata([
+			{
+				workspaceId: "runtime-680ece18e3",
+				workspaceName: "example",
+				workspaceKind: "godot",
+				workspaceRoot: "D:/GodotProjects/example",
+				godotExecutablePath: "D:/Godot/Godot.exe"
+			}
+		]);
+		const loaded: WorkspaceConfig[] = registry.loadWorkspaces();
+
+		assert.equal(hydrated.length, 1);
+		assert.equal(hydrated[0]?.id, "runtime-680ece18e3");
+		assert.equal(hydrated[0]?.name, "example");
+		assert.equal(loaded.some((item: WorkspaceConfig): boolean => item.id === "runtime-680ece18e3" && item.name === "example"), true);
+
+		const duplicateHydrated: WorkspaceConfig[] = registry.hydrateWorkspacesFromSessionMetadata([
+			{
+				workspaceId: "runtime-680ece18e3",
+				workspaceName: "example",
+				workspaceRoot: "D:/GodotProjects/example"
+			}
+		]);
+		assert.equal(duplicateHydrated.length, 0);
+	});
+});

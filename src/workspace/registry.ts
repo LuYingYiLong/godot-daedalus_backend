@@ -9,6 +9,14 @@ import { logger } from "../logger.js";
 let configuredWorkspaceCache: WorkspaceConfig[] | null = null;
 const runtimeWorkspaces: Map<string, WorkspaceConfig> = new Map();
 
+export type WorkspaceMetadataSource = {
+	workspaceId?: string | undefined;
+	workspaceName?: string | undefined;
+	workspaceKind?: "godot" | undefined;
+	workspaceRoot?: string | undefined;
+	godotExecutablePath?: string | undefined;
+};
+
 function loadConfiguredWorkspaces(): WorkspaceConfig[] {
 	if (configuredWorkspaceCache) {
 		return configuredWorkspaceCache;
@@ -108,6 +116,30 @@ export function upsertRuntimeWorkspace(workspace: WorkspaceConfig): WorkspaceCon
 	runtimeWorkspaces.set(next.id, next);
 	persistRuntimeWorkspace(next);
 	return next;
+}
+
+export function hydrateWorkspacesFromSessionMetadata(metadataList: WorkspaceMetadataSource[]): WorkspaceConfig[] {
+	const hydrated: WorkspaceConfig[] = [];
+	for (const metadata of metadataList) {
+		if (metadata.workspaceId === undefined || metadata.workspaceRoot === undefined) {
+			continue;
+		}
+
+		if (findWorkspace(metadata.workspaceId) !== undefined) {
+			continue;
+		}
+
+		const fallbackName: string = basename(metadata.workspaceRoot) || metadata.workspaceRoot;
+		hydrated.push(upsertRuntimeWorkspace({
+			id: metadata.workspaceId,
+			name: metadata.workspaceName ?? fallbackName,
+			kind: metadata.workspaceKind ?? "godot",
+			rootPath: metadata.workspaceRoot,
+			godotExecutablePath: metadata.godotExecutablePath
+		}));
+	}
+
+	return hydrated;
 }
 
 function getEnvironmentWorkspace(): WorkspaceConfig | undefined {

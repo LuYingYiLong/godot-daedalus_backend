@@ -54,6 +54,7 @@ export type ServerEvent = {
 		| "agent.run.snapshot"
 		| "agent.step.started"
 		| "agent.step.outcome"
+		| "agent.summary.started"
 		| "agent.message.delta"
 		| "agent.message.done"
 		| "agent.thinking.delta"

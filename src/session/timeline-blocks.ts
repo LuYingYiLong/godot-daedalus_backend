@@ -40,6 +40,15 @@ export type TimelineToolPart = {
 	events: Record<string, unknown>[];
 };
 
+export type TimelineSummaryStartPart = {
+	type: "summary_start";
+	runId: string;
+	stepId: string;
+	stepRunId: string;
+	title: string;
+	foldTitle: string;
+};
+
 export type TimelineStatusPart = {
 	type: "status";
 	status: string;
@@ -76,6 +85,7 @@ export type TimelineBodyPart =
 	| TimelineMarkdownPart
 	| TimelineThinkingPart
 	| TimelineToolPart
+	| TimelineSummaryStartPart
 	| TimelineStatusPart
 	| TimelinePlanPart
 	| TimelineInlineDiffPart;
@@ -263,6 +273,27 @@ function appendToolPart(parts: TimelineBodyPart[], eventData: Record<string, unk
 		type: "tool",
 		tool_call_id: toolCallKey,
 		events: [cloneRecord(eventData)]
+	});
+}
+
+function appendSummaryStartPart(parts: TimelineBodyPart[], eventData: Record<string, unknown>): void {
+	const runId: string = asString(eventData.runId);
+	const stepId: string = asString(eventData.stepId);
+	const stepRunId: string = asString(eventData.stepRunId);
+	if (runId.length === 0 || stepRunId.length === 0) {
+		return;
+	}
+	if (parts.some((part: TimelineBodyPart): boolean => part.type === "summary_start" && part.stepRunId === stepRunId)) {
+		return;
+	}
+
+	parts.push({
+		type: "summary_start",
+		runId,
+		stepId,
+		stepRunId,
+		title: asString(eventData.title),
+		foldTitle: asString(eventData.foldTitle) || "总结前的过程"
 	});
 }
 
@@ -466,6 +497,8 @@ function buildAssistantBodyParts(
 			const normalizedToolEvent: Record<string, unknown> = normalizeToolEventData(event.event, eventData, event.id);
 			appendToolPart(parts, normalizedToolEvent, requestId);
 			appendFileEditBatch(fileEditBatches, normalizedToolEvent);
+		} else if (event.event === "agent.summary.started") {
+			appendSummaryStartPart(parts, eventData);
 		} else if (event.event === "ai.thinking.delta" || event.event === "agent.thinking.delta") {
 			appendThinkingPart(parts, asString(eventData.text), false);
 		} else if (event.event === "ai.thinking.done" || event.event === "agent.thinking.done") {

@@ -174,6 +174,53 @@ test("canonical timeline keeps plan execution as independent blocks with tools a
 	});
 });
 
+test("canonical timeline inserts summary start marker before final summary markdown", (): void => {
+	const stored: StoredSession = session(
+		[
+			{
+				role: "user",
+				requestId: "workflow-summary",
+				content: "实现并总结",
+				createdAt: "2026-07-09T00:03:00.000Z"
+			},
+			{
+				role: "assistant",
+				requestId: "workflow-summary",
+				content: "总结完成。",
+				createdAt: "2026-07-09T00:03:20.000Z"
+			}
+		],
+		[
+			event("event-thinking", "workflow-summary", "agent.thinking.delta", "2026-07-09T00:03:01.000Z", {
+				text: "先读取项目。"
+			}),
+			event("event-thinking-done", "workflow-summary", "agent.thinking.done", "2026-07-09T00:03:02.000Z", {}),
+			event("event-summary-start", "workflow-summary", "agent.summary.started", "2026-07-09T00:03:10.000Z", {
+				runId: "workflow-a",
+				stepId: "summarize",
+				stepRunId: "phase-run-summary",
+				title: "总结交付",
+				foldTitle: "总结前的过程"
+			}),
+			event("event-summary-delta", "workflow-summary", "agent.message.delta", "2026-07-09T00:03:11.000Z", {
+				text: "总结完成。"
+			})
+		]
+	);
+
+	const result = buildCanonicalTimelineBlocks(stored);
+	const assistant = assistantBlock(result.blocks[1]);
+	assert.deepEqual(assistant.bodyParts.map((part) => part.type), ["thinking", "summary_start", "markdown"]);
+	const summaryStart = assistant.bodyParts[1];
+	assert.equal(summaryStart?.type, "summary_start");
+	if (summaryStart?.type === "summary_start") {
+		assert.equal(summaryStart.runId, "workflow-a");
+		assert.equal(summaryStart.stepId, "summarize");
+		assert.equal(summaryStart.stepRunId, "phase-run-summary");
+		assert.equal(summaryStart.foldTitle, "总结前的过程");
+	}
+});
+
 test("canonical timeline groups tool progress with its tool call", (): void => {
 	const stored: StoredSession = session(
 		[

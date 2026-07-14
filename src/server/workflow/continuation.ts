@@ -132,8 +132,18 @@ export async function continueWorkflowExecution(
 		}, persistRequestId);
 		sendWorkflowTodoSnapshot(socket, requestId, session, plan, persistRequestId, phaseOutputs, phaseRunId);
 
-		const phaseMessage: string = createPhaseMessage(state.originalParams, plan, phase, phaseOutputs);
 		const isFinalPhase: boolean = index >= plan.phases.length - 1;
+		if (plan.phases.length > 1 && isFinalPhase && phase.toolGroup === "summarize") {
+			sendSessionEvent(socket, requestId, session, "agent.summary.started", {
+				runId: plan.id,
+				stepId: phase.id,
+				stepRunId: phaseRunId,
+				title: phase.title,
+				foldTitle: "总结前的过程"
+			}, persistRequestId);
+		}
+
+		const phaseMessage: string = createPhaseMessage(state.originalParams, plan, phase, phaseOutputs);
 		const streamPhase: boolean = isFinalPhase && streamFinal;
 		const phaseParams: AiChatParams = createPhaseParams(state.originalParams, phase, phaseMessage, streamPhase);
 		const carriedGuidePromptSection: string = state.guidePromptSection ?? "";
