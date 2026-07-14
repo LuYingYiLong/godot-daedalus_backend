@@ -580,6 +580,13 @@ function createAssistantToolMessage(
 	return message as unknown as ChatCompletionMessageParam;
 }
 
+function hasToolResultMessages(messages: readonly ChatCompletionMessageParam[]): boolean {
+	return messages.some((message: ChatCompletionMessageParam): boolean => {
+		const roleValue: unknown = (message as { role?: unknown }).role;
+		return roleValue === "tool";
+	});
+}
+
 async function createFinalAnswer(
 	client: OpenAI,
 	params: AiChatParams,
@@ -698,6 +705,22 @@ async function runAgentLoop(
 			const text: string | null = contentText;
 
 			if (!text) {
+				if (reasoningContent.trim().length > 0 && hasToolResultMessages(messages)) {
+					const finalText: string = await createFinalAnswer(
+						client,
+						params,
+						options,
+						messages,
+						"模型读取工具结果后只返回了 thinking/reasoning_content，没有返回用户可见正文",
+						abortSignal
+					);
+					if (streamAssistant) {
+						onEvent?.({ type: "ai.delta", text: finalText });
+					}
+
+					return { status: "completed", text: finalText };
+				}
+
 				throw new Error("LLM returned empty response");
 			}
 

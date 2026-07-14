@@ -524,6 +524,7 @@ class RpcClient {
 
 		const id: string = `llm-smoke-${++this.sequence}`;
 		const request: JsonObject = {
+			protocolVersion: 2,
 			type: "request",
 			id,
 			method
@@ -552,6 +553,7 @@ class RpcClient {
 
 		const id: string = `llm-smoke-${++this.sequence}`;
 		const request: JsonObject = {
+			protocolVersion: 2,
 			type: "request",
 			id,
 			method

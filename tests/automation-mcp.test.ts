@@ -24,6 +24,7 @@ const EXPECTED_AUTOMATION_TOOLS = [
 	"daedalus_get_session_info",
 	"daedalus_send_chat",
 	"daedalus_wait_for_event",
+	"daedalus_wait_for_run",
 	"daedalus_get_session_events",
 	"daedalus_get_plan",
 	"daedalus_submit_clarification",
@@ -190,6 +191,105 @@ test("automation RPC client sends hello, waits for events and times out predicta
 			client.waitForEvent({ eventName: "never.happens", timeoutMs: 20 }),
 			/Timed out waiting for event/
 		);
+	} finally {
+		await client.close();
+		await new Promise<void>((resolve): void => server.close((): void => resolve()));
+	}
+});
+
+test("automation RPC client waits for run idle and detects failed assistant timeline block", async (): Promise<void> => {
+	const server = new WebSocketServer({ port: 0 });
+	await once(server, "listening");
+	const address = server.address() as AddressInfo;
+	const backendUrl = `ws://127.0.0.1:${address.port}`;
+
+	server.on("connection", (socket: WebSocket): void => {
+		socket.on("message", (raw: Buffer): void => {
+			const request = JSON.parse(raw.toString()) as { id: string; method: string; params?: unknown };
+			if (request.method === "client.hello") {
+				socket.send(JSON.stringify({ type: "response", id: request.id, ok: true, result: { accepted: true } }));
+				setTimeout((): void => {
+					socket.send(JSON.stringify({
+						type: "event",
+						event: "session.workbench.updated",
+						requestId: "run-1",
+						data: {
+							workbench: {
+								sessionId: "session-smoke",
+								revision: 2,
+								activeRun: {
+									status: "streaming",
+									requestId: "run-1"
+								}
+							}
+						}
+					}));
+				}, 10);
+				setTimeout((): void => {
+					socket.send(JSON.stringify({
+						type: "event",
+						event: "session.workbench.updated",
+						requestId: "run-1",
+						data: {
+							workbench: {
+								sessionId: "session-smoke",
+								revision: 3,
+								activeRun: {
+									status: "idle"
+								}
+							}
+						}
+					}));
+				}, 20);
+				return;
+			}
+			if (request.method === "session.timeline") {
+				socket.send(JSON.stringify({
+					type: "response",
+					id: request.id,
+					ok: true,
+					result: {
+						sessionId: "session-smoke",
+						timelineBlocks: [{
+							id: "assistant-run-1",
+							type: "assistant",
+							requestId: "run-1",
+							content: "Backend returned error",
+							status: "failed",
+							bodyParts: [{
+								type: "status",
+								status: "error",
+								code: "provider_error",
+								title: "Provider error",
+								details: "LLM returned empty response"
+							}]
+						}]
+					}
+				}));
+				return;
+			}
+			socket.send(JSON.stringify({ type: "response", id: request.id, ok: true, result: { method: request.method } }));
+		});
+	});
+
+	const config = createAutomationConfig({
+		DAEDALUS_AUTOMATION_MCP: "1",
+		DAEDALUS_AUTOMATION_BACKEND_URL: backendUrl
+	}, []);
+	const client = new AutomationRpcClient(config);
+	try {
+		const result = await client.waitForRun({
+			requestId: "run-1",
+			timeoutMs: 1000,
+			includeTimeline: true
+		});
+		assert.equal(result.completed, false);
+		assert.equal(result.failed, true);
+		assert.equal(result.activeRunStatus, "idle");
+		assert.equal(result.finalWorkbenchRevision, 3);
+		assert.equal(result.assistantStatus, "failed");
+		assert.equal(result.errorStatuses.some((status): boolean => status.code === "provider_error"), true);
+		assert.equal(result.timelineBlocks?.length, 1);
 	} finally {
 		await client.close();
 		await new Promise<void>((resolve): void => server.close((): void => resolve()));

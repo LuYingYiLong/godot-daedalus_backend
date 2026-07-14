@@ -42,6 +42,7 @@ export type WorkflowPhase = {
 	allowedTools: string[];
 	instruction: string;
 	acceptanceCriteria?: string[] | undefined;
+	requireToolCallOnFirstStep?: boolean | undefined;
 	repairOf?: string | undefined;
 	repairRound?: number | undefined;
 };

@@ -72,6 +72,30 @@ function includesAny(text: string, terms: readonly string[]): boolean {
 	return terms.some((term: string): boolean => text.includes(term));
 }
 
+function isExplicitReadOnlyRequest(text: string): boolean {
+	return includesAny(text, [
+		"只读",
+		"只看",
+		"不要写入",
+		"不要修改",
+		"不要改",
+		"不写入",
+		"不修改",
+		"禁止写入",
+		"禁止修改",
+		"无需写入",
+		"无需修改",
+		"read-only",
+		"readonly",
+		"do not write",
+		"don't write",
+		"no write",
+		"do not modify",
+		"don't modify",
+		"no modify"
+	]);
+}
+
 function createPhase(phaseId: FixedWorkflowPhaseId): WorkflowPhase {
 	const phase: WorkflowPhase = PHASE_TEMPLATES[phaseId];
 	return {
@@ -124,6 +148,82 @@ export function createSingleAnswerPlan(params: AiChatParams, allowedTools?: read
 	};
 }
 
+export function isCurrentProjectFactRequest(message: string): boolean {
+	const normalized: string = message.toLowerCase();
+	const asksDynamicFact: boolean = includesAny(normalized, [
+		"当前",
+		"现在",
+		"项目里",
+		"项目中",
+		"有哪些",
+		"多少",
+		"几个",
+		"列出",
+		"读取",
+		"查看",
+		"状态",
+		"路径",
+		"list",
+		"count",
+		"read",
+		"show",
+		"current"
+	]);
+	const mentionsProjectScope: boolean = includesAny(normalized, [
+		"项目",
+		"文件",
+		"脚本",
+		"场景",
+		"编辑器",
+		"project",
+		"file",
+		"script",
+		"scene",
+		"editor",
+		".gd",
+		".tscn",
+		"project.godot"
+	]);
+	return asksDynamicFact && mentionsProjectScope;
+}
+
+export function createReadOnlyFactWorkflowPlan(params: AiChatParams): WorkflowPlan {
+	const inspectPhase: WorkflowPhase = {
+		id: "inspect-current-facts",
+		title: "读取当前事实",
+		toolGroup: "read",
+		promptId: params.promptId,
+		toolBudget: "normal",
+		allowedTools: [...READ_TOOLS, ...VERIFY_TOOLS],
+		instruction: [
+			"使用最小必要只读/验证工具读取当前项目事实；不要只基于历史消息、摘要或记忆回答。",
+			"只能调用 read/verify 工具，不得调用写入、预览补丁、变更类或破坏性工具。",
+			"如果无法读取实时事实，明确说明无法确认，不要编造文件列表、数量或状态。"
+		].join("\n"),
+		acceptanceCriteria: ["已通过工具收集当前项目事实，或明确说明无法读取实时事实。"],
+		requireToolCallOnFirstStep: true
+	};
+	const summarizePhase: WorkflowPhase = {
+		id: "summarize-current-facts",
+		title: "总结当前事实",
+		toolGroup: "summarize",
+		promptId: params.promptId,
+		toolBudget: "simple",
+		allowedTools: [],
+		instruction: "只基于上一阶段的工具结果回答用户。不要补充未经工具确认的当前项目事实。",
+		acceptanceCriteria: ["回答中的动态事实均来自上一阶段工具结果，或已明确说明无法确认。"]
+	};
+	const phases: WorkflowPhase[] = [inspectPhase, summarizePhase];
+	return {
+		id: createWorkflowId(),
+		title: createWorkflowTitle(params.message),
+		phases,
+		todos: createTodos(phases),
+		source: "fixed",
+		revision: 0
+	};
+}
+
 export function createWorkflowTitle(message: string): string {
 	const normalized: string = message.replace(/\s+/g, " ").trim();
 	if (normalized.length <= 24) {
@@ -140,6 +240,10 @@ export function planWorkflow(params: AiChatParams): WorkflowPlan | null {
 	}
 
 	const text: string = params.message.toLowerCase();
+	if (isExplicitReadOnlyRequest(text)) {
+		return null;
+	}
+
 	const wantsReview: boolean = includesAny(text, ["审查", "检查", "review", "code review", "复查", "评审"]);
 	const wantsImplementation: boolean = includesAny(text, [
 		"完善",

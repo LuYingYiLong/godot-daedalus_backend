@@ -160,7 +160,7 @@ export function registerAutomationTools(server: McpServer, config: AutomationCon
 
 	server.registerTool("daedalus_wait_for_event", {
 		title: "Wait for Daedalus event",
-		description: "Wait for a streamed backend event by event name, requestId, planId, or sequence cursor.",
+		description: "Low-level event waiter. Prefer daedalus_wait_for_run when checking whether an ai.chat request completed or failed.",
 		inputSchema: z.object({
 			eventName: z.string().min(1).optional(),
 			requestId: z.string().min(1).optional(),
@@ -176,6 +176,22 @@ export function registerAutomationTools(server: McpServer, config: AutomationCon
 		timeoutMs?: number | undefined;
 	}): Promise<ToolResult> => runTool(async (): Promise<unknown> =>
 		getClient(config).waitForEvent(input)
+	));
+
+	server.registerTool("daedalus_wait_for_run", {
+		title: "Wait for Daedalus run",
+		description: "Wait for an ai.chat request to finish by observing workbench activeRun returning to idle, then summarize final timeline status.",
+		inputSchema: z.object({
+			requestId: z.string().min(1),
+			timeoutMs: z.number().int().positive().max(300000).optional(),
+			includeTimeline: z.boolean().optional()
+		})
+	}, async (input: {
+		requestId: string;
+		timeoutMs?: number | undefined;
+		includeTimeline?: boolean | undefined;
+	}): Promise<ToolResult> => runTool(async (): Promise<unknown> =>
+		getClient(config).waitForRun(input)
 	));
 
 	server.registerTool("daedalus_get_session_events", {
@@ -341,9 +357,37 @@ export function registerAutomationTools(server: McpServer, config: AutomationCon
 		});
 		const names = new Set(messages.map((message): unknown => message.raw.event).filter((value): value is string => typeof value === "string"));
 		const missingEvents = (input.expectedEvents ?? []).filter((name: string): boolean => !names.has(name));
+		const errorStatuses = messages
+			.map((message): Record<string, unknown> => {
+				const data = message.raw.data !== null && typeof message.raw.data === "object"
+					? message.raw.data as Record<string, unknown>
+					: {};
+				return {
+					event: message.raw.event,
+					status: message.raw.status ?? data.status,
+					code: message.raw.code ?? data.code,
+					title: message.raw.title ?? data.title,
+					message: message.raw.message ?? data.message,
+					sequence: message.sequence
+				};
+			})
+			.filter((status): boolean => {
+				const event = typeof status.event === "string" ? status.event : "";
+				const state = typeof status.status === "string" ? status.status : "";
+				const code = typeof status.code === "string" ? status.code : "";
+				return event === "agent_run_error"
+					|| event === "provider_error"
+					|| state === "failed"
+					|| state === "error"
+					|| code === "agent_run_error"
+					|| code === "provider_error"
+					|| code.includes("error");
+			});
 		return {
-			ok: missingEvents.length === 0,
+			ok: missingEvents.length === 0 && errorStatuses.length === 0,
 			missingEvents,
+			errorStatuses,
+			failed: errorStatuses.length > 0,
 			observedEvents: [...names],
 			messageCount: messages.length,
 			lastSequence: client.messages.at(-1)?.sequence ?? 0

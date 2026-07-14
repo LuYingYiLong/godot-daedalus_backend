@@ -55,7 +55,7 @@ export function classifyGodotTask(message: string): GodotTaskClassification {
 	const scriptContent: string | undefined = extractFirstFencedBlock(message);
 	const nodePath: string = inferNodePath(message);
 	const mentionsGodot: boolean = normalized.includes("godot") || normalized.includes(".gd") || normalized.includes(".tscn") || normalized.includes("project.godot") || normalized.includes("项目设置");
-	const wantsWrite: boolean = includesAny(normalized, ["创建", "新增", "生成", "写", "修改", "挂载", "attach", "create", "edit", "set", "unset"]);
+	const wantsWrite: boolean = wantsMutation(normalized);
 
 	if (!mentionsGodot || !wantsWrite) {
 		return { type: "general_edit" };
@@ -94,6 +94,9 @@ export function classifyGodotTask(message: string): GodotTaskClassification {
 }
 
 export function createGodotTemplateWorkflowPlan(params: AiChatParams): WorkflowPlan | null {
+	if (params.mode === "ask" || params.mode === "plan") {
+		return null;
+	}
 	const classification: GodotTaskClassification = classifyGodotTask(params.message);
 	if (classification.type === "scene_attach_script" && classification.scriptPath !== undefined && classification.scenePath !== undefined) {
 		return createScriptSceneAttachPlan(params, classification);
@@ -341,4 +344,58 @@ function stripResourcePrefix(value: string): string {
 
 function includesAny(text: string, terms: readonly string[]): boolean {
 	return terms.some((term: string): boolean => text.includes(term));
+}
+
+function isExplicitReadOnlyRequest(text: string): boolean {
+	return includesAny(text, [
+		"只读",
+		"只看",
+		"不要写入",
+		"不要修改",
+		"不要改",
+		"不写入",
+		"不修改",
+		"禁止写入",
+		"禁止修改",
+		"无需写入",
+		"无需修改",
+		"read-only",
+		"readonly",
+		"do not write",
+		"don't write",
+		"no write",
+		"do not modify",
+		"don't modify",
+		"no modify"
+	]);
+}
+
+function wantsMutation(text: string): boolean {
+	if (isExplicitReadOnlyRequest(text)) {
+		return false;
+	}
+
+	return includesAny(text, [
+		"创建",
+		"新增",
+		"生成",
+		"修改",
+		"改一下",
+		"实现",
+		"编写",
+		"写入",
+		"写一个",
+		"写下",
+		"挂载",
+		"设置",
+		"修复",
+		"attach",
+		"create",
+		"edit",
+		"modify",
+		"update",
+		"set",
+		"unset",
+		"write"
+	]);
 }

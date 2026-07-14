@@ -82,17 +82,21 @@ export function createPhaseMessage(
 }
 
 export function createPhaseParams(originalParams: AiChatParams, phase: WorkflowPhase, message: string, stream: boolean): AiChatParams {
+	const options: AiChatParams["options"] & Record<string, unknown> = {
+		...(originalParams.options ?? {}),
+		stream,
+		toolBudget: phase.toolBudget,
+		workflow: "single"
+	};
+	if (phase.requireToolCallOnFirstStep === true) {
+		options.requireToolCallOnFirstStep = true;
+	}
 	return {
 		...originalParams,
 		message,
 		promptId: phase.promptId ?? originalParams.promptId,
 		skillRefs: originalParams.skillRefs,
-		options: {
-			...(originalParams.options ?? {}),
-			stream,
-			toolBudget: phase.toolBudget,
-			workflow: "single"
-		}
+		options
 	};
 }
 

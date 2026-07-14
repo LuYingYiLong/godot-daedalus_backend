@@ -134,6 +134,7 @@ test("ask mode prompt contains advisor constraints before custom instructions", 
 	assert.match(prompt, /Ask 模式强制边界/);
 	assert.match(prompt, /顾问、老师和代码审查员/);
 	assert.match(prompt, /不得创建、覆盖、替换、删除、移动、安装、更新或修改任何文件/);
+	assert.match(prompt, /必须使用可用只读工具获取实时事实/);
 	assert.match(prompt, /切换到 Agent 模式/);
 	assert.ok(prompt.indexOf("Ask 模式强制边界") < prompt.indexOf("## Settings 用户提示词（本轮生效）"));
 });

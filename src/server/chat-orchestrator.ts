@@ -72,7 +72,7 @@ import { resolveProviderTaskModelOptions } from "../providers/task-model-routing
 import { getProviderDefaultBaseUrl, getProviderDefaultModel, getProviderDisplayName } from "../providers/provider-registry.js";
 import { classifyProviderError, createProviderStatusEvent } from "../providers/provider-error.js";
 import { generateSessionTitle, shouldApplyGeneratedSessionTitle } from "./session-title.js";
-import { createSingleAnswerPlan, planWorkflow, planWorkflowAfterLlmPlannerFailure, READ_TOOLS, VERIFY_TOOLS, WRITE_TOOLS } from "../workflow/planner.js";
+import { createReadOnlyFactWorkflowPlan, createSingleAnswerPlan, isCurrentProjectFactRequest, planWorkflow, planWorkflowAfterLlmPlannerFailure, READ_TOOLS, VERIFY_TOOLS, WRITE_TOOLS } from "../workflow/planner.js";
 import { createLlmWorkflowPlan, reviseLlmWorkflowPlan } from "../workflow/llm-planner.js";
 import { createGodotTemplateWorkflowPlan } from "../workflow/godot-template-planner.js";
 import {
@@ -434,7 +434,9 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				if (requestHasImages) {
 					workflowPlan = createSingleAnswerPlan(effectiveParams, []);
 				} else if (slashCommandResult.type === "none") {
-					if (effectiveParams.options?.workflow !== "llm_planned") {
+					if (effectiveParams.mode === "ask" && isCurrentProjectFactRequest(effectiveParams.message)) {
+						workflowPlan = createReadOnlyFactWorkflowPlan(effectiveParams);
+					} else if (effectiveParams.options?.workflow !== "llm_planned") {
 						workflowPlan = createGodotTemplateWorkflowPlan(effectiveParams);
 					}
 					if (workflowPlan === null) {

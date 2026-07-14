@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ToolEvent } from "../src/tools/tool-dispatcher.js";
 import type { WorkflowPhase } from "../src/workflow/types.js";
-import { planWorkflowAfterLlmPlannerFailure } from "../src/workflow/planner.js";
+import { createReadOnlyFactWorkflowPlan, isCurrentProjectFactRequest, planWorkflow, planWorkflowAfterLlmPlannerFailure } from "../src/workflow/planner.js";
 import {
 	classifyGodotTask,
 	createGodotTemplateWorkflowPlan,
@@ -196,6 +196,55 @@ test("Godot task classifier detects script scene attachment tasks", (): void => 
 	assert.equal(classification.scenePath, "scenes/smoke.tscn");
 	assert.equal(classification.nodePath, ".");
 	assert.equal(classification.scriptContent, "extends Node\n");
+});
+
+test("Godot task classifier does not upgrade explicit read-only script requests to write workflows", (): void => {
+	assert.equal(classifyGodotTask("只读测试：读取 scripts/a.gd，不要写入").type, "general_edit");
+	assert.equal(classifyGodotTask("解读 scripts/a.gd 的逻辑").type, "general_edit");
+	assert.equal(classifyGodotTask("修改 scripts/a.gd 添加方法").type, "script_create_or_edit");
+});
+
+test("Godot template workflow is disabled for ask and plan modes", (): void => {
+	assert.equal(createGodotTemplateWorkflowPlan({
+		message: "修改 scripts/a.gd 添加方法",
+		mode: "ask",
+		options: {
+			workflow: "auto"
+		}
+	}), null);
+	assert.equal(createGodotTemplateWorkflowPlan({
+		message: "创建场景 scenes/a.tscn",
+		mode: "plan",
+		options: {
+			workflow: "auto"
+		}
+	}), null);
+});
+
+test("fixed workflow planner does not upgrade explicit read-only requests to implementation", (): void => {
+	assert.equal(planWorkflow({
+		message: "只读测试：读取 scripts/tic_tac_toe_board.gd 并概括职责，不要写入，不要修改",
+		mode: "agent",
+		options: {
+			workflow: "auto"
+		}
+	}), null);
+});
+
+test("Ask current project fact requests use a read-only fact plan with required first tool call", (): void => {
+	const plan = createReadOnlyFactWorkflowPlan({
+		message: "项目里多少脚本并列出路径",
+		mode: "ask"
+	});
+
+	assert.equal(isCurrentProjectFactRequest("项目里多少脚本并列出路径"), true);
+	assert.deepEqual(plan.phases.map((phase: WorkflowPhase): WorkflowPhase["toolGroup"] => phase.toolGroup), [
+		"read",
+		"summarize"
+	]);
+	assert.equal(plan.phases[0]?.requireToolCallOnFirstStep, true);
+	assert.equal(plan.phases.some((phase: WorkflowPhase): boolean => phase.toolGroup === "write"), false);
+	assert.equal(plan.phases.flatMap((phase: WorkflowPhase): string[] => phase.allowedTools).some((toolName: string): boolean => toolName.includes("create") || toolName.includes("overwrite") || toolName.includes("replace")), false);
 });
 
 test("Godot template workflow uses narrow phase tools for script scene attach", (): void => {

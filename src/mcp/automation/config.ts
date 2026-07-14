@@ -6,6 +6,7 @@ export const AUTOMATION_MCP_TOOL_NAMES = [
 	"daedalus_get_session_info",
 	"daedalus_send_chat",
 	"daedalus_wait_for_event",
+	"daedalus_wait_for_run",
 	"daedalus_get_session_events",
 	"daedalus_get_plan",
 	"daedalus_submit_clarification",
