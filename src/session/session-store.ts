@@ -1,4 +1,4 @@
-import { access, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getDefaultArchivedSessionsDir, getDefaultSessionsDir } from "../app-paths.js";
 import { writeJsonFileAtomic } from "../json-file-store.js";
@@ -88,9 +88,17 @@ export type StoredSessionTimelinePage = {
 	blockOffset: number;
 	eventCount: number;
 	hasMoreBefore: boolean;
+	hasMoreAfter: boolean;
 	latestWorkflowSnapshot: unknown | null;
 	latestAgentSnapshot: unknown | null;
 };
+
+type TimelineCacheEntry = {
+	key: string;
+	result: ReturnType<typeof buildCanonicalTimelineBlocks>;
+};
+
+const timelineCacheBySessionId: Map<string, TimelineCacheEntry> = new Map();
 
 export type SessionSummary = {
 	content: string;
@@ -292,6 +300,24 @@ async function pathExists(path: string): Promise<boolean> {
 	}
 }
 
+async function createTimelineCacheKey(sessionId: string): Promise<string> {
+	const paths: string[] = [
+		metaPath(sessionId),
+		messagesPath(sessionId),
+		eventsPath(sessionId)
+	];
+	const parts: string[] = [];
+	for (const filePath of paths) {
+		try {
+			const stats = await stat(filePath);
+			parts.push(`${stats.mtimeMs}:${stats.size}`);
+		} catch {
+			parts.push("missing");
+		}
+	}
+	return parts.join("|");
+}
+
 async function listSessionMetadataFromDir(rootDir: string): Promise<SessionMetadata[]> {
 	const entries: string[] = await readdir(rootDir, { withFileTypes: true })
 		.then((items) => items.filter((d) => d.isDirectory()).map((d) => d.name));
@@ -311,8 +337,21 @@ async function listSessionMetadataFromDir(rootDir: string): Promise<SessionMetad
 	return sessions;
 }
 
-function createTimelinePageFromStoredSession(stored: StoredSession, offset: number, limit: number): StoredSessionTimelinePage {
-	const timeline = buildCanonicalTimelineBlocks(stored);
+async function getCachedTimelineBuildResult(stored: StoredSession): Promise<ReturnType<typeof buildCanonicalTimelineBlocks>> {
+	const sessionId: string = stored.metadata.id;
+	const key: string = await createTimelineCacheKey(sessionId);
+	const cached: TimelineCacheEntry | undefined = timelineCacheBySessionId.get(sessionId);
+	if (cached !== undefined && cached.key === key) {
+		return cached.result;
+	}
+
+	const result: ReturnType<typeof buildCanonicalTimelineBlocks> = buildCanonicalTimelineBlocks(stored);
+	timelineCacheBySessionId.set(sessionId, { key, result });
+	return result;
+}
+
+async function createTimelinePageFromStoredSession(stored: StoredSession, offset: number, limit: number): Promise<StoredSessionTimelinePage> {
+	const timeline = await getCachedTimelineBuildResult(stored);
 	const blockCount: number = timeline.blocks.length;
 	const normalizedOffset: number = Math.max(0, Math.min(offset, blockCount));
 	const normalizedLimit: number = Math.max(0, limit);
@@ -327,6 +366,7 @@ function createTimelinePageFromStoredSession(stored: StoredSession, offset: numb
 		blockOffset: normalizedOffset,
 		eventCount: timeline.eventCount,
 		hasMoreBefore: normalizedOffset > 0,
+		hasMoreAfter: endOffset < blockCount,
 		latestWorkflowSnapshot: timeline.latestWorkflowSnapshot,
 		latestAgentSnapshot: timeline.latestAgentSnapshot
 	};
@@ -359,7 +399,7 @@ export async function openSession(sessionId: string): Promise<StoredSession> {
 
 export async function openSessionRecentTimeline(sessionId: string, limit: number): Promise<StoredSessionTimelinePage> {
 	const stored: StoredSession = await openSession(sessionId);
-	const timeline = buildCanonicalTimelineBlocks(stored);
+	const timeline = await getCachedTimelineBuildResult(stored);
 	const blockOffset: number = Math.max(0, timeline.blocks.length - limit);
 	return createTimelinePageFromStoredSession(stored, blockOffset, limit);
 }
@@ -369,6 +409,12 @@ export async function openSessionTimelinePage(sessionId: string, beforeOffset: n
 	const endOffset: number = Math.max(0, beforeOffset);
 	const blockOffset: number = Math.max(0, endOffset - limit);
 	return createTimelinePageFromStoredSession(stored, blockOffset, endOffset - blockOffset);
+}
+
+export async function openSessionTimelinePageAfter(sessionId: string, afterOffset: number, limit: number): Promise<StoredSessionTimelinePage> {
+	const stored: StoredSession = await openSession(sessionId);
+	const blockOffset: number = Math.max(0, afterOffset);
+	return createTimelinePageFromStoredSession(stored, blockOffset, limit);
 }
 
 export async function saveSession(sessionId: string, messages: ChatMessage[], metadata?: Partial<SessionMetadata>): Promise<void> {

@@ -462,6 +462,7 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		params: z.object({
 			sessionId: z.string().min(1).optional(),
 			beforeOffset: z.number().int().min(0).optional(),
+			afterOffset: z.number().int().min(0).optional(),
 			limit: z.number().int().positive().max(500).optional(),
 		}),
 	}),

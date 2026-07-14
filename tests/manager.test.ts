@@ -28,6 +28,17 @@ test("manager semver parser compares stable versions", (): void => {
 	assert.equal(isVersionNewer("bad", "1.3.0"), false);
 });
 
+test("package bin entries point to packaged files", async (): Promise<void> => {
+	const rawPackageJson: string = await readFile("package.json", "utf8");
+	const packageJson = JSON.parse(rawPackageJson) as { bin?: Record<string, string> };
+	assert.equal(typeof packageJson.bin, "object");
+
+	for (const [binName, binPath] of Object.entries(packageJson.bin ?? {})) {
+		assert.match(binName, /^godot-daedalus-/);
+		await readFile(binPath, "utf8");
+	}
+});
+
 test("manager path guard rejects traversal", async (): Promise<void> => {
 	const root: string = await mkdtemp(join(tmpdir(), "daedalus-manager-path-"));
 	assert.equal(assertInside(root, join(root, "backend", "current.json")), join(root, "backend", "current.json"));

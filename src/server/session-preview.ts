@@ -162,6 +162,7 @@ export async function createTimelinePageResult(page: StoredSessionTimelinePage, 
 		eventCount: page.eventCount,
 		limit,
 		hasMoreBefore: page.hasMoreBefore,
+		hasMoreAfter: page.hasMoreAfter,
 		timelineBlocks: await hydrateTimelineImageThumbnails(page.metadata.id, page.timelineBlocks),
 		latestWorkflowSnapshot: page.latestWorkflowSnapshot === null ? null : createPreviewValue(page.latestWorkflowSnapshot),
 		latestAgentSnapshot: page.latestAgentSnapshot === null ? null : createPreviewValue(page.latestAgentSnapshot)

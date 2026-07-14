@@ -8,6 +8,7 @@ export type TimelineUserBlock = {
 	content: string;
 	sentAtUtc: string;
 	additionalContext?: ChatMessage["additionalContext"] | undefined;
+	renderHints?: TimelineRenderHints | undefined;
 };
 
 export type TimelineAssistantBlock = {
@@ -19,9 +20,17 @@ export type TimelineAssistantBlock = {
 	completedAtUtc: string;
 	status?: "failed" | undefined;
 	bodyParts: TimelineBodyPart[];
+	renderHints?: TimelineRenderHints | undefined;
 };
 
 export type TimelineBlock = TimelineUserBlock | TimelineAssistantBlock;
+
+export type TimelineRenderHints = {
+	estimatedHeight: number;
+	contentChars: number;
+	bodyPartCount: number;
+	heavyPartCount: number;
+};
 
 export type TimelineMarkdownPart = {
 	type: "markdown";
@@ -638,6 +647,47 @@ function findLatestSnapshots(events: StoredSessionEvent[]): { latestWorkflowSnap
 	return { latestWorkflowSnapshot, latestAgentSnapshot };
 }
 
+function withRenderHints(block: TimelineBlock): TimelineBlock {
+	return {
+		...block,
+		renderHints: createRenderHints(block)
+	};
+}
+
+function createRenderHints(block: TimelineBlock): TimelineRenderHints {
+	if (block.type === "user") {
+		const contextCount: number = block.additionalContext?.length ?? 0;
+		const textRows: number = Math.max(1, Math.ceil(block.content.length / 72));
+		return {
+			estimatedHeight: Math.max(88, 44 + textRows * 20 + contextCount * 32),
+			contentChars: block.content.length,
+			bodyPartCount: 0,
+			heavyPartCount: contextCount
+		};
+	}
+
+	let contentChars: number = block.content.length;
+	let heavyPartCount: number = 0;
+	for (const part of block.bodyParts) {
+		if (part.type === "markdown" || part.type === "thinking") {
+			contentChars += part.text.length;
+		}
+		if (part.type === "tool") {
+			heavyPartCount += Math.max(1, part.events.length);
+		} else if (part.type === "thinking" || part.type === "inline_diff" || part.type === "plan") {
+			heavyPartCount += 1;
+		}
+	}
+
+	const textRows: number = Math.max(1, Math.ceil(contentChars / 80));
+	return {
+		estimatedHeight: Math.max(140, 64 + textRows * 18 + block.bodyParts.length * 34 + heavyPartCount * 20),
+		contentChars,
+		bodyPartCount: block.bodyParts.length,
+		heavyPartCount
+	};
+}
+
 export function buildCanonicalTimelineBlocks(session: StoredSession): TimelineBuildResult {
 	const sourceEvents: StoredSessionEvent[] = [...session.events].sort(compareEvents);
 	const groupedEvents: Map<string, RequestEvents> = collectRequestEvents(sourceEvents);
@@ -701,7 +751,7 @@ export function buildCanonicalTimelineBlocks(session: StoredSession): TimelineBu
 
 	const snapshots = findLatestSnapshots(sourceEvents);
 	return {
-		blocks,
+		blocks: blocks.map(withRenderHints),
 		eventCount: sourceEvents.length,
 		latestWorkflowSnapshot: snapshots.latestWorkflowSnapshot,
 		latestAgentSnapshot: snapshots.latestAgentSnapshot

@@ -56,12 +56,27 @@ test("session store creates, opens, pages, rewinds, archives, restores, and dele
 		const recent = await store.openSessionRecentTimeline(metadata.id, 1);
 		assert.equal(recent.timelineBlocks.length, 1);
 		assert.equal(recent.timelineBlocks[0]?.requestId, "req-2");
+		assert.equal(typeof recent.timelineBlocks[0]?.renderHints?.estimatedHeight, "number");
 		assert.deepEqual(recent.latestWorkflowSnapshot, { phases: [] });
 		assert.equal(recent.hasMoreBefore, true);
+		assert.equal(recent.hasMoreAfter, false);
 
 		const firstPage = await store.openSessionTimelinePage(metadata.id, recent.blockOffset, 1);
 		assert.equal(firstPage.timelineBlocks.length, 1);
 		assert.equal(firstPage.timelineBlocks[0]?.requestId, "req-1");
+		assert.equal(firstPage.hasMoreBefore, true);
+		assert.equal(firstPage.hasMoreAfter, true);
+
+		const afterPage = await store.openSessionTimelinePageAfter(metadata.id, recent.blockOffset, 1);
+		assert.equal(afterPage.timelineBlocks.length, 1);
+		assert.equal(afterPage.timelineBlocks[0]?.requestId, "req-2");
+
+		await store.appendSessionEvent(metadata.id, "req-2", "ai.status", { title: "Updated", details: "cache invalidated" });
+		const invalidatedPage = await store.openSessionTimelinePageAfter(metadata.id, recent.blockOffset, 1);
+		const bodyParts = invalidatedPage.timelineBlocks[0]?.type === "assistant"
+			? invalidatedPage.timelineBlocks[0].bodyParts
+			: [];
+		assert.equal(bodyParts.some((part) => part.type === "status" && part.title === "Updated"), true);
 
 		const rewound = await store.rewindSessionFromRequest(metadata.id, "req-2");
 		assert.equal(rewound.length, 1);

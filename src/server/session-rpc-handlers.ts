@@ -44,7 +44,7 @@ import {
 	readSummary, writeSummary,
 	appendSessionEvent, appendApprovalEvent, appendWorkflowEvent, appendAgentEvent, clearSessionEvents, readApprovalEvents,
 	createWorkspaceMetadataSnapshot,
-	openSessionRecentTimeline, openSessionTimelinePage,
+	openSessionRecentTimeline, openSessionTimelinePage, openSessionTimelinePageAfter,
 	type SessionChatMode,
 	type SessionMetadata,
 	type SessionSummary,
@@ -584,9 +584,11 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 
 			try {
 				const limit: number = clampSessionOpenMessageLimit(request.params.limit);
-				const timeline = request.params.beforeOffset === undefined
-					? await openSessionRecentTimeline(sessionId, limit)
-					: await openSessionTimelinePage(sessionId, request.params.beforeOffset, limit);
+				const timeline = request.params.afterOffset !== undefined
+					? await openSessionTimelinePageAfter(sessionId, request.params.afterOffset, limit)
+					: request.params.beforeOffset === undefined
+						? await openSessionRecentTimeline(sessionId, limit)
+						: await openSessionTimelinePage(sessionId, request.params.beforeOffset, limit);
 				sendJson(socket, {
 					type: "response",
 					id: request.id,

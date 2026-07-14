@@ -59,3 +59,16 @@ test("session.timeline accepts omitted beforeOffset as latest page request", ():
 		}
 	}).success, true);
 });
+
+test("session.timeline accepts afterOffset page request", (): void => {
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "timeline-after",
+		method: "session.timeline",
+		params: {
+			sessionId: "session-test",
+			afterOffset: 80,
+			limit: 20
+		}
+	}).success, true);
+});
