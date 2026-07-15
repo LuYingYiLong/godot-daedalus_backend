@@ -11,6 +11,8 @@ import {
 	getProviderFallbackModels,
 	getProviderIds,
 	isProviderId,
+	mergeProviderModelsWithCatalog,
+	normalizeProviderModelCapabilities,
 	type ProviderModelInfo
 } from "./provider-registry.js";
 import type { ModelRef } from "./provider-types.js";
@@ -35,6 +37,7 @@ export type ProviderModelRouting = {
 	imageRecognition: ProviderTaskModelRef | null;
 	workflowPlanner: ProviderTaskModelRef | null;
 	sessionTitle: ProviderTaskModelRef | null;
+	imageGeneration: ProviderTaskModelRef | null;
 };
 
 export type ProviderModelRoutingInput = Partial<Record<keyof ProviderModelRouting, ProviderTaskModelRef | null | undefined>>;
@@ -183,7 +186,8 @@ export function createEmptyModelRouting(): ProviderModelRouting {
 	return {
 		imageRecognition: null,
 		workflowPlanner: null,
-		sessionTitle: null
+		sessionTitle: null,
+		imageGeneration: null
 	};
 }
 
@@ -215,6 +219,7 @@ function parseModelRouting(value: unknown): ProviderModelRouting {
 	routing.imageRecognition = parseTaskModelRef(record.imageRecognition);
 	routing.workflowPlanner = parseTaskModelRef(record.workflowPlanner);
 	routing.sessionTitle = parseTaskModelRef(record.sessionTitle);
+	routing.imageGeneration = parseTaskModelRef(record.imageGeneration);
 	return routing;
 }
 
@@ -225,7 +230,7 @@ function mergeModelRouting(existing: ProviderModelRouting | undefined, input: Pr
 	}
 
 	const next: ProviderModelRouting = { ...routing };
-	for (const key of ["imageRecognition", "workflowPlanner", "sessionTitle"] as const) {
+	for (const key of ["imageRecognition", "workflowPlanner", "sessionTitle", "imageGeneration"] as const) {
 		if (!Object.prototype.hasOwnProperty.call(input, key)) {
 			continue;
 		}
@@ -283,9 +288,9 @@ function parseModelInfo(value: unknown): ProviderModelInfo | null {
 		endpointType: fallback?.endpointType ?? "openai-chat-completions",
 		contextWindowTokens: Math.floor(contextWindowTokens),
 		maxOutputTokens: Math.floor(maxOutputTokens),
-		capabilities: typeof record.capabilities === "object" && record.capabilities !== null && !Array.isArray(record.capabilities)
-			? { ...(record.capabilities as ProviderModelInfo["capabilities"]) }
-			: {}
+		capabilities: normalizeProviderModelCapabilities(typeof record.capabilities === "object" && record.capabilities !== null && !Array.isArray(record.capabilities)
+			? record.capabilities as ProviderModelInfo["capabilities"]
+			: {})
 	};
 	if (typeof record.endpointType === "string" && (record.endpointType === "openai-chat-completions" || record.endpointType === "openai-responses")) {
 		model.endpointType = record.endpointType;
@@ -502,7 +507,9 @@ export async function getProviderConfigStatus(): Promise<ProviderConfigStatus> {
 
 	const activeStatus: ProviderConfigProviderStatus = providers.find((item: ProviderConfigProviderStatus): boolean => item.provider === stored.activeModel.providerId)
 		?? providers[0]!;
-	const activeModels: ProviderModelInfo[] = activeStatus.modelsCache.length > 0 ? activeStatus.modelsCache : [...activeStatus.fallbackModels];
+	const activeModels: ProviderModelInfo[] = activeStatus.modelsCache.length > 0
+		? mergeProviderModelsWithCatalog(activeStatus.provider, activeStatus.modelsCache)
+		: [...activeStatus.fallbackModels];
 	const current: CurrentProviderConfigStatus = {
 		provider: activeStatus.provider,
 		displayName: activeStatus.displayName,
@@ -541,7 +548,9 @@ export async function getProviderModelSelectionStatus(): Promise<ProviderModelSe
 		current: status.current,
 		providers: status.providers.map((providerStatus: ProviderConfigProviderStatus): ProviderModelSelectionProviderStatus => {
 			const modelsSource: "cache" | "fallback" = providerStatus.modelsCache.length > 0 ? "cache" : "fallback";
-			const models: ProviderModelInfo[] = modelsSource === "cache" ? providerStatus.modelsCache : [...providerStatus.fallbackModels];
+			const models: ProviderModelInfo[] = modelsSource === "cache"
+				? mergeProviderModelsWithCatalog(providerStatus.provider, providerStatus.modelsCache)
+				: [...providerStatus.fallbackModels];
 			const selected: boolean = providerStatus.provider === status.activeModel.providerId;
 			const selectedModel: string | null = selected
 				? status.activeModel.modelId

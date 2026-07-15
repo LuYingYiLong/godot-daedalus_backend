@@ -123,6 +123,19 @@ test("ask and plan modes allow built-in read, verify and plan-safe custom MCP to
 	clearDynamicMcpToolsForWorkspace(workspaceId);
 });
 
+test("agent mode honors explicit builtin skill tool restriction", (): void => {
+	const allowedTools: readonly string[] | undefined = resolveAllowedToolsForChatParams(
+		{
+			message: "@image-gen 生成一张 F-35 战机图片",
+			mode: "agent"
+		},
+		["mcp_image_generate"],
+		"chat-mode-workspace"
+	);
+
+	assert.deepEqual(allowedTools, ["mcp_image_generate"]);
+});
+
 test("ask mode prompt contains advisor constraints before custom instructions", async (): Promise<void> => {
 	const prompt: string = await composeSystemPrompt(
 		"godot.assistant",

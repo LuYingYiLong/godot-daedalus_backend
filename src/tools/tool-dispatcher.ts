@@ -6,6 +6,7 @@ import { executeLlmToolWithIdempotency } from "./tool-idempotency.js";
 import type { IdempotentToolExecutionResult } from "./tool-idempotency.js";
 import { parseToolResultSummary, type ParsedToolResultSummary } from "./tool-result-parser.js";
 import type { FileEditBatchDraft } from "./file-edit-snapshots.js";
+import type { ImageGenerationResult } from "../providers/image-generation.js";
 import type { ToolExecutionContext } from "./tool-catalog.js";
 import { logger } from "../logger.js";
 
@@ -15,7 +16,7 @@ export type ToolEvent =
 	| { type: "ai.thinking.done" }
 	| ({ type: "tool.call"; step: number; toolCallId: string; toolName: string; args: Record<string, unknown> } & ToolEventDisplay)
 	| ({ type: "tool.progress"; step: number; toolCallId: string; toolName: string } & ToolProgressUpdate)
-	| ({ type: "tool.result"; step: number; toolCallId: string; toolName: string; resultChars: number; truncated: boolean; cached?: boolean; fileEditDraft?: FileEditBatchDraft | undefined } & ParsedToolResultSummary)
+	| ({ type: "tool.result"; step: number; toolCallId: string; toolName: string; resultChars: number; truncated: boolean; cached?: boolean; fileEditDraft?: FileEditBatchDraft | undefined; imageGeneration?: ImageGenerationResult | undefined } & ParsedToolResultSummary)
 	| { type: "tool.error"; step: number; toolCallId: string; toolName: string; message: string }
 	| ({ type: "tool.approval_required"; step: number; toolCallId: string; toolName: string; approvalId: string; reason: string; args: Record<string, unknown> } & ToolEventDisplay);
 
@@ -110,7 +111,7 @@ async function executeSingleToolCall(
 	}
 
 	if (decision.action === "request_approval") {
-		const pending = gateway.requestApproval(functionName, argsParsed, toolCall.id, decision.reason, workspaceId, toolContext?.editorInstanceId);
+		const pending = gateway.requestApproval(functionName, argsParsed, toolCall.id, decision.reason, workspaceId, toolContext?.editorInstanceId, toolContext?.sessionId);
 		logger.info("tool", "approval_required", {
 			toolCallId: toolCall.id,
 			toolName: functionName,
@@ -154,7 +155,7 @@ async function executeSingleToolCall(
 		args: argsParsed
 	});
 	try {
-		const rawResult = await executeLlmToolWithIdempotency(mcpHost, functionName, argsParsed, workspaceId, toolContext?.editorInstanceId);
+		const rawResult = await executeLlmToolWithIdempotency(mcpHost, functionName, argsParsed, workspaceId, toolContext?.editorInstanceId, toolContext?.sessionId);
 		const result: IdempotentToolExecutionResult = enricher === undefined
 			? rawResult
 			: await enricher({
@@ -199,6 +200,7 @@ async function executeSingleToolCall(
 				truncated: result.truncated,
 				cached: result.reused,
 				fileEditDraft: result.fileEditDraft,
+				imageGeneration: result.imageGeneration,
 				...parsedSummary
 			});
 		}

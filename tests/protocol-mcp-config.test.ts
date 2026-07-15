@@ -195,6 +195,15 @@ test("session create and save schema accept frontend session metadata", (): void
 		params: {
 			approvalMode: "auto-safe"
 		}
+	}).success, true);
+
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "session-save-bad-approval-mode",
+		method: "session.save",
+		params: {
+			approvalMode: "always"
+		}
 	}).success, false);
 });
 

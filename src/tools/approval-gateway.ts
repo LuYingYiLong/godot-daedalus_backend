@@ -4,6 +4,7 @@ import { getEffectiveToolPolicy } from "./tool-policy.js";
 import { isPlanSafeDynamicMcpToolName } from "./dynamic-mcp-tools.js";
 import { executeLlmToolWithIdempotency, getLlmToolExecutionIdentity } from "./tool-idempotency.js";
 import type { FileEditBatchDraft } from "./file-edit-snapshots.js";
+import type { ImageGenerationResult } from "../providers/image-generation.js";
 
 export type PendingApproval = {
 	approvalId: string;
@@ -16,10 +17,11 @@ export type PendingApproval = {
 	executionFingerprint?: string | undefined;
 	workspaceId?: string | undefined;
 	editorInstanceId?: string | undefined;
+	sessionId?: string | undefined;
 };
 
 export type ApprovalResult =
-	| { status: "executed"; content: string; cached?: boolean | undefined; fileEditDraft?: FileEditBatchDraft | undefined }
+	| { status: "executed"; content: string; cached?: boolean | undefined; fileEditDraft?: FileEditBatchDraft | undefined; imageGeneration?: ImageGenerationResult | undefined }
 	| { status: "pending"; approval: PendingApproval }
 	| { status: "denied"; reason: string };
 
@@ -82,7 +84,8 @@ export class ApprovalGateway {
 		toolCallId: string,
 		reason: string,
 		workspaceId?: string | undefined,
-		editorInstanceId?: string | undefined
+		editorInstanceId?: string | undefined,
+		sessionId?: string | undefined
 	): PendingApproval {
 		const executionScope: string = workspaceId ?? "workspace:none";
 		const executionFingerprint: string | undefined = getLlmToolExecutionIdentity(llmToolName, args, executionScope, workspaceId)?.fingerprint;
@@ -106,23 +109,24 @@ export class ApprovalGateway {
 			createdAt: Date.now(),
 			executionFingerprint,
 			workspaceId,
-			editorInstanceId
+			editorInstanceId,
+			sessionId
 		};
 
 		this.pendingApprovals.set(approvalId, pending);
 		return pending;
 	}
 
-	async approve(approvalId: string, mcpHost: McpHost): Promise<{ content: string; cached?: boolean | undefined; fileEditDraft?: FileEditBatchDraft | undefined }> {
+	async approve(approvalId: string, mcpHost: McpHost): Promise<{ content: string; cached?: boolean | undefined; fileEditDraft?: FileEditBatchDraft | undefined; imageGeneration?: ImageGenerationResult | undefined }> {
 		const pending: PendingApproval | undefined = this.pendingApprovals.get(approvalId);
 
 		if (!pending) {
 			throw new Error(`Approval not found: ${approvalId}`);
 		}
 
-		const result = await executeLlmToolWithIdempotency(mcpHost, pending.llmToolName, pending.args, pending.workspaceId, pending.editorInstanceId);
+		const result = await executeLlmToolWithIdempotency(mcpHost, pending.llmToolName, pending.args, pending.workspaceId, pending.editorInstanceId, pending.sessionId);
 		this.pendingApprovals.delete(approvalId);
-		return { content: result.content, cached: result.reused, fileEditDraft: result.fileEditDraft };
+		return { content: result.content, cached: result.reused, fileEditDraft: result.fileEditDraft, imageGeneration: result.imageGeneration };
 	}
 
 	reject(approvalId: string): PendingApproval {
@@ -177,7 +181,9 @@ export class ReadOnlyToolApprovalGateway extends ApprovalGateway {
 		_args: Record<string, unknown>,
 		_toolCallId: string,
 		_reason: string,
-		_workspaceId?: string | undefined
+		_workspaceId?: string | undefined,
+		_editorInstanceId?: string | undefined,
+		_sessionId?: string | undefined
 	): PendingApproval {
 		throw new Error("只读上下文不允许触发人工审批。");
 	}

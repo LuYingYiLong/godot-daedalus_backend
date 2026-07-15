@@ -10,7 +10,8 @@ export const skillIds = [
 	"scene.builder",
 	"file.creator",
 	"backend.helper",
-	"skill.creator"
+	"skill.creator",
+	"image.gen"
 ] as const;
 
 export type SkillId = typeof skillIds[number];
@@ -116,6 +117,10 @@ const SCENE_WRITE_TOOLS: string[] = [
 	"mcp_godot_editor_apply_scene_patch"
 ];
 
+const IMAGE_GENERATION_TOOLS: string[] = [
+	"mcp_image_generate"
+];
+
 const skills: Record<SkillId, Skill> = {
 	"godot.project_init": {
 		id: "godot.project_init",
@@ -164,6 +169,14 @@ const skills: Record<SkillId, Skill> = {
 		promptPath: "src/skills/builtin/skill-creator/SKILL.md",
 		defaultPromptId: "godot.assistant",
 		allowedTools: [...READ_TOOLS, "mcp_skills_load", "mcp_skills_propose_create", "mcp_skills_create"]
+	},
+	"image.gen": {
+		id: "image.gen",
+		name: "Image Generator",
+		description: "Generate images as Daedalus session attachments without writing to the workspace.",
+		promptPath: "src/skills/builtin/image-gen/SKILL.md",
+		defaultPromptId: "godot.assistant",
+		allowedTools: [...IMAGE_GENERATION_TOOLS]
 	}
 };
 

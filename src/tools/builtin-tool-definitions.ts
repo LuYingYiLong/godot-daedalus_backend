@@ -52,6 +52,21 @@ const SKILL_TOOL_DEFINITIONS: ChatCompletionTool[] = [
 	)
 ];
 
+const IMAGE_GENERATION_TOOL_DEFINITIONS: ChatCompletionTool[] = [
+	createSceneToolDefinition(
+		"mcp_image_generate",
+		"根据文本提示生成图片，并把结果保存为当前 Daedalus 会话附件。不会写入项目工作区。适合用户明确要求生成图片、插画、视觉素材或草图时使用。",
+		{
+			prompt: { type: "string", description: "详细图像生成提示词，包含主体、风格、构图、颜色、文字限制等。" },
+			count: { type: "integer", minimum: 1, maximum: 4, description: "生成图片数量，默认 1，最大 4。" },
+			aspectRatio: { type: "string", enum: ["1:1", "16:9", "9:16", "4:3", "3:4"], description: "画幅比例，默认 1:1。" },
+			style: { type: "string", description: "可选风格提示，例如 photorealistic、pixel art、flat illustration。" },
+			seed: { type: "integer", description: "可选种子提示；不保证所有 provider 都严格支持。" }
+		},
+		["prompt"]
+	)
+];
+
 const GODOT_RUNTIME_TOOL_DEFINITIONS: ChatCompletionTool[] = [
 	createSceneToolDefinition(
 		"mcp_godot_get_runtime_status",
@@ -266,6 +281,7 @@ const SCENE_TOOL_DEFINITIONS: ChatCompletionTool[] = [
 
 export const BUILTIN_TOOL_DEFINITIONS: ChatCompletionTool[] = [
 	...SKILL_TOOL_DEFINITIONS,
+	...IMAGE_GENERATION_TOOL_DEFINITIONS,
 	...GODOT_RUNTIME_TOOL_DEFINITIONS,
 	...GODOT_HEADLESS_OPERATION_TOOL_DEFINITIONS,
 	...SCENE_TOOL_DEFINITIONS,

@@ -15,6 +15,7 @@ import { CUSTOM_MCP_TOOLS_SENTINEL } from "./tool-sentinels.js";
 export type ToolExecutionContext = {
 	workspaceId?: string | undefined;
 	editorInstanceId?: string | undefined;
+	sessionId?: string | undefined;
 };
 
 export type ToolPhaseEligibility = "read" | "verify" | "write";
@@ -69,6 +70,7 @@ const DEFAULT_WORKFLOW_TOOL_NAMES: Record<WorkflowToolGroup, readonly string[]> 
 		"mcp_terminal_run_safe_preset"
 	],
 	write: [
+		"mcp_image_generate",
 		"mcp_godot_propose_create_text_file",
 		"mcp_godot_create_text_file",
 		"mcp_godot_propose_overwrite_text_file",

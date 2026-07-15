@@ -4,6 +4,7 @@ export const TOOL_POLICIES: Record<string, ToolPolicy> = {
 	"mcp_skills_load": { risk: "read" },
 	"mcp_skills_propose_create": { risk: "propose" },
 	"mcp_skills_create": { risk: "write" },
+	"mcp_image_generate": { risk: "write" },
 	"mcp_godot_get_runtime_status": { risk: "read" },
 	"mcp_godot_get_godot_version": { risk: "read" },
 	"mcp_godot_launch_editor": { risk: "write" },

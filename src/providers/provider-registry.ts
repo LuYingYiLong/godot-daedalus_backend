@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ProviderId } from "../protocol/types.js";
+import { normalizeProviderModelCapabilities } from "./provider-types.js";
 import type {
 	AdapterFamily,
 	EndpointType,
@@ -19,6 +20,7 @@ export type {
 	ProviderModelCapabilities,
 	ProviderModelInfo
 } from "./provider-types.js";
+export { normalizeProviderModelCapabilities } from "./provider-types.js";
 
 type RawProviderCatalogEntry = {
 	id: string;
@@ -221,7 +223,7 @@ function parseModels(value: unknown): RawModelCatalogEntry[] {
 			endpointType: endpointTypeValue,
 			contextWindowTokens: readPositiveInteger(item, "contextWindowTokens"),
 			maxOutputTokens: readPositiveInteger(item, "maxOutputTokens"),
-			capabilities: isRecord(item.capabilities) ? item.capabilities as ProviderModelCapabilities : {},
+			capabilities: normalizeProviderModelCapabilities(isRecord(item.capabilities) ? item.capabilities as ProviderModelCapabilities : {}),
 			ownedBy: typeof item.ownedBy === "string" ? item.ownedBy : undefined
 		};
 		return raw;
@@ -262,7 +264,7 @@ function buildCatalog(): ProviderCatalog {
 			endpointType: rawModel.endpointType,
 			contextWindowTokens: rawModel.contextWindowTokens,
 			maxOutputTokens: rawModel.maxOutputTokens,
-			capabilities: { ...(rawModel.capabilities ?? {}) }
+			capabilities: normalizeProviderModelCapabilities(rawModel.capabilities)
 		};
 		if (rawModel.ownedBy !== undefined) {
 			model.ownedBy = rawModel.ownedBy;
@@ -371,6 +373,33 @@ export function getProviderFallbackModels(provider: ProviderId): ProviderModelIn
 		...model,
 		capabilities: { ...model.capabilities }
 	}));
+}
+
+export function mergeProviderModelsWithCatalog(provider: ProviderId, models: ProviderModelInfo[]): ProviderModelInfo[] {
+	const fallbackModels: ProviderModelInfo[] = getProviderFallbackModels(provider);
+	const fallbackById: Map<string, ProviderModelInfo> = new Map(
+		fallbackModels.map((model: ProviderModelInfo): [string, ProviderModelInfo] => [model.id, model])
+	);
+	const seenModelIds: Set<string> = new Set();
+	const mergedModels: ProviderModelInfo[] = models.map((model: ProviderModelInfo): ProviderModelInfo => {
+		seenModelIds.add(model.id);
+		const fallback: ProviderModelInfo | undefined = fallbackById.get(model.id);
+		return {
+			...model,
+			capabilities: normalizeProviderModelCapabilities({
+				...(fallback?.capabilities ?? {}),
+				...model.capabilities
+			})
+		};
+	});
+
+	for (const fallbackModel of fallbackModels) {
+		if (!seenModelIds.has(fallbackModel.id)) {
+			mergedModels.push(fallbackModel);
+		}
+	}
+
+	return mergedModels;
 }
 
 export function getCatalogModel(provider: ProviderId, modelId: string): ProviderModelInfo | undefined {

@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import test from "node:test";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test, { mock } from "node:test";
+import keytar from "keytar";
 import { runDeepSeekAgent } from "../src/providers/deepseek-agent.js";
 import { chatWithOpenAICompatible, streamChatWithOpenAICompatible } from "../src/providers/provider-chat-completions-client.js";
-import { fetchOpenAICompatibleModels } from "../src/providers/provider-models.js";
+import { fetchOpenAICompatibleModels, listProviderModels } from "../src/providers/provider-models.js";
+import { saveProviderConfig } from "../src/providers/provider-config-store.js";
 import type { McpHost } from "../src/mcp/mcp-host.js";
 import type { AiChatParams } from "../src/protocol/types.js";
 import { ApprovalGateway } from "../src/tools/approval-gateway.js";
@@ -26,6 +31,11 @@ async function readRequestBody(request: IncomingMessage): Promise<Record<string,
 async function withZhipuMockServer(run: (baseUrl: string, requests: RecordedRequest[]) => Promise<void>): Promise<void> {
 	const requests: RecordedRequest[] = [];
 	const server: Server = createServer(async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
+		if (request.url === "/generated.png") {
+			response.writeHead(200, { "Content-Type": "image/png" });
+			response.end(Buffer.from("zhipu-generated-image", "utf8"));
+			return;
+		}
 		if (request.url === "/models") {
 			assert.equal(request.headers.authorization, "Bearer zhipu-test-key");
 			response.writeHead(200, { "Content-Type": "application/json" });
@@ -39,6 +49,15 @@ async function withZhipuMockServer(run: (baseUrl: string, requests: RecordedRequ
 			authorization: request.headers.authorization,
 			body
 		});
+		if (request.url === "/images/generations") {
+			assert.equal(request.headers.authorization, "Bearer zhipu-test-key");
+			response.writeHead(200, { "Content-Type": "application/json" });
+			response.end(JSON.stringify({
+				created: 1,
+				data: [{ url: `http://${request.headers.host}/generated.png` }]
+			}));
+			return;
+		}
 		assert.equal(request.url, "/chat/completions");
 		assert.equal(request.headers.authorization, "Bearer zhipu-test-key");
 		if (body.stream === true) {
@@ -73,6 +92,21 @@ async function withZhipuMockServer(run: (baseUrl: string, requests: RecordedRequ
 	} finally {
 		server.close();
 		await once(server, "close");
+	}
+}
+
+async function withTempAppData(run: () => Promise<void>): Promise<void> {
+	const previousUserProfile: string | undefined = process.env.USERPROFILE;
+	process.env.USERPROFILE = await mkdtemp(join(tmpdir(), "daedalus-zhipu-image-"));
+	try {
+		await run();
+	} finally {
+		if (previousUserProfile === undefined) {
+			delete process.env.USERPROFILE;
+		} else {
+			process.env.USERPROFILE = previousUserProfile;
+		}
+		mock.restoreAll();
 	}
 }
 
@@ -141,5 +175,61 @@ test("Zhipu OpenAI-compatible requests preserve image input, streaming, and mode
 		const models = await fetchOpenAICompatibleModels({ provider: "zhipu", apiKey: "zhipu-test-key", baseUrl });
 		assert.equal(models[0]?.id, "glm-5.2");
 		assert.equal(models[0]?.ownedBy, "zhipu");
+	});
+});
+
+test("Zhipu image generation uses the configured image model and saves a session artifact", async (): Promise<void> => {
+	await withTempAppData(async (): Promise<void> => {
+		await withZhipuMockServer(async (baseUrl: string, requests: RecordedRequest[]): Promise<void> => {
+			mock.method(keytar, "setPassword", async (): Promise<void> => undefined);
+			mock.method(keytar, "getPassword", async (_service: string, account: string): Promise<string | null> => {
+				return account === "provider:zhipu:api_key" ? "zhipu-test-key" : null;
+			});
+
+			await saveProviderConfig({
+				provider: "zhipu",
+				apiKey: "zhipu-test-key",
+				baseUrl,
+				model: "glm-5.2",
+				modelRouting: {
+					imageGeneration: { provider: "zhipu", model: "glm-image" }
+				}
+			});
+
+			const sessionStore = await import("../src/session/session-store.js");
+			const { generateImage } = await import("../src/providers/image-generation.js");
+			const session = await sessionStore.createSession("Zhipu image generation");
+			const result = await generateImage({
+				sessionId: session.id,
+				prompt: "生成一张蓝色机器人图标",
+				aspectRatio: "16:9"
+			});
+
+			const imageRequest = requests.find((request: RecordedRequest): boolean => request.url === "/images/generations");
+			assert.equal(imageRequest?.authorization, "Bearer zhipu-test-key");
+			assert.deepEqual(imageRequest?.body, {
+				model: "glm-image",
+				prompt: "生成一张蓝色机器人图标",
+				size: "1728x960"
+			});
+			assert.equal(result.provider, "zhipu");
+			assert.equal(result.model, "glm-image");
+			assert.equal(result.artifacts.length, 1);
+			assert.equal(result.artifacts[0]?.byteSize, Buffer.byteLength("zhipu-generated-image"));
+		});
+	});
+});
+
+test("Zhipu provider model list includes local image generation models when API omits them", async (): Promise<void> => {
+	await withTempAppData(async (): Promise<void> => {
+		await withZhipuMockServer(async (baseUrl: string): Promise<void> => {
+			const result = await listProviderModels("zhipu", "zhipu-test-key", baseUrl, true);
+
+			assert.equal(result.source, "api");
+			assert.equal(result.models.some((model): boolean => model.id === "glm-5.2"), true);
+			assert.equal(result.models.find((model): boolean => model.id === "glm-image")?.capabilities.imageGeneration, true);
+			assert.equal(result.models.find((model): boolean => model.id === "cogview-4-250304")?.capabilities.imageGeneration, true);
+			assert.equal(result.models.find((model): boolean => model.id === "cogview-3-flash")?.capabilities.imageGeneration, true);
+		});
 	});
 });

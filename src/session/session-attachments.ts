@@ -6,6 +6,7 @@ import { MAX_IMAGE_BYTES, SUPPORTED_IMAGE_MIME_TYPES } from "../protocol/image-a
 import { getSessionDir, openSession } from "./session-store.js";
 
 const ATTACHMENT_ID_PATTERN: RegExp = /^image-[a-zA-Z0-9_-]+$/;
+const GENERATED_IMAGE_ID_PATTERN: RegExp = /^generated-image-[a-zA-Z0-9_-]+$/;
 
 export type SaveImageAttachmentInput = {
 	sessionId: string;
@@ -32,8 +33,39 @@ export type ImageAttachmentMetadata = {
 	fileName: string;
 };
 
+export type GeneratedImageArtifactMetadata = {
+	imageId: string;
+	sessionId: string;
+	mimeType: string;
+	width?: number | undefined;
+	height?: number | undefined;
+	byteSize: number;
+	provider: string;
+	model: string;
+	prompt: string;
+	revisedPrompt?: string | undefined;
+	createdAt: string;
+	fileName: string;
+};
+
+export type SaveGeneratedImageArtifactInput = {
+	sessionId: string;
+	bytes: Buffer;
+	mimeType: string;
+	width?: number | undefined;
+	height?: number | undefined;
+	provider: string;
+	model: string;
+	prompt: string;
+	revisedPrompt?: string | undefined;
+};
+
 function getAttachmentsDir(sessionId: string): string {
 	return join(getSessionDir(sessionId), "attachments");
+}
+
+function getGeneratedImagesDir(sessionId: string): string {
+	return join(getAttachmentsDir(sessionId), "images");
 }
 
 function assertSafeAttachmentId(attachmentId: string): string {
@@ -49,6 +81,31 @@ function attachmentImagePath(sessionId: string, attachmentId: string): string {
 
 function attachmentMetadataPath(sessionId: string, attachmentId: string): string {
 	return join(getAttachmentsDir(sessionId), `${assertSafeAttachmentId(attachmentId)}.json`);
+}
+
+function assertSafeGeneratedImageId(imageId: string): string {
+	if (!GENERATED_IMAGE_ID_PATTERN.test(imageId)) {
+		throw new Error(`Invalid generated image id: ${imageId}`);
+	}
+	return imageId;
+}
+
+function getImageExtension(mimeType: string): string {
+	if (mimeType === "image/jpeg") {
+		return "jpg";
+	}
+	if (mimeType === "image/webp") {
+		return "webp";
+	}
+	return "png";
+}
+
+function generatedImagePath(sessionId: string, imageId: string, mimeType: string): string {
+	return join(getGeneratedImagesDir(sessionId), `${assertSafeGeneratedImageId(imageId)}.${getImageExtension(mimeType)}`);
+}
+
+function generatedImageMetadataPath(sessionId: string, imageId: string): string {
+	return join(getGeneratedImagesDir(sessionId), `${assertSafeGeneratedImageId(imageId)}.json`);
 }
 
 function parseImageDataUrl(mimeType: string, dataUrl: string): Buffer {
@@ -151,6 +208,61 @@ export async function readImageAttachmentDataUrl(sessionId: string, attachmentId
 	const metadata: ImageAttachmentMetadata = JSON.parse(metadataRaw) as ImageAttachmentMetadata;
 	const bytes: Buffer = await readFile(attachmentImagePath(sessionId, attachmentId));
 	return `data:${metadata.mimeType};base64,${bytes.toString("base64")}`;
+}
+
+export async function saveGeneratedImageArtifact(input: SaveGeneratedImageArtifactInput): Promise<GeneratedImageArtifactMetadata> {
+	await openSession(input.sessionId);
+	if (!SUPPORTED_IMAGE_MIME_TYPES.includes(input.mimeType)) {
+		throw new Error("Unsupported generated image mimeType.");
+	}
+	if (input.bytes.byteLength <= 0) {
+		throw new Error("Generated image is empty.");
+	}
+
+	const imageId: string = `generated-image-${randomUUID()}`;
+	const createdAt: string = new Date().toISOString();
+	const fileName: string = `${imageId}.${getImageExtension(input.mimeType)}`;
+	const metadata: GeneratedImageArtifactMetadata = {
+		imageId,
+		sessionId: input.sessionId,
+		mimeType: input.mimeType,
+		byteSize: input.bytes.byteLength,
+		provider: input.provider,
+		model: input.model,
+		prompt: input.prompt,
+		createdAt,
+		fileName
+	};
+	if (input.width !== undefined) {
+		metadata.width = input.width;
+	}
+	if (input.height !== undefined) {
+		metadata.height = input.height;
+	}
+	if (input.revisedPrompt !== undefined && input.revisedPrompt.trim().length > 0) {
+		metadata.revisedPrompt = input.revisedPrompt.trim();
+	}
+
+	await mkdir(getGeneratedImagesDir(input.sessionId), { recursive: true });
+	await writeFile(generatedImagePath(input.sessionId, imageId, input.mimeType), input.bytes);
+	await writeFile(generatedImageMetadataPath(input.sessionId, imageId), JSON.stringify(metadata, null, 2), "utf8");
+	return metadata;
+}
+
+export async function readGeneratedImageDataUrl(sessionId: string, imageId: string): Promise<{ imageId: string; mimeType: string; dataUrl: string; metadata: GeneratedImageArtifactMetadata }> {
+	await openSession(sessionId);
+	const metadataRaw: string = await readFile(generatedImageMetadataPath(sessionId, imageId), "utf8");
+	const metadata: GeneratedImageArtifactMetadata = JSON.parse(metadataRaw) as GeneratedImageArtifactMetadata;
+	if (metadata.sessionId !== sessionId || metadata.imageId !== imageId) {
+		throw new Error("Generated image metadata does not match request.");
+	}
+	const bytes: Buffer = await readFile(generatedImagePath(sessionId, imageId, metadata.mimeType));
+	return {
+		imageId,
+		mimeType: metadata.mimeType,
+		dataUrl: `data:${metadata.mimeType};base64,${bytes.toString("base64")}`,
+		metadata
+	};
 }
 
 export async function hydrateImageAttachmentContexts(sessionId: string | undefined, params: AiChatParams): Promise<AiChatParams> {

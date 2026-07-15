@@ -194,6 +194,7 @@ function createSessionUiMetadata(params: {
 	provider?: ProviderId | undefined;
 	model?: string | undefined;
 	chatMode?: SessionChatMode | undefined;
+	approvalMode?: "manual" | "auto-safe" | undefined;
 } | undefined): Partial<SessionMetadata> {
 	if (params === undefined) {
 		return {};
@@ -209,8 +210,20 @@ function createSessionUiMetadata(params: {
 	if (params.chatMode !== undefined) {
 		metadata.chatMode = params.chatMode;
 	}
+	if (params.approvalMode !== undefined) {
+		metadata.approvalMode = params.approvalMode;
+	}
 
 	return metadata;
+}
+
+async function applySessionApprovalMode(session: ClientSession, metadata?: Pick<SessionMetadata, "approvalMode"> | undefined): Promise<void> {
+	if (metadata?.approvalMode !== undefined) {
+		session.approvalGateway.setMode(metadata.approvalMode);
+		return;
+	}
+
+	session.approvalGateway.setMode(await getApprovalMode());
 }
 
 function createSessionInfoResult(session: ClientSession, mcpHost: McpHost, historyTokensStored: number | null = null): Record<string, unknown> {
@@ -289,7 +302,9 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 		case "session.info":
 			await waitForFullSessionLoad(session);
 			await ensureProviderConfigured(session);
-			session.approvalGateway.setMode(await getApprovalMode());
+			if (session.sessionId === undefined) {
+				await applySessionApprovalMode(session);
+			}
 			await loadHydratedPendingApprovalStates(session);
 			sendJson(socket, {
 				type: "response",
@@ -359,7 +374,7 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 				createSessionUiMetadata(request.params)
 			);
 			applySessionMetadata(session, metadata);
-			session.approvalGateway.setMode(await getApprovalMode());
+			await applySessionApprovalMode(session, metadata);
 			session.messages = [];
 			session.fullSessionLoadPromise = undefined;
 			session.summaryMessage = undefined;
@@ -441,7 +456,7 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 
 				if (!reusingRuntime) {
 					applySessionMetadata(session, timeline.metadata);
-					session.approvalGateway.setMode(await getApprovalMode());
+					await applySessionApprovalMode(session, timeline.metadata);
 					session.messages = timeline.messages.map(toChatMessage);
 					const storedForGuides: Awaited<ReturnType<typeof openSession>> = await openSession(request.params.sessionId);
 					session.pendingGuides = hydratePendingGuides(storedForGuides.events);
@@ -476,7 +491,7 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 					session = bindConnectionToSessionRuntime(socket, timeline.metadata.id, session);
 				}
 				applySessionMetadata(session, timeline.metadata);
-				session.approvalGateway.setMode(await getApprovalMode());
+				await applySessionApprovalMode(session, timeline.metadata);
 				subscribeSocketToSession(socket, timeline.metadata.id);
 
 				sendJson(socket, {
@@ -487,6 +502,7 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 						opened: true,
 						metadata: {
 							...timeline.metadata,
+							approvalMode: timeline.metadata.approvalMode ?? session.approvalGateway.getMode(),
 							activeSkillId: undefined,
 							legacySkillRefs: timeline.metadata.activeSkillId === undefined
 								? []

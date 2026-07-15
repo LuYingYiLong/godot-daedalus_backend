@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test, { mock } from "node:test";
 import keytar from "keytar";
-import { getProviderConfigStatus, getProviderModelSelectionStatus, loadProviderConfigWithSecret, saveProviderConfig } from "../src/providers/provider-config-store.js";
+import { getProviderConfigStatus, getProviderModelSelectionStatus, loadProviderConfigWithSecret, saveProviderConfig, saveProviderModelsCache } from "../src/providers/provider-config-store.js";
 import { resolveProviderTaskModelOptions } from "../src/providers/task-model-routing.js";
 
 async function withTempAppData(run: () => Promise<void>): Promise<void> {
@@ -65,7 +65,8 @@ test("provider config ignores legacy single-provider file and legacy keytar acco
 		assert.deepEqual(status.modelRouting, {
 			imageRecognition: null,
 			workflowPlanner: null,
-			sessionTitle: null
+			sessionTitle: null,
+			imageGeneration: null
 		});
 		assert.equal(requestedAccounts.includes("deepseek_api_key"), false);
 		assert.equal(requestedAccounts.includes("provider:deepseek:api_key"), true);
@@ -169,7 +170,8 @@ test("provider config persists cross-provider task model routing", async (): Pro
 			modelRouting: {
 				imageRecognition: { provider: "moonshot", model: "kimi-k2.6" },
 				workflowPlanner: { provider: "deepseek", model: "deepseek-v4-pro" },
-				sessionTitle: null
+				sessionTitle: null,
+				imageGeneration: { provider: "openai", model: "gpt-image-1" }
 			}
 		});
 
@@ -177,8 +179,50 @@ test("provider config persists cross-provider task model routing", async (): Pro
 		assert.deepEqual(status.modelRouting, {
 			imageRecognition: { provider: "moonshot", model: "kimi-k2.6" },
 			workflowPlanner: { provider: "deepseek", model: "deepseek-v4-pro" },
-			sessionTitle: null
+			sessionTitle: null,
+			imageGeneration: { provider: "openai", model: "gpt-image-1" }
 		});
+	});
+});
+
+test("image generation model routing is explicit and rejects unsupported models", async (): Promise<void> => {
+	await withTempAppData(async (): Promise<void> => {
+		const { generateImage, ImageGenerationError } = await import("../src/providers/image-generation.js");
+		mock.method(keytar, "setPassword", async (): Promise<void> => undefined);
+		mock.method(keytar, "getPassword", async (): Promise<string | null> => "deepseek-key");
+
+		await assert.rejects(
+			(): Promise<unknown> => generateImage({
+				sessionId: "session-test",
+				prompt: "生成一张测试图"
+			}),
+			(error: unknown): boolean => {
+				assert.equal(error instanceof ImageGenerationError, true);
+				assert.equal((error as InstanceType<typeof ImageGenerationError>).code, "image_generation_not_configured");
+				return true;
+			}
+		);
+
+		await saveProviderConfig({
+			provider: "deepseek",
+			apiKey: "deepseek-key",
+			model: "deepseek-v4-flash",
+			modelRouting: {
+				imageGeneration: { provider: "deepseek", model: "deepseek-v4-flash" }
+			}
+		});
+
+		await assert.rejects(
+			(): Promise<unknown> => generateImage({
+				sessionId: "session-test",
+				prompt: "生成一张测试图"
+			}),
+			(error: unknown): boolean => {
+				assert.equal(error instanceof ImageGenerationError, true);
+				assert.equal((error as InstanceType<typeof ImageGenerationError>).code, "image_generation_not_supported");
+				return true;
+			}
+		);
 	});
 });
 
@@ -236,6 +280,35 @@ test("provider model selection exposes current main model and provider model lis
 		assert.equal(zhipu?.selectedModel, "glm-5.2");
 		assert.equal(zhipu?.modelsSource, "fallback");
 		assert.equal(zhipu?.models.some((model): boolean => model.id === "glm-5.2"), true);
+		const zhipuDefaultModel = zhipu?.models.find((model): boolean => model.id === "glm-5.2");
+		assert.equal(zhipuDefaultModel?.capabilities.reasoning, true);
+		assert.equal(zhipuDefaultModel?.capabilities.tools, true);
+		assert.equal(zhipu?.models.find((model): boolean => model.id === "glm-5v-turbo")?.capabilities.vision, true);
+	});
+});
+
+test("provider model selection augments cached models with catalog image generation models", async (): Promise<void> => {
+	await withTempAppData(async (): Promise<void> => {
+		mock.method(keytar, "getPassword", async (_service: string, account: string): Promise<string | null> => {
+			return account === "provider:zhipu:api_key" ? "zhipu-key" : null;
+		});
+		await saveProviderModelsCache("zhipu", [{
+			id: "glm-5.2",
+			displayName: "GLM-5.2",
+			provider: "zhipu",
+			endpointType: "openai-chat-completions",
+			contextWindowTokens: 1_000_000,
+			maxOutputTokens: 128_000,
+			capabilities: {}
+		}]);
+
+		const selection = await getProviderModelSelectionStatus();
+		const zhipu = selection.providers.find((provider): boolean => provider.provider === "zhipu");
+
+		assert.equal(zhipu?.modelsSource, "cache");
+		assert.equal(zhipu?.models.find((model): boolean => model.id === "glm-5.2")?.capabilities.reasoning, true);
+		assert.equal(zhipu?.models.find((model): boolean => model.id === "glm-image")?.capabilities.imageGeneration, true);
+		assert.equal(zhipu?.models.find((model): boolean => model.id === "cogview-4")?.capabilities.imageGeneration, true);
 	});
 });
 

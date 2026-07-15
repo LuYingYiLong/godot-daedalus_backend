@@ -14,7 +14,8 @@ const BUILTIN_SLUGS: Record<SkillId, string> = {
 	"scene.builder": "scene-builder",
 	"file.creator": "file-creator",
 	"backend.helper": "backend-helper",
-	"skill.creator": "skill-creator"
+	"skill.creator": "skill-creator",
+	"image.gen": "image-gen"
 };
 
 export function createSkillRef(source: SkillSource, slug: string): SkillRef {

@@ -258,6 +258,57 @@ test("canonical timeline groups tool progress with its tool call", (): void => {
 	assert.equal(toolPart?.events[1]?.title, "保存场景视图");
 });
 
+test("canonical timeline restores image generation body part from tool events", (): void => {
+	const stored: StoredSession = session(
+		[
+			{ role: "user", requestId: "request-image", content: "生成图片", createdAt: "2026-07-09T00:07:00.000Z" },
+			{ role: "assistant", requestId: "request-image", content: "已生成图片。", createdAt: "2026-07-09T00:07:04.000Z" }
+		],
+		[
+			event("event-call", "request-image", "agent.tool.call", "2026-07-09T00:07:01.000Z", {
+				toolCallId: "image-tool-1",
+				toolName: "mcp_image_generate",
+				args: { prompt: "blue castle" }
+			}),
+			event("event-result", "request-image", "agent.tool.result", "2026-07-09T00:07:03.000Z", {
+				toolCallId: "image-tool-1",
+				toolName: "mcp_image_generate",
+				imageGeneration: {
+					status: "completed",
+					prompt: "blue castle",
+					provider: "openai",
+					model: "gpt-image-1",
+					artifacts: [{
+						imageId: "generated-image-a",
+						sessionId: "session-test",
+						mimeType: "image/png",
+						byteSize: 128,
+						provider: "openai",
+						model: "gpt-image-1",
+						prompt: "blue castle",
+						createdAt: "2026-07-09T00:07:03.000Z",
+						fileName: "generated-image-a.png"
+					}]
+				}
+			}),
+			event("event-delta", "request-image", "agent.message.delta", "2026-07-09T00:07:04.000Z", {
+				text: "已生成图片。"
+			})
+		]
+	);
+
+	const result = buildCanonicalTimelineBlocks(stored);
+	const assistant = assistantBlock(result.blocks[1]);
+	assert.deepEqual(assistant.bodyParts.map((part) => part.type), ["tool", "image_generation", "markdown"]);
+	const imagePart = assistant.bodyParts.find((part) => part.type === "image_generation");
+	assert.equal(imagePart?.type, "image_generation");
+	if (imagePart?.type === "image_generation") {
+		assert.equal(imagePart.status, "completed");
+		assert.equal(imagePart.prompt, "blue castle");
+		assert.equal(imagePart.artifacts?.[0]?.imageId, "generated-image-a");
+	}
+});
+
 test("canonical timeline restores failed transcript-only turn with tool, error and inline diff", (): void => {
 	const fileEditBatch = {
 		batchId: "edit-failed",

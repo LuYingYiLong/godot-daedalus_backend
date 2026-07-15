@@ -134,23 +134,27 @@ test("session store persists frontend session metadata", async (): Promise<void>
 		const metadata = await store.createSession("Configured session", undefined, undefined, undefined, {
 			provider: "moonshot",
 			model: "kimi-k2.7-code",
-			chatMode: "ask"
+			chatMode: "ask",
+			approvalMode: "manual"
 		});
 
 		assert.equal(metadata.provider, "moonshot");
 		assert.equal(metadata.model, "kimi-k2.7-code");
 		assert.equal(metadata.chatMode, "ask");
+		assert.equal(metadata.approvalMode, "manual");
 
 		await store.saveSession(metadata.id, [], {
 			provider: "deepseek",
 			model: "deepseek-v4-pro",
-			chatMode: "plan"
+			chatMode: "plan",
+			approvalMode: "auto-safe"
 		});
 
 		const opened = await store.openSession(metadata.id);
 		assert.equal(opened.metadata.provider, "deepseek");
 		assert.equal(opened.metadata.model, "deepseek-v4-pro");
 		assert.equal(opened.metadata.chatMode, "plan");
+		assert.equal(opened.metadata.approvalMode, "auto-safe");
 	});
 });
 

@@ -380,6 +380,7 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 				resultChars: result.content.length,
 				truncated: false,
 				cached: result.cached === true,
+				imageGeneration: result.imageGeneration,
 				...approvedToolObservation.parsedResult,
 				...(fileEditBatch === undefined ? {} : { fileEditBatch })
 			}, resultPersistRequestId);
@@ -423,7 +424,7 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 					pendingContinuation.allowedToolNames,
 					onToolEvent,
 					abortController.signal,
-					{ workspaceId: pending.workspaceId ?? session.activeWorkspace?.id, editorInstanceId: pending.editorInstanceId ?? session.editorInstanceId }
+					{ workspaceId: pending.workspaceId ?? session.activeWorkspace?.id, editorInstanceId: pending.editorInstanceId ?? session.editorInstanceId, sessionId: pending.sessionId ?? session.sessionId }
 				)
 				: await continueProviderAgent(
 					continuationParams,
@@ -438,7 +439,7 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 					pendingContinuation.allowedToolNames,
 					onToolEvent,
 					abortController.signal,
-					{ workspaceId: pending.workspaceId ?? session.activeWorkspace?.id, editorInstanceId: pending.editorInstanceId ?? session.editorInstanceId }
+					{ workspaceId: pending.workspaceId ?? session.activeWorkspace?.id, editorInstanceId: pending.editorInstanceId ?? session.editorInstanceId, sessionId: pending.sessionId ?? session.sessionId }
 				);
 
 			if (continuationWorkflowState !== undefined) {

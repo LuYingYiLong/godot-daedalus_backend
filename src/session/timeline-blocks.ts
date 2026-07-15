@@ -90,6 +90,17 @@ export type TimelineInlineDiffPart = {
 	editedFiles: Record<string, unknown>[];
 };
 
+export type TimelineImageGenerationPart = {
+	type: "image_generation";
+	status: "running" | "completed" | "failed";
+	prompt: string;
+	toolCallId?: string | undefined;
+	artifacts?: Record<string, unknown>[] | undefined;
+	provider?: string | undefined;
+	model?: string | undefined;
+	error?: string | undefined;
+};
+
 export type TimelineBodyPart =
 	| TimelineMarkdownPart
 	| TimelineThinkingPart
@@ -97,7 +108,8 @@ export type TimelineBodyPart =
 	| TimelineSummaryStartPart
 	| TimelineStatusPart
 	| TimelinePlanPart
-	| TimelineInlineDiffPart;
+	| TimelineInlineDiffPart
+	| TimelineImageGenerationPart;
 
 export type TimelineBuildResult = {
 	blocks: TimelineBlock[];
@@ -283,6 +295,79 @@ function appendToolPart(parts: TimelineBodyPart[], eventData: Record<string, unk
 		tool_call_id: toolCallKey,
 		events: [cloneRecord(eventData)]
 	});
+}
+
+function extractImageGenerationPrompt(eventData: Record<string, unknown>): string {
+	const args: unknown = eventData.args;
+	if (isRecord(args)) {
+		return asString(args.prompt);
+	}
+	const imageGeneration: unknown = eventData.imageGeneration;
+	if (isRecord(imageGeneration)) {
+		return asString(imageGeneration.prompt);
+	}
+	return "";
+}
+
+function appendImageGenerationPart(parts: TimelineBodyPart[], eventData: Record<string, unknown>, requestId: string): void {
+	if (asString(eventData.toolName) !== "mcp_image_generate") {
+		return;
+	}
+
+	const toolCallId: string = getToolCallKey(eventData, requestId);
+	const eventType: string = asString(eventData.type);
+	let nextPart: TimelineImageGenerationPart | null = null;
+
+	if (eventType === "tool.call" || eventType === "agent.tool.call") {
+		nextPart = {
+			type: "image_generation",
+			status: "running",
+			toolCallId,
+			prompt: extractImageGenerationPrompt(eventData)
+		};
+	} else if (eventType === "tool.result" || eventType === "agent.tool.result") {
+		const imageGeneration: unknown = eventData.imageGeneration;
+		if (!isRecord(imageGeneration)) {
+			return;
+		}
+		const artifactsValue: unknown = imageGeneration.artifacts;
+		nextPart = {
+			type: "image_generation",
+			status: "completed",
+			toolCallId,
+			prompt: asString(imageGeneration.prompt) || extractImageGenerationPrompt(eventData),
+			provider: asString(imageGeneration.provider),
+			model: asString(imageGeneration.model),
+			artifacts: Array.isArray(artifactsValue)
+				? artifactsValue.filter(isRecord).map(cloneRecord)
+				: []
+		};
+	} else if (eventType === "tool.error" || eventType === "agent.tool.error") {
+		nextPart = {
+			type: "image_generation",
+			status: "failed",
+			toolCallId,
+			prompt: extractImageGenerationPrompt(eventData),
+			error: asString(eventData.message)
+		};
+	}
+
+	if (nextPart === null) {
+		return;
+	}
+
+	for (let index: number = parts.length - 1; index >= 0; index -= 1) {
+		const part: TimelineBodyPart = parts[index]!;
+		if (part.type === "image_generation" && part.toolCallId === toolCallId) {
+			if (nextPart.prompt.length === 0) {
+				nextPart.prompt = part.prompt;
+			}
+			parts[index] = nextPart;
+			return;
+		}
+	}
+
+	parts.push(nextPart);
 }
 
 function appendSummaryStartPart(parts: TimelineBodyPart[], eventData: Record<string, unknown>): void {
@@ -505,6 +590,7 @@ function buildAssistantBodyParts(
 		} else if (event.event.startsWith("tool.") || event.event.startsWith("agent.tool.")) {
 			const normalizedToolEvent: Record<string, unknown> = normalizeToolEventData(event.event, eventData, event.id);
 			appendToolPart(parts, normalizedToolEvent, requestId);
+			appendImageGenerationPart(parts, normalizedToolEvent, requestId);
 			appendFileEditBatch(fileEditBatches, normalizedToolEvent);
 		} else if (event.event === "agent.summary.started") {
 			appendSummaryStartPart(parts, eventData);
@@ -674,7 +760,7 @@ function createRenderHints(block: TimelineBlock): TimelineRenderHints {
 		}
 		if (part.type === "tool") {
 			heavyPartCount += Math.max(1, part.events.length);
-		} else if (part.type === "thinking" || part.type === "inline_diff" || part.type === "plan") {
+		} else if (part.type === "thinking" || part.type === "inline_diff" || part.type === "plan" || part.type === "image_generation") {
 			heavyPartCount += 1;
 		}
 	}

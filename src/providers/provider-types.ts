@@ -13,6 +13,10 @@ export type ProviderModelCapabilities = {
 	imageInput?: boolean | undefined;
 	videoInput?: boolean | undefined;
 	reasoning?: boolean | undefined;
+	tools?: boolean | undefined;
+	webSearch?: boolean | undefined;
+	vision?: boolean | undefined;
+	imageGeneration?: boolean | undefined;
 };
 
 export type ProviderModelInfo = {
@@ -72,3 +76,25 @@ export type ProviderRuntimeConfig = {
 	apiKey: string;
 	modelProfile: ModelProfile;
 };
+
+function copyBooleanCapability(target: ProviderModelCapabilities, source: ProviderModelCapabilities, key: keyof ProviderModelCapabilities): void {
+	const value: boolean | undefined = source[key];
+	if (value !== undefined) {
+		target[key] = value;
+	}
+}
+
+export function normalizeProviderModelCapabilities(capabilities: ProviderModelCapabilities | undefined): ProviderModelCapabilities {
+	const source: ProviderModelCapabilities = capabilities ?? {};
+	const normalized: ProviderModelCapabilities = {};
+
+	copyBooleanCapability(normalized, source, "imageInput");
+	copyBooleanCapability(normalized, source, "videoInput");
+	copyBooleanCapability(normalized, source, "reasoning");
+	copyBooleanCapability(normalized, source, "tools");
+	copyBooleanCapability(normalized, source, "webSearch");
+	copyBooleanCapability(normalized, source, "imageGeneration");
+	normalized.vision = source.vision ?? (source.imageInput === true || source.videoInput === true);
+
+	return normalized;
+}

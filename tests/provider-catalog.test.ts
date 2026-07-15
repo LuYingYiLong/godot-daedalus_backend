@@ -9,6 +9,7 @@ import {
 	getProviderIds,
 	isProviderId
 } from "../src/providers/provider-registry.js";
+import { listProviderModels } from "../src/providers/provider-models.js";
 
 test("provider catalog exposes valid built-in providers and model references", (): void => {
 	const providerIds: string[] = getProviderIds();
@@ -36,6 +37,26 @@ test("provider catalog exposes valid built-in providers and model references", (
 	assert.equal(getProviderAdapterFamily("zhipu"), "openai-compatible");
 	const zhipuModels = getProviderFallbackModels("zhipu");
 	assert.equal(zhipuModels.find((model) => model.id === "glm-5v-turbo")?.capabilities.imageInput, true);
+	assert.equal(zhipuModels.find((model) => model.id === "glm-5v-turbo")?.capabilities.vision, true);
+	assert.equal(zhipuModels.find((model) => model.id === "glm-5.2")?.capabilities.reasoning, true);
+	assert.equal(zhipuModels.find((model) => model.id === "glm-5.2")?.capabilities.tools, true);
 	assert.equal(zhipuModels.find((model) => model.id === "glm-5.2")?.contextWindowTokens, 1_000_000);
+	const openaiModels = getProviderFallbackModels("openai");
+	assert.equal(openaiModels.find((model) => model.id === "gpt-5.5")?.capabilities.webSearch, true);
+	assert.equal(openaiModels.find((model) => model.id === "gpt-5.5")?.capabilities.vision, true);
 	assert.equal(getCatalogModels().length >= providerIds.length, true);
+});
+
+test("provider model list fallback returns normalized capabilities", async (): Promise<void> => {
+	const result = await listProviderModels("openai", undefined, undefined);
+	const model = result.models.find((item) => item.id === "gpt-5.5");
+	const zhipuResult = await listProviderModels("zhipu", undefined, undefined);
+
+	assert.equal(result.source, "fallback");
+	assert.equal(model?.capabilities.reasoning, true);
+	assert.equal(model?.capabilities.tools, true);
+	assert.equal(model?.capabilities.webSearch, true);
+	assert.equal(model?.capabilities.vision, true);
+	assert.equal(zhipuResult.models.find((item) => item.id === "glm-image")?.capabilities.imageGeneration, true);
+	assert.equal(zhipuResult.models.find((item) => item.id === "cogview-4")?.capabilities.imageGeneration, true);
 });

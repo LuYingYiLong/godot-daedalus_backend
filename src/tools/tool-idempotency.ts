@@ -8,6 +8,7 @@ import { resolveToolMapping } from "./tool-mapping.js";
 import { getToolPolicy } from "./tool-policy.js";
 import { captureFileEditBatchDraft, type FileEditBatchDraft } from "./file-edit-snapshots.js";
 import { logger } from "../logger.js";
+import type { ImageGenerationResult } from "../providers/image-generation.js";
 
 const TOOL_EXECUTION_DEDUP_TTL_MS: number = 30 * 60 * 1000;
 const MAX_COMPLETED_TOOL_EXECUTIONS: number = 500;
@@ -37,6 +38,7 @@ export type IdempotentToolExecutionResult = {
 	reused: boolean;
 	fingerprint?: string | undefined;
 	fileEditDraft?: FileEditBatchDraft | undefined;
+	imageGeneration?: ImageGenerationResult | undefined;
 };
 
 type ToolExecutionIdentity = {
@@ -320,13 +322,42 @@ async function executeMappedTool(
 	};
 }
 
+async function executeImageGenerationTool(args: Record<string, unknown>, sessionId?: string | undefined): Promise<IdempotentToolExecutionResult> {
+	if (sessionId === undefined || sessionId.length === 0) {
+		throw new Error("Image generation requires an active session.");
+	}
+	const { generateImage, parseImageGenerationToolArgs } = await import("../providers/image-generation.js");
+	const imageGeneration: ImageGenerationResult = await generateImage(parseImageGenerationToolArgs(args, sessionId));
+	const content: string = JSON.stringify({
+		ok: true,
+		type: "image_generation",
+		status: imageGeneration.status,
+		provider: imageGeneration.provider,
+		model: imageGeneration.model,
+		prompt: imageGeneration.prompt,
+		artifacts: imageGeneration.artifacts
+	});
+	return {
+		content: trimToolResult(content),
+		rawContentLength: content.length,
+		truncated: content.length > MAX_TOOL_RESULT_CHARS,
+		reused: false,
+		imageGeneration
+	};
+}
+
 export async function executeLlmToolWithIdempotency(
 	mcpHost: McpHost,
 	llmToolName: string,
 	args: Record<string, unknown>,
 	workspaceId?: string | undefined,
-	editorInstanceId?: string | undefined
+	editorInstanceId?: string | undefined,
+	sessionId?: string | undefined
 ): Promise<IdempotentToolExecutionResult> {
+	if (llmToolName === "mcp_image_generate") {
+		return executeImageGenerationTool(args, sessionId);
+	}
+
 	const identity: ToolExecutionIdentity | undefined = getLlmToolExecutionIdentity(llmToolName, args, getMcpExecutionScope(mcpHost, workspaceId), workspaceId);
 	if (identity === undefined) {
 		const mapping = resolveToolMapping(llmToolName, workspaceId);

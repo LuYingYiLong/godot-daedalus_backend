@@ -13,7 +13,7 @@ import { normalizeConfiguredProviderBaseUrl } from "./provider-base-url.js";
 import type { ProviderId } from "../protocol/types.js";
 import { resolveModelProfile } from "../tokens/model-profiles.js";
 
-export type ProviderTaskModelKind = "imageRecognition" | "workflowPlanner" | "sessionTitle";
+export type ProviderTaskModelKind = "imageRecognition" | "workflowPlanner" | "sessionTitle" | "imageGeneration";
 
 export type ResolvedProviderTaskModel = {
 	kind: ProviderTaskModelKind;
@@ -56,6 +56,46 @@ export async function resolveProviderTaskModelOptions(
 	const configuredRef: ProviderTaskModelRef | null = routing[kind];
 	if (configuredRef === null) {
 		return resolveCurrentModelOptions(kind, currentOptions);
+	}
+
+	const config = await loadProviderConfigWithSecret(configuredRef.provider);
+	if (config === null || config.apiKey === undefined) {
+		throw new ProviderTaskModelError(
+			"task_model_api_key_missing",
+			`Provider ${configuredRef.provider} API key is not configured for ${kind}.`
+		);
+	}
+
+	const options: ProviderChatOptions = {
+		provider: configuredRef.provider,
+		apiKey: config.apiKey,
+		model: configuredRef.model,
+		endpointType: getProviderDefaultEndpointType(configuredRef.provider),
+		adapterFamily: getProviderAdapterFamily(configuredRef.provider),
+		modelProfile: resolveModelProfile(configuredRef.provider, configuredRef.model)
+	};
+	const normalizedBaseUrl: string | undefined = normalizeConfiguredProviderBaseUrl(config.baseUrl);
+	if (normalizedBaseUrl !== undefined) {
+		options.baseUrl = normalizedBaseUrl;
+	}
+
+	return {
+		kind,
+		source: "configured",
+		provider: configuredRef.provider,
+		model: configuredRef.model,
+		options
+	};
+}
+
+export async function resolveConfiguredProviderTaskModelOptions(kind: ProviderTaskModelKind): Promise<ResolvedProviderTaskModel> {
+	const routing: ProviderModelRouting = await getProviderModelRouting();
+	const configuredRef: ProviderTaskModelRef | null = routing[kind];
+	if (configuredRef === null) {
+		throw new ProviderTaskModelError(
+			"task_model_not_configured",
+			`No provider model is configured for ${kind}.`
+		);
 	}
 
 	const config = await loadProviderConfigWithSecret(configuredRef.provider);

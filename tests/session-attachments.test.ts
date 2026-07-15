@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -120,6 +120,46 @@ test("timeline result hydrates session-backed image thumbnails without persistin
 		const additionalContext = userBlock?.additionalContext as Array<Record<string, unknown>>;
 		const imageData = additionalContext[0]?.data as Record<string, unknown>;
 		assert.equal(imageData.thumbnailDataUrl, "data:image/png;base64,aGVsbG8=");
+	});
+});
+
+test("generated image artifacts are saved under the session and read through dataUrl", async (): Promise<void> => {
+	await withTempAppData(async (): Promise<void> => {
+		const sessionStore = await import("../src/session/session-store.js");
+		const attachments = await import("../src/session/session-attachments.js");
+		const metadata = await sessionStore.createSession("Generated image test");
+		const bytes: Buffer = Buffer.from("generated-image-bytes", "utf8");
+
+		const artifact = await attachments.saveGeneratedImageArtifact({
+			sessionId: metadata.id,
+			bytes,
+			mimeType: "image/png",
+			provider: "openai",
+			model: "gpt-image-1",
+			prompt: "生成一张蓝色机器人图标",
+			revisedPrompt: "A blue robot app icon"
+		});
+
+		assert.match(artifact.imageId, /^generated-image-/);
+		assert.equal(artifact.sessionId, metadata.id);
+		assert.equal(artifact.byteSize, bytes.byteLength);
+		assert.equal(artifact.provider, "openai");
+		assert.equal(artifact.model, "gpt-image-1");
+
+		const imagesDir: string = join(sessionStore.getSessionDir(metadata.id), "attachments", "images");
+		const files: string[] = await readdir(imagesDir);
+		assert.equal(files.includes(`${artifact.imageId}.png`), true);
+		assert.equal(files.includes(`${artifact.imageId}.json`), true);
+
+		const rawMetadata: string = await readFile(join(imagesDir, `${artifact.imageId}.json`), "utf8");
+		assert.equal(rawMetadata.includes(bytes.toString("base64")), false);
+		assert.equal(rawMetadata.includes("A blue robot app icon"), true);
+
+		const hydrated = await attachments.readGeneratedImageDataUrl(metadata.id, artifact.imageId);
+		assert.equal(hydrated.imageId, artifact.imageId);
+		assert.equal(hydrated.mimeType, "image/png");
+		assert.equal(hydrated.dataUrl, `data:image/png;base64,${bytes.toString("base64")}`);
+		assert.equal(hydrated.metadata.prompt, "生成一张蓝色机器人图标");
 	});
 });
 

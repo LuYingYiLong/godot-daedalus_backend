@@ -109,7 +109,8 @@ export async function handleToolRequest(socket: WebSocket, request: ClientReques
 				toolCallId,
 				decision.reason,
 				session.activeWorkspace?.id,
-				session.editorInstanceId
+				session.editorInstanceId,
+				session.sessionId
 			);
 			logger.info("external_mcp", "tool_approval_required", {
 				approvalId: pending.approvalId,
@@ -139,7 +140,8 @@ export async function handleToolRequest(socket: WebSocket, request: ClientReques
 				toolName,
 				args,
 				session.activeWorkspace?.id,
-				session.editorInstanceId
+				session.editorInstanceId,
+				session.sessionId
 			);
 			sendJson(socket, {
 				type: "response",

@@ -3,8 +3,10 @@ import {
 	getProviderDefinition,
 	getProviderFallbackModels,
 	getProviderDefaultEndpointType,
+	mergeProviderModelsWithCatalog,
 	type ProviderModelCapabilities,
-	type ProviderModelInfo
+	type ProviderModelInfo,
+	normalizeProviderModelCapabilities
 } from "./provider-registry.js";
 import { getProviderModelsCache, saveProviderModelsCache, type StoredProviderModelsCache } from "./provider-config-store.js";
 import { resolveProviderBaseUrl } from "./provider-base-url.js";
@@ -48,15 +50,29 @@ function inferMaxOutputTokens(provider: ProviderId, modelId: string, contextWind
 }
 
 function normalizeCapabilities(raw: Record<string, unknown>, fallback: ProviderModelInfo | undefined): ProviderModelCapabilities {
-	return {
+	const capabilities: ProviderModelCapabilities = {
 		imageInput: typeof raw.supports_image_in === "boolean"
 			? raw.supports_image_in
 			: typeof raw.input_modalities === "object" && Array.isArray(raw.input_modalities)
 				? raw.input_modalities.includes("image")
 				: fallback?.capabilities.imageInput,
 		videoInput: typeof raw.supports_video_in === "boolean" ? raw.supports_video_in : fallback?.capabilities.videoInput,
-		reasoning: typeof raw.supports_reasoning === "boolean" ? raw.supports_reasoning : fallback?.capabilities.reasoning
+		reasoning: typeof raw.supports_reasoning === "boolean" ? raw.supports_reasoning : fallback?.capabilities.reasoning,
+		tools: typeof raw.supports_tools === "boolean"
+			? raw.supports_tools
+			: typeof raw.supports_tool_calling === "boolean"
+				? raw.supports_tool_calling
+				: fallback?.capabilities.tools,
+		webSearch: typeof raw.supports_web_search === "boolean" ? raw.supports_web_search : fallback?.capabilities.webSearch,
+		imageGeneration: typeof raw.supports_image_generation === "boolean"
+			? raw.supports_image_generation
+			: typeof raw.image_generation === "boolean"
+				? raw.image_generation
+				: fallback?.capabilities.imageGeneration,
+		vision: fallback?.capabilities.vision
 	};
+
+	return normalizeProviderModelCapabilities(capabilities);
 }
 
 function parseApiModels(provider: ProviderId, value: unknown): ProviderModelInfo[] {
@@ -135,7 +151,7 @@ export async function listProviderModels(
 	const options: ProviderChatOptions = { provider, apiKey: apiKey ?? "", baseUrl };
 	if (apiKey !== undefined && refresh) {
 		try {
-			const models: ProviderModelInfo[] = await resolveProviderAdapter(options).listModels(options, refresh);
+			const models: ProviderModelInfo[] = mergeProviderModelsWithCatalog(provider, await resolveProviderAdapter(options).listModels(options, refresh));
 			await saveProviderModelsCache(provider, models);
 			return { provider, models, stale: false, source: "api" };
 		} catch (error: unknown) {
@@ -143,7 +159,7 @@ export async function listProviderModels(
 			if (cache !== undefined) {
 				return {
 					provider,
-					models: cache.models,
+					models: mergeProviderModelsWithCatalog(provider, cache.models),
 					stale: true,
 					source: "cache",
 					error: error instanceof Error ? error.message : "Failed to fetch provider models"
@@ -162,12 +178,12 @@ export async function listProviderModels(
 
 	const cache: StoredProviderModelsCache | undefined = await getProviderModelsCache(provider);
 	if (cache !== undefined) {
-		return { provider, models: cache.models, stale: true, source: "cache" };
+		return { provider, models: mergeProviderModelsWithCatalog(provider, cache.models), stale: true, source: "cache" };
 	}
 
 	if (apiKey !== undefined) {
 		try {
-			const models: ProviderModelInfo[] = await resolveProviderAdapter(options).listModels(options);
+			const models: ProviderModelInfo[] = mergeProviderModelsWithCatalog(provider, await resolveProviderAdapter(options).listModels(options));
 			await saveProviderModelsCache(provider, models);
 			return { provider, models, stale: false, source: "api" };
 		} catch (error: unknown) {

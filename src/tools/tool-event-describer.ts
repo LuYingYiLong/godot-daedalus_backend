@@ -9,6 +9,7 @@ export type ToolEventCategory =
 	| "approval"
 	| "propose"
 	| "docs"
+	| "image"
 	| "unknown";
 
 export type ToolEventTarget = {
@@ -71,6 +72,14 @@ export function describeToolEvent(toolName: string, args: Record<string, unknown
 			return createDisplay("skills", "Skills", "propose", "预览 Skill", `校验 ${label}`, { kind: "unknown", label });
 		}
 		return createDisplay("skills", "Skills", "write", "创建 Skill", `创建 ${label}`, { kind: "unknown", label });
+	}
+	if (toolName === "mcp_image_generate") {
+		const prompt: string = getStringArg(args, "prompt") ?? "image";
+		const count: string = String(args.count ?? 1);
+		return createDisplay("image", "Image Generation", "image", "生成图片", `生成 ${count} 张图片：${prompt.slice(0, 80)}`, {
+			kind: "unknown",
+			label: "generated image"
+		});
 	}
 	if (isDynamicMcpToolName(toolName)) {
 		const metadata = getDynamicMcpToolMetadata(toolName, workspaceId);

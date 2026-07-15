@@ -14,7 +14,8 @@ export const skillIdSchema = z.enum([
 	"scene.builder",
 	"file.creator",
 	"backend.helper",
-	"skill.creator"
+	"skill.creator",
+	"image.gen"
 ]);
 
 export const skillRefSchema = z.string()
@@ -45,13 +46,15 @@ const providerTaskModelRefSchema = z.object({
 const providerModelRoutingSchema = z.object({
 	imageRecognition: providerTaskModelRefSchema.nullable().optional(),
 	workflowPlanner: providerTaskModelRefSchema.nullable().optional(),
-	sessionTitle: providerTaskModelRefSchema.nullable().optional()
+	sessionTitle: providerTaskModelRefSchema.nullable().optional(),
+	imageGeneration: providerTaskModelRefSchema.nullable().optional()
 });
 
 const sessionUiMetadataParamsSchema = z.object({
 	provider: providerIdSchema.optional(),
 	model: z.string().min(1).optional(),
-	chatMode: z.enum(["agent", "ask", "plan"]).optional()
+	chatMode: z.enum(["agent", "ask", "plan"]).optional(),
+	approvalMode: z.enum(["manual", "auto-safe"]).optional()
 }).strict();
 
 export const additionalContextItemSchema = z.object({
@@ -762,6 +765,15 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 			width: z.number().int().positive().optional(),
 			height: z.number().int().positive().optional(),
 			title: z.string().min(1).max(200).optional(),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("attachment.image.generated.get"),
+		params: z.object({
+			sessionId: z.string().min(1),
+			imageId: z.string().min(1).max(160),
 		}),
 	}),
 	z.object({

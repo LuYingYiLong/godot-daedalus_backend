@@ -6,7 +6,10 @@
     "endpointType": "openai-chat-completions",
     "contextWindowTokens": 1000000,
     "maxOutputTokens": 384000,
-    "capabilities": { "reasoning": true },
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
     "ownedBy": "deepseek"
   },
   {
@@ -16,7 +19,10 @@
     "endpointType": "openai-chat-completions",
     "contextWindowTokens": 1000000,
     "maxOutputTokens": 384000,
-    "capabilities": { "reasoning": true },
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
     "ownedBy": "deepseek"
   },
   {
@@ -26,7 +32,9 @@
     "endpointType": "openai-chat-completions",
     "contextWindowTokens": 256000,
     "maxOutputTokens": 32000,
-    "capabilities": { "reasoning": true },
+    "capabilities": {
+      "reasoning": true
+    },
     "ownedBy": "moonshot"
   },
   {
@@ -36,7 +44,9 @@
     "endpointType": "openai-chat-completions",
     "contextWindowTokens": 256000,
     "maxOutputTokens": 32000,
-    "capabilities": { "reasoning": true },
+    "capabilities": {
+      "reasoning": true
+    },
     "ownedBy": "moonshot"
   },
   {
@@ -46,7 +56,12 @@
     "endpointType": "openai-chat-completions",
     "contextWindowTokens": 256000,
     "maxOutputTokens": 32000,
-    "capabilities": { "imageInput": true, "videoInput": true, "reasoning": true },
+    "capabilities": {
+      "imageInput": true,
+      "videoInput": true,
+      "reasoning": true,
+      "vision": true
+    },
     "ownedBy": "moonshot"
   },
   {
@@ -56,7 +71,9 @@
     "endpointType": "openai-chat-completions",
     "contextWindowTokens": 256000,
     "maxOutputTokens": 32000,
-    "capabilities": { "reasoning": true },
+    "capabilities": {
+      "reasoning": true
+    },
     "ownedBy": "moonshot"
   },
   {
@@ -106,7 +123,10 @@
     "endpointType": "openai-chat-completions",
     "contextWindowTokens": 8192,
     "maxOutputTokens": 4096,
-    "capabilities": { "imageInput": true },
+    "capabilities": {
+      "imageInput": true,
+      "vision": true
+    },
     "ownedBy": "moonshot"
   },
   {
@@ -116,7 +136,10 @@
     "endpointType": "openai-chat-completions",
     "contextWindowTokens": 32768,
     "maxOutputTokens": 8192,
-    "capabilities": { "imageInput": true },
+    "capabilities": {
+      "imageInput": true,
+      "vision": true
+    },
     "ownedBy": "moonshot"
   },
   {
@@ -126,7 +149,10 @@
     "endpointType": "openai-chat-completions",
     "contextWindowTokens": 131072,
     "maxOutputTokens": 8192,
-    "capabilities": { "imageInput": true },
+    "capabilities": {
+      "imageInput": true,
+      "vision": true
+    },
     "ownedBy": "moonshot"
   },
   {
@@ -136,7 +162,25 @@
     "endpointType": "openai-responses",
     "contextWindowTokens": 400000,
     "maxOutputTokens": 128000,
-    "capabilities": { "imageInput": true, "reasoning": true },
+    "capabilities": {
+      "imageInput": true,
+      "reasoning": true,
+      "tools": true,
+      "webSearch": true,
+      "vision": true
+    },
+    "ownedBy": "openai"
+  },
+  {
+    "id": "gpt-image-1",
+    "displayName": "GPT Image 1",
+    "provider": "openai",
+    "endpointType": "openai-responses",
+    "contextWindowTokens": 32000,
+    "maxOutputTokens": 4096,
+    "capabilities": {
+      "imageGeneration": true
+    },
     "ownedBy": "openai"
   },
   {
@@ -146,7 +190,58 @@
     "endpointType": "openai-chat-completions",
     "contextWindowTokens": 1000000,
     "maxOutputTokens": 128000,
-    "capabilities": { "reasoning": true },
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
+    "ownedBy": "zhipu"
+  },
+  {
+    "id": "glm-image",
+    "displayName": "GLM-Image",
+    "provider": "zhipu",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 1000,
+    "maxOutputTokens": 1,
+    "capabilities": {
+      "imageGeneration": true
+    },
+    "ownedBy": "zhipu"
+  },
+  {
+    "id": "cogview-4-250304",
+    "displayName": "CogView-4 250304",
+    "provider": "zhipu",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 1000,
+    "maxOutputTokens": 1,
+    "capabilities": {
+      "imageGeneration": true
+    },
+    "ownedBy": "zhipu"
+  },
+  {
+    "id": "cogview-4",
+    "displayName": "CogView-4",
+    "provider": "zhipu",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 1000,
+    "maxOutputTokens": 1,
+    "capabilities": {
+      "imageGeneration": true
+    },
+    "ownedBy": "zhipu"
+  },
+  {
+    "id": "cogview-3-flash",
+    "displayName": "CogView-3 Flash",
+    "provider": "zhipu",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 1000,
+    "maxOutputTokens": 1,
+    "capabilities": {
+      "imageGeneration": true
+    },
     "ownedBy": "zhipu"
   },
   {
@@ -156,7 +251,10 @@
     "endpointType": "openai-chat-completions",
     "contextWindowTokens": 200000,
     "maxOutputTokens": 128000,
-    "capabilities": { "reasoning": true },
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
     "ownedBy": "zhipu"
   },
   {
@@ -166,7 +264,10 @@
     "endpointType": "openai-chat-completions",
     "contextWindowTokens": 200000,
     "maxOutputTokens": 128000,
-    "capabilities": { "reasoning": true },
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
     "ownedBy": "zhipu"
   },
   {
@@ -176,7 +277,10 @@
     "endpointType": "openai-chat-completions",
     "contextWindowTokens": 200000,
     "maxOutputTokens": 128000,
-    "capabilities": { "reasoning": true },
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
     "ownedBy": "zhipu"
   },
   {
@@ -186,7 +290,10 @@
     "endpointType": "openai-chat-completions",
     "contextWindowTokens": 200000,
     "maxOutputTokens": 128000,
-    "capabilities": { "reasoning": true },
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
     "ownedBy": "zhipu"
   },
   {
@@ -196,7 +303,10 @@
     "endpointType": "openai-chat-completions",
     "contextWindowTokens": 200000,
     "maxOutputTokens": 128000,
-    "capabilities": { "reasoning": true },
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
     "ownedBy": "zhipu"
   },
   {
@@ -206,7 +316,10 @@
     "endpointType": "openai-chat-completions",
     "contextWindowTokens": 200000,
     "maxOutputTokens": 128000,
-    "capabilities": { "reasoning": true },
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
     "ownedBy": "zhipu"
   },
   {
@@ -216,7 +329,12 @@
     "endpointType": "openai-chat-completions",
     "contextWindowTokens": 200000,
     "maxOutputTokens": 128000,
-    "capabilities": { "imageInput": true, "reasoning": true },
+    "capabilities": {
+      "imageInput": true,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
     "ownedBy": "zhipu"
   },
   {
@@ -226,7 +344,12 @@
     "endpointType": "openai-chat-completions",
     "contextWindowTokens": 128000,
     "maxOutputTokens": 32000,
-    "capabilities": { "imageInput": true, "reasoning": true },
+    "capabilities": {
+      "imageInput": true,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
     "ownedBy": "zhipu"
   },
   {
@@ -236,7 +359,12 @@
     "endpointType": "openai-chat-completions",
     "contextWindowTokens": 128000,
     "maxOutputTokens": 32000,
-    "capabilities": { "imageInput": true, "reasoning": true },
+    "capabilities": {
+      "imageInput": true,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
     "ownedBy": "zhipu"
   },
   {
@@ -246,7 +374,12 @@
     "endpointType": "openai-chat-completions",
     "contextWindowTokens": 64000,
     "maxOutputTokens": 16000,
-    "capabilities": { "imageInput": true, "reasoning": true },
+    "capabilities": {
+      "imageInput": true,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
     "ownedBy": "zhipu"
   }
 ]

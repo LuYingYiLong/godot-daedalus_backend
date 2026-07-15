@@ -9,6 +9,7 @@ export const BUILTIN_TOOL_MAPPINGS: Record<string, ToolMapping> = {
 	"mcp_skills_load": { serverId: "skills", toolName: "load" },
 	"mcp_skills_propose_create": { serverId: "skills", toolName: "propose_create" },
 	"mcp_skills_create": { serverId: "skills", toolName: "create" },
+	"mcp_image_generate": { serverId: "image", toolName: "generate" },
 	"mcp_godot_get_runtime_status": {
 		serverId: "godot",
 		toolName: "get_runtime_status"

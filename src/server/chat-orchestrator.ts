@@ -176,7 +176,10 @@ import { logger } from "../logger.js";
 import { createInitialPlan } from "./plan-mode.js";
 import { createPlanGetResult, type StoredPlan } from "./plan-store.js";
 import { getUserPrompt } from "../user-prompt-store.js";
-import { getApprovalMode } from "../approval-settings-store.js";
+
+function isImageGenerationOnlyToolRestriction(toolNames: readonly string[] | undefined): boolean {
+	return toolNames !== undefined && toolNames.length === 1 && toolNames[0] === "mcp_image_generate";
+}
 
 function createSessionInfoResult(session: ClientSession, mcpHost: McpHost, historyTokensStored: number | null = null): Record<string, unknown> {
 	return {
@@ -378,7 +381,12 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 					? { id: session.activeWorkspace.id, rootPath: session.activeWorkspace.rootPath }
 					: { id: `runtime:${session.godotProjectPath ?? "unknown"}`, rootPath: session.godotProjectPath ?? process.cwd() };
 				const explicitSkills: CatalogSkill[] = await resolveExplicitSkills(skillWorkspace, effectiveParams.skillRefs ?? []);
-				let allowedToolNames: readonly string[] | undefined = resolveAllowedToolsForChatParams(effectiveParams, resolveBuiltinToolRestriction(explicitSkills), session.activeWorkspace?.id);
+				const builtinToolRestriction: readonly string[] | undefined = resolveBuiltinToolRestriction(explicitSkills);
+				const imageGenerationOnly: boolean = isImageGenerationOnlyToolRestriction(builtinToolRestriction);
+				let allowedToolNames: readonly string[] | undefined = resolveAllowedToolsForChatParams(effectiveParams, builtinToolRestriction, session.activeWorkspace?.id);
+				if (imageGenerationOnly) {
+					allowedToolNames = builtinToolRestriction;
+				}
 				if (allowedToolNames !== undefined && !allowedToolNames.includes("mcp_skills_load")) {
 					allowedToolNames = [...allowedToolNames, "mcp_skills_load"];
 				}
@@ -431,7 +439,9 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				);
 				const history: ChatMessage[] = await selectHistoryForModel(session, historyBudgetTokens);
 				let workflowPlan: WorkflowPlan | null = null;
-				if (requestHasImages) {
+				if (builtinToolRestriction !== undefined && (effectiveParams.mode !== "ask" || imageGenerationOnly)) {
+					workflowPlan = createSingleAnswerPlan(effectiveParams, allowedToolNames);
+				} else if (requestHasImages) {
 					workflowPlan = createSingleAnswerPlan(effectiveParams, []);
 				} else if (slashCommandResult.type === "none") {
 					if (effectiveParams.mode === "ask" && isCurrentProjectFactRequest(effectiveParams.message)) {
@@ -473,7 +483,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				});
 
 				const originalApprovalGateway: ApprovalGateway = session.approvalGateway;
-				if (effectiveParams.mode === "ask") {
+				if (effectiveParams.mode === "ask" && !imageGenerationOnly) {
 					session.approvalGateway = new ReadOnlyToolApprovalGateway(allowedToolNames ?? []);
 				}
 				try {
@@ -608,7 +618,6 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 			}
 
 			const apiKey: string | undefined = await ensureProviderConfigured(session);
-			session.approvalGateway.setMode(await getApprovalMode());
 			if (!apiKey) {
 				sendJson(socket, {
 					type: "response",
