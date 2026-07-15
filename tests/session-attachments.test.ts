@@ -145,6 +145,7 @@ test("generated image artifacts are saved under the session and read through dat
 		assert.equal(artifact.byteSize, bytes.byteLength);
 		assert.equal(artifact.provider, "openai");
 		assert.equal(artifact.model, "gpt-image-1");
+		assert.equal(artifact.storagePath, `attachments/images/${artifact.imageId}.png`);
 
 		const imagesDir: string = join(sessionStore.getSessionDir(metadata.id), "attachments", "images");
 		const files: string[] = await readdir(imagesDir);
@@ -160,6 +161,53 @@ test("generated image artifacts are saved under the session and read through dat
 		assert.equal(hydrated.mimeType, "image/png");
 		assert.equal(hydrated.dataUrl, `data:image/png;base64,${bytes.toString("base64")}`);
 		assert.equal(hydrated.metadata.prompt, "生成一张蓝色机器人图标");
+		assert.equal(attachments.getGeneratedImageArtifactLocalPath(artifact), join(imagesDir, `${artifact.imageId}.png`));
+	});
+});
+
+test("image generation source refs resolve session attachments and generated images", async (): Promise<void> => {
+	await withTempAppData(async (): Promise<void> => {
+		const sessionStore = await import("../src/session/session-store.js");
+		const attachments = await import("../src/session/session-attachments.js");
+		const imageGeneration = await import("../src/providers/image-generation.js");
+		const metadata = await sessionStore.createSession("Image source refs test");
+		const attachmentDataUrl: string = "data:image/png;base64,c291cmNlLWF0dGFjaG1lbnQ=";
+		const attachmentContext = await attachments.saveImageAttachment({
+			sessionId: metadata.id,
+			mimeType: "image/png",
+			dataUrl: attachmentDataUrl,
+			byteSize: Buffer.byteLength("source-attachment"),
+			title: "Source image"
+		});
+		const generatedBytes: Buffer = Buffer.from("source-generated", "utf8");
+		const generated = await attachments.saveGeneratedImageArtifact({
+			sessionId: metadata.id,
+			bytes: generatedBytes,
+			mimeType: "image/webp",
+			provider: "openai",
+			model: "gpt-image-1",
+			prompt: "source"
+		});
+
+		const attachmentId: string = String((attachmentContext.data as Record<string, unknown>).attachmentId);
+		const sources = await imageGeneration.resolveImageGenerationSourceImages(metadata.id, [
+			{ type: "attachment", id: attachmentId },
+			{ type: "generated", id: generated.imageId }
+		]);
+
+		assert.equal(sources.length, 2);
+		assert.deepEqual(sources[0], {
+			type: "attachment",
+			id: attachmentId,
+			mimeType: "image/png",
+			dataUrl: attachmentDataUrl
+		});
+		assert.deepEqual(sources[1], {
+			type: "generated",
+			id: generated.imageId,
+			mimeType: "image/webp",
+			dataUrl: `data:image/webp;base64,${generatedBytes.toString("base64")}`
+		});
 	});
 });
 

@@ -61,7 +61,20 @@ const IMAGE_GENERATION_TOOL_DEFINITIONS: ChatCompletionTool[] = [
 			count: { type: "integer", minimum: 1, maximum: 4, description: "生成图片数量，默认 1，最大 4。" },
 			aspectRatio: { type: "string", enum: ["1:1", "16:9", "9:16", "4:3", "3:4"], description: "画幅比例，默认 1:1。" },
 			style: { type: "string", description: "可选风格提示，例如 photorealistic、pixel art、flat illustration。" },
-			seed: { type: "integer", description: "可选种子提示；不保证所有 provider 都严格支持。" }
+			seed: { type: "integer", description: "可选种子提示；不保证所有 provider 都严格支持。" },
+			sourceImages: {
+				type: "array",
+				maxItems: 3,
+				description: "可选源图引用，仅在配置的图片模型支持 image-to-image/image edit 时使用。引用当前会话图片附件或生成图。",
+				items: {
+					type: "object",
+					properties: {
+						type: { type: "string", enum: ["attachment", "generated"], description: "attachment 表示用户上传图片，generated 表示本会话已生成图片。" },
+						id: { type: "string", description: "图片 id，例如 image-... 或 generated-image-..." }
+					},
+					required: ["type", "id"]
+				}
+			}
 		},
 		["prompt"]
 	)

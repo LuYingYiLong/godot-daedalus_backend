@@ -180,9 +180,52 @@ function hasSuccessfulVerificationObservation(observations: WorkflowToolObservat
 	return observations.some(isSuccessfulVerificationObservation);
 }
 
+function normalizedRecord(value: Record<string, unknown> | undefined): string {
+	if (value === undefined) {
+		return "{}";
+	}
+
+	const sorted: Record<string, unknown> = {};
+	for (const key of Object.keys(value).sort()) {
+		sorted[key] = value[key];
+	}
+	return JSON.stringify(sorted);
+}
+
+function hasArtifactOverlap(left: readonly string[] | undefined, right: readonly string[] | undefined): boolean {
+	if (left === undefined || right === undefined || left.length === 0 || right.length === 0) {
+		return true;
+	}
+
+	const rightSet: Set<string> = new Set(right);
+	return left.some((artifact: string): boolean => rightSet.has(artifact));
+}
+
+function matchesRetryTarget(failedObservation: WorkflowToolObservation, successObservation: WorkflowToolObservation): boolean {
+	return failedObservation.toolName === successObservation.toolName
+		&& normalizedRecord(failedObservation.argsSummary) === normalizedRecord(successObservation.argsSummary)
+		&& hasArtifactOverlap(failedObservation.artifactRefs, successObservation.artifactRefs);
+}
+
+function isResolvedByLaterSuccess(
+	observation: WorkflowToolObservation,
+	index: number,
+	observations: WorkflowToolObservation[]
+): boolean {
+	if (observation.status !== "failed" && observation.error === undefined) {
+		return false;
+	}
+
+	return observations
+		.slice(index + 1)
+		.some((candidate: WorkflowToolObservation): boolean => (
+			candidate.status === "succeeded" && matchesRetryTarget(observation, candidate)
+		));
+}
+
 function collectFailedChecks(phase: WorkflowPhase, observations: WorkflowToolObservation[], agentResultText: string): WorkflowFailedCheck[] {
 	const failedChecks: WorkflowFailedCheck[] = [];
-	for (const observation of observations) {
+	for (const [index, observation] of observations.entries()) {
 		if (observation.status === "approval_required") {
 			failedChecks.push({
 				code: "approval_required",
@@ -190,6 +233,10 @@ function collectFailedChecks(phase: WorkflowPhase, observations: WorkflowToolObs
 				toolCallId: observation.toolCallId,
 				toolName: observation.toolName
 			});
+			continue;
+		}
+
+		if (isResolvedByLaterSuccess(observation, index, observations)) {
 			continue;
 		}
 
@@ -253,7 +300,10 @@ function collectFailedChecks(phase: WorkflowPhase, observations: WorkflowToolObs
 
 function collectSummaries(observations: WorkflowToolObservation[]): string[] {
 	return observations
-		.map((observation: WorkflowToolObservation): string | undefined => {
+		.map((observation: WorkflowToolObservation, index: number): string | undefined => {
+			if (isResolvedByLaterSuccess(observation, index, observations)) {
+				return undefined;
+			}
 			if (observation.parsedResult?.summary !== undefined) {
 				return String(observation.parsedResult.summary);
 			}

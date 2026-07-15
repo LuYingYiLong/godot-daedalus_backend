@@ -174,6 +174,12 @@ export function createAdditionalContextPromptSection(items: readonly AdditionalC
 			lines.push(`  - summary: ${clipTextByChars(item.summary.trim(), 500)}`);
 		}
 		if (item.kind === "image") {
+			const data: Record<string, unknown> | undefined = getAdditionalContextDataRecord(item);
+			const attachmentId: string = getContextString(data, "attachmentId");
+			lines.push(`  - imageContextId: ${clipTextByChars(item.id, 160)}`);
+			if (attachmentId.length > 0) {
+				lines.push(`  - attachmentId: ${clipTextByChars(attachmentId, 160)}`);
+			}
 			lines.push("  - note: 图片二进制已作为多模态 image_url content part 单独发送给模型；不要在文本上下文中期待 base64。");
 		}
 		if (item.kind === "script_selection") {

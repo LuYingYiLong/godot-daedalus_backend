@@ -170,6 +170,16 @@ test("session create and save schema accept frontend session metadata", (): void
 
 	assert.equal(clientRequestSchema.safeParse({
 		type: "request",
+		id: "session-create-no-workspace",
+		method: "session.create",
+		params: {
+			title: "No workspace session",
+			workspaceId: null
+		}
+	}).success, true);
+
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
 		id: "session-save-metadata",
 		method: "session.save",
 		params: {

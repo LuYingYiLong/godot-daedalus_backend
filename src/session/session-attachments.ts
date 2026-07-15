@@ -46,6 +46,7 @@ export type GeneratedImageArtifactMetadata = {
 	revisedPrompt?: string | undefined;
 	createdAt: string;
 	fileName: string;
+	storagePath: string;
 };
 
 export type SaveGeneratedImageArtifactInput = {
@@ -102,6 +103,10 @@ function getImageExtension(mimeType: string): string {
 
 function generatedImagePath(sessionId: string, imageId: string, mimeType: string): string {
 	return join(getGeneratedImagesDir(sessionId), `${assertSafeGeneratedImageId(imageId)}.${getImageExtension(mimeType)}`);
+}
+
+function generatedImageStoragePath(fileName: string): string {
+	return `attachments/images/${fileName}`;
 }
 
 function generatedImageMetadataPath(sessionId: string, imageId: string): string {
@@ -231,7 +236,8 @@ export async function saveGeneratedImageArtifact(input: SaveGeneratedImageArtifa
 		model: input.model,
 		prompt: input.prompt,
 		createdAt,
-		fileName
+		fileName,
+		storagePath: generatedImageStoragePath(fileName)
 	};
 	if (input.width !== undefined) {
 		metadata.width = input.width;
@@ -247,6 +253,10 @@ export async function saveGeneratedImageArtifact(input: SaveGeneratedImageArtifa
 	await writeFile(generatedImagePath(input.sessionId, imageId, input.mimeType), input.bytes);
 	await writeFile(generatedImageMetadataPath(input.sessionId, imageId), JSON.stringify(metadata, null, 2), "utf8");
 	return metadata;
+}
+
+export function getGeneratedImageArtifactLocalPath(metadata: GeneratedImageArtifactMetadata): string {
+	return generatedImagePath(metadata.sessionId, metadata.imageId, metadata.mimeType);
 }
 
 export async function readGeneratedImageDataUrl(sessionId: string, imageId: string): Promise<{ imageId: string; mimeType: string; dataUrl: string; metadata: GeneratedImageArtifactMetadata }> {

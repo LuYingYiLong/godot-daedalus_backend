@@ -381,5 +381,79 @@
       "vision": true
     },
     "ownedBy": "zhipu"
+  },
+  {
+    "id": "qwen-plus",
+    "displayName": "Qwen Plus",
+    "provider": "dashscope",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 1000000,
+    "maxOutputTokens": 32000,
+    "capabilities": {
+      "tools": true
+    },
+    "ownedBy": "dashscope"
+  },
+  {
+    "id": "qwen-image-2.0-pro",
+    "displayName": "Qwen Image 2.0 Pro",
+    "provider": "dashscope",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 32000,
+    "maxOutputTokens": 1,
+    "capabilities": {
+      "imageGeneration": true,
+      "imageEdit": true
+    },
+    "ownedBy": "dashscope"
+  },
+  {
+    "id": "qwen-image-2.0",
+    "displayName": "Qwen Image 2.0",
+    "provider": "dashscope",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 32000,
+    "maxOutputTokens": 1,
+    "capabilities": {
+      "imageGeneration": true,
+      "imageEdit": true
+    },
+    "ownedBy": "dashscope"
+  },
+  {
+    "id": "qwen-image-edit-max",
+    "displayName": "Qwen Image Edit Max",
+    "provider": "dashscope",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 32000,
+    "maxOutputTokens": 1,
+    "capabilities": {
+      "imageEdit": true
+    },
+    "ownedBy": "dashscope"
+  },
+  {
+    "id": "qwen-image-edit-plus",
+    "displayName": "Qwen Image Edit Plus",
+    "provider": "dashscope",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 32000,
+    "maxOutputTokens": 1,
+    "capabilities": {
+      "imageEdit": true
+    },
+    "ownedBy": "dashscope"
+  },
+  {
+    "id": "qwen-image-edit",
+    "displayName": "Qwen Image Edit",
+    "provider": "dashscope",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 32000,
+    "maxOutputTokens": 1,
+    "capabilities": {
+      "imageEdit": true
+    },
+    "ownedBy": "dashscope"
   }
 ]

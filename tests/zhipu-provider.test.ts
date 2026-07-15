@@ -210,12 +210,39 @@ test("Zhipu image generation uses the configured image model and saves a session
 			assert.deepEqual(imageRequest?.body, {
 				model: "glm-image",
 				prompt: "生成一张蓝色机器人图标",
-				size: "1728x960"
+				size: "1728x960",
+				watermark_enabled: false
 			});
 			assert.equal(result.provider, "zhipu");
 			assert.equal(result.model, "glm-image");
 			assert.equal(result.artifacts.length, 1);
 			assert.equal(result.artifacts[0]?.byteSize, Buffer.byteLength("zhipu-generated-image"));
+			assert.equal(result.artifacts[0]?.storagePath, `attachments/images/${result.artifacts[0]?.imageId}.png`);
+			await assert.rejects(
+				async (): Promise<void> => {
+					await generateImage({
+						sessionId: session.id,
+						prompt: "把源图改成像素风",
+						sourceImages: [{ type: "attachment", id: "image-test" }]
+					});
+				},
+				/Zhipu's official image API does not currently expose/u
+			);
+
+			const { executeLlmToolWithIdempotency } = await import("../src/tools/tool-idempotency.js");
+			const toolResult = await executeLlmToolWithIdempotency(
+				{} as never,
+				"mcp_image_generate",
+				{ prompt: "生成一张红色机器人图标", aspectRatio: "1:1" },
+				undefined,
+				undefined,
+				session.id
+			);
+			const toolContent = JSON.parse(toolResult.content) as {
+				artifacts: Array<{ imageId: string; localPath: string; storagePath: string }>;
+			};
+			assert.match(toolContent.artifacts[0]?.localPath ?? "", /attachments[\\/]images[\\/]generated-image-/);
+			assert.match(toolContent.artifacts[0]?.storagePath ?? "", /^attachments\/images\/generated-image-/);
 		});
 	});
 });

@@ -327,7 +327,12 @@ async function executeImageGenerationTool(args: Record<string, unknown>, session
 		throw new Error("Image generation requires an active session.");
 	}
 	const { generateImage, parseImageGenerationToolArgs } = await import("../providers/image-generation.js");
+	const { getGeneratedImageArtifactLocalPath } = await import("../session/session-attachments.js");
 	const imageGeneration: ImageGenerationResult = await generateImage(parseImageGenerationToolArgs(args, sessionId));
+	const artifactsForToolResult = imageGeneration.artifacts.map((artifact) => ({
+		...artifact,
+		localPath: getGeneratedImageArtifactLocalPath(artifact)
+	}));
 	const content: string = JSON.stringify({
 		ok: true,
 		type: "image_generation",
@@ -335,7 +340,7 @@ async function executeImageGenerationTool(args: Record<string, unknown>, session
 		provider: imageGeneration.provider,
 		model: imageGeneration.model,
 		prompt: imageGeneration.prompt,
-		artifacts: imageGeneration.artifacts
+		artifacts: artifactsForToolResult
 	});
 	return {
 		content: trimToolResult(content),

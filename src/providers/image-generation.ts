@@ -2,10 +2,11 @@ import OpenAI from "openai";
 import type { Image, ImageGenerateParamsNonStreaming, ImagesResponse } from "openai/resources/images";
 import type { ProviderId } from "../protocol/types.js";
 import type { GeneratedImageArtifactMetadata } from "../session/session-attachments.js";
-import { saveGeneratedImageArtifact } from "../session/session-attachments.js";
+import { readGeneratedImageDataUrl, readImageAttachmentDataUrl, saveGeneratedImageArtifact } from "../session/session-attachments.js";
+import { SUPPORTED_IMAGE_MIME_TYPES } from "../protocol/image-attachments.js";
 import { getProviderFallbackModels } from "./provider-registry.js";
 import type { ProviderChatOptions, ProviderModelInfo } from "./provider-types.js";
-import { normalizeConfiguredProviderBaseUrl, resolveProviderBaseUrl } from "./provider-base-url.js";
+import { normalizeConfiguredProviderBaseUrl, resolveDashScopeApiBaseUrl, resolveProviderBaseUrl } from "./provider-base-url.js";
 import { ProviderTaskModelError, resolveConfiguredProviderTaskModelOptions } from "./task-model-routing.js";
 
 export type ImageGenerationAspectRatio = "1:1" | "16:9" | "9:16" | "4:3" | "3:4";
@@ -17,6 +18,7 @@ export type ImageGenerationInput = {
 	aspectRatio?: ImageGenerationAspectRatio | undefined;
 	style?: string | undefined;
 	seed?: number | undefined;
+	sourceImages?: ImageGenerationSourceImageRef[] | undefined;
 };
 
 export type ImageGenerationResult = {
@@ -25,6 +27,17 @@ export type ImageGenerationResult = {
 	provider: ProviderId;
 	model: string;
 	artifacts: GeneratedImageArtifactMetadata[];
+	sourceImages?: ImageGenerationSourceImageRef[] | undefined;
+};
+
+export type ImageGenerationSourceImageRef = {
+	type: "attachment" | "generated";
+	id: string;
+};
+
+export type ImageGenerationSourceImage = ImageGenerationSourceImageRef & {
+	mimeType: string;
+	dataUrl: string;
 };
 
 export class ImageGenerationError extends Error {
@@ -84,12 +97,62 @@ function mapAspectRatioToZhipuImageSize(aspectRatio: ImageGenerationAspectRatio)
 	return "1280x1280";
 }
 
+function mapAspectRatioToDashScopeImageSize(aspectRatio: ImageGenerationAspectRatio): string {
+	if (aspectRatio === "9:16") {
+		return "720*1280";
+	}
+	if (aspectRatio === "3:4") {
+		return "960*1280";
+	}
+	if (aspectRatio === "16:9") {
+		return "1280*720";
+	}
+	if (aspectRatio === "4:3") {
+		return "1280*960";
+	}
+	return "1024*1024";
+}
+
 function getStyle(value: unknown): string | undefined {
 	if (typeof value !== "string") {
 		return undefined;
 	}
 	const trimmed: string = value.trim();
 	return trimmed.length > 0 ? trimmed.slice(0, 120) : undefined;
+}
+
+function parseSourceImageType(value: unknown, id: string): ImageGenerationSourceImageRef["type"] {
+	if (value === "attachment" || value === "generated") {
+		return value;
+	}
+	return id.startsWith("generated-image-") ? "generated" : "attachment";
+}
+
+function parseSourceImages(value: unknown): ImageGenerationSourceImageRef[] | undefined {
+	if (value === undefined) {
+		return undefined;
+	}
+	if (!Array.isArray(value)) {
+		throw new ImageGenerationError("image_generation_failed", "sourceImages must be an array.");
+	}
+
+	const sourceImages: ImageGenerationSourceImageRef[] = [];
+	for (const item of value.slice(0, 3)) {
+		if (typeof item !== "object" || item === null || Array.isArray(item)) {
+			throw new ImageGenerationError("image_generation_failed", "Each source image must contain type and id.");
+		}
+		const record: Record<string, unknown> = item as Record<string, unknown>;
+		const id: unknown = record.id;
+		if (typeof id !== "string" || id.trim().length === 0 || id.length > 160) {
+			throw new ImageGenerationError("image_generation_failed", "Each source image id must be a non-empty string.");
+		}
+		sourceImages.push({
+			type: parseSourceImageType(record.type, id),
+			id: id.trim()
+		});
+	}
+
+	return sourceImages.length > 0 ? sourceImages : undefined;
 }
 
 export function parseImageGenerationToolArgs(args: Record<string, unknown>, sessionId: string): ImageGenerationInput {
@@ -99,7 +162,8 @@ export function parseImageGenerationToolArgs(args: Record<string, unknown>, sess
 		count: getPositiveInteger(args.count, 1, 1, 4),
 		aspectRatio: normalizeAspectRatio(args.aspectRatio),
 		style: getStyle(args.style),
-		seed: typeof args.seed === "number" && Number.isFinite(args.seed) ? Math.floor(args.seed) : undefined
+		seed: typeof args.seed === "number" && Number.isFinite(args.seed) ? Math.floor(args.seed) : undefined,
+		sourceImages: parseSourceImages(args.sourceImages)
 	};
 }
 
@@ -107,6 +171,56 @@ function modelSupportsImageGeneration(provider: ProviderId, modelId: string): bo
 	const fallback: ProviderModelInfo | undefined = getProviderFallbackModels(provider)
 		.find((model: ProviderModelInfo): boolean => model.id === modelId);
 	return fallback?.capabilities.imageGeneration === true;
+}
+
+function modelSupportsImageEdit(provider: ProviderId, modelId: string): boolean {
+	const fallback: ProviderModelInfo | undefined = getProviderFallbackModels(provider)
+		.find((model: ProviderModelInfo): boolean => model.id === modelId);
+	return fallback?.capabilities.imageEdit === true;
+}
+
+function createImageEditUnsupportedMessage(provider: ProviderId, modelId: string): string {
+	if (provider === "zhipu") {
+		return `Model ${provider}/${modelId} is configured for text-to-image only. Zhipu's official image API does not currently expose a documented image-to-image request shape.`;
+	}
+	return `Model ${provider}/${modelId} does not support image-to-image generation.`;
+}
+
+function parseMimeTypeFromDataUrl(dataUrl: string): string {
+	const match: RegExpMatchArray | null = /^data:([^;]+);base64,/u.exec(dataUrl);
+	if (match === null || !SUPPORTED_IMAGE_MIME_TYPES.includes(match[1] ?? "")) {
+		throw new ImageGenerationError("image_generation_failed", "Source image dataUrl has an unsupported mimeType.");
+	}
+	return match[1]!;
+}
+
+export async function resolveImageGenerationSourceImages(sessionId: string, refs: readonly ImageGenerationSourceImageRef[] | undefined): Promise<ImageGenerationSourceImage[]> {
+	if (refs === undefined || refs.length === 0) {
+		return [];
+	}
+
+	const images: ImageGenerationSourceImage[] = [];
+	for (const ref of refs.slice(0, 3)) {
+		if (ref.type === "generated") {
+			const generated = await readGeneratedImageDataUrl(sessionId, ref.id);
+			images.push({
+				type: "generated",
+				id: ref.id,
+				mimeType: generated.mimeType,
+				dataUrl: generated.dataUrl
+			});
+			continue;
+		}
+
+		const dataUrl: string = await readImageAttachmentDataUrl(sessionId, ref.id);
+		images.push({
+			type: "attachment",
+			id: ref.id,
+			mimeType: parseMimeTypeFromDataUrl(dataUrl),
+			dataUrl
+		});
+	}
+	return images;
 }
 
 function createOpenAIClient(options: ProviderChatOptions): OpenAI {
@@ -233,7 +347,8 @@ async function generateZhipuImages(options: ProviderChatOptions, input: ImageGen
 		body: JSON.stringify({
 			model,
 			prompt: createPrompt(input),
-			size: mapAspectRatioToZhipuImageSize(input.aspectRatio ?? "1:1")
+			size: mapAspectRatioToZhipuImageSize(input.aspectRatio ?? "1:1"),
+			watermark_enabled: false
 		})
 	});
 	const text: string = await response.text();
@@ -280,19 +395,161 @@ async function generateZhipuImages(options: ProviderChatOptions, input: ImageGen
 	};
 }
 
+type DashScopeImageContent = {
+	image?: string | undefined;
+	text?: string | undefined;
+};
+
+type DashScopeImageGenerationResponse = {
+	output?: {
+		choices?: Array<{
+			message?: {
+				content?: DashScopeImageContent[] | undefined;
+			} | undefined;
+		}>;
+	} | undefined;
+	usage?: {
+		width?: number | undefined;
+		height?: number | undefined;
+	} | undefined;
+	code?: string | undefined;
+	message?: string | undefined;
+};
+
+function extractDashScopeImageUrls(response: DashScopeImageGenerationResponse): string[] {
+	const urls: string[] = [];
+	for (const choice of response.output?.choices ?? []) {
+		for (const item of choice.message?.content ?? []) {
+			if (typeof item.image === "string" && item.image.length > 0) {
+				urls.push(item.image);
+			}
+		}
+	}
+	return urls;
+}
+
+function shouldOmitQwenImageEditOptionalParameters(model: string): boolean {
+	return model === "qwen-image-edit";
+}
+
+function createDashScopeImageParameters(model: string, input: ImageGenerationInput): Record<string, unknown> {
+	const parameters: Record<string, unknown> = {
+		n: shouldOmitQwenImageEditOptionalParameters(model) ? 1 : input.count ?? 1,
+		negative_prompt: " ",
+		watermark: false
+	};
+	if (!shouldOmitQwenImageEditOptionalParameters(model)) {
+		parameters.prompt_extend = true;
+		parameters.size = mapAspectRatioToDashScopeImageSize(input.aspectRatio ?? "1:1");
+	}
+	return parameters;
+}
+
+async function generateDashScopeImages(options: ProviderChatOptions, input: ImageGenerationInput): Promise<ImageGenerationResult> {
+	const model: string = options.model ?? "qwen-image-2.0-pro";
+	const sourceImages: ImageGenerationSourceImage[] = await resolveImageGenerationSourceImages(input.sessionId, input.sourceImages);
+	const content: DashScopeImageContent[] = [
+		...sourceImages.map((image: ImageGenerationSourceImage): DashScopeImageContent => ({ image: image.dataUrl })),
+		{ text: createPrompt(input) }
+	];
+	const response: Response = await fetch(`${resolveDashScopeApiBaseUrl(options.baseUrl)}/services/aigc/multimodal-generation/generation`, {
+		method: "POST",
+		headers: {
+			"Authorization": `Bearer ${options.apiKey}`,
+			"Content-Type": "application/json"
+		},
+		body: JSON.stringify({
+			model,
+			input: {
+				messages: [{
+					role: "user",
+					content
+				}]
+			},
+			parameters: createDashScopeImageParameters(model, input)
+		})
+	});
+	const text: string = await response.text();
+	let parsed: DashScopeImageGenerationResponse;
+	try {
+		parsed = JSON.parse(text) as DashScopeImageGenerationResponse;
+	} catch {
+		throw new ImageGenerationError("image_generation_failed", `DashScope image generation returned invalid JSON: HTTP ${response.status}`);
+	}
+	if (!response.ok || parsed.code !== undefined) {
+		throw new ImageGenerationError(
+			"image_generation_failed",
+			parsed.message ?? `DashScope image generation failed: HTTP ${response.status}`
+		);
+	}
+
+	const urls: string[] = extractDashScopeImageUrls(parsed);
+	if (urls.length === 0) {
+		throw new ImageGenerationError("image_generation_failed", "Provider returned no generated images.");
+	}
+
+	const artifacts: GeneratedImageArtifactMetadata[] = [];
+	for (const url of urls.slice(0, input.count ?? 1)) {
+		const bytes: Buffer = await readImageUrlBytes(url);
+		artifacts.push(await saveGeneratedImageArtifact({
+			sessionId: input.sessionId,
+			bytes,
+			mimeType: /\.jpe?g(?:$|\?)/iu.test(url) ? "image/jpeg" : "image/png",
+			provider: options.provider,
+			model,
+			prompt: input.prompt
+		}));
+	}
+
+	return {
+		status: "completed",
+		prompt: input.prompt,
+		provider: options.provider,
+		model,
+		artifacts,
+		sourceImages: input.sourceImages
+	};
+}
+
 export async function generateImage(input: ImageGenerationInput): Promise<ImageGenerationResult> {
 	try {
 		const resolved = await resolveConfiguredProviderTaskModelOptions("imageGeneration");
 		const options: ProviderChatOptions = resolved.options;
-		if (!modelSupportsImageGeneration(options.provider, resolved.model)) {
+		const hasSourceImages: boolean = (input.sourceImages?.length ?? 0) > 0;
+		const supportsImageGeneration: boolean = modelSupportsImageGeneration(options.provider, resolved.model);
+		const supportsImageEdit: boolean = modelSupportsImageEdit(options.provider, resolved.model);
+		if (!hasSourceImages && !supportsImageGeneration) {
 			throw new ImageGenerationError(
 				"image_generation_not_supported",
-				`Model ${options.provider}/${resolved.model} does not support image generation.`
+				supportsImageEdit
+					? `Model ${options.provider}/${resolved.model} requires at least one source image.`
+					: `Model ${options.provider}/${resolved.model} does not support image generation.`
+			);
+		}
+		if (hasSourceImages) {
+			if (!supportsImageEdit) {
+				throw new ImageGenerationError(
+					"image_generation_not_supported",
+					createImageEditUnsupportedMessage(options.provider, resolved.model)
+				);
+			}
+			if (options.provider === "dashscope") {
+				return await generateDashScopeImages(options, input);
+			}
+
+			await resolveImageGenerationSourceImages(input.sessionId, input.sourceImages);
+			throw new ImageGenerationError(
+				"image_generation_not_supported",
+				`Provider ${options.provider} is not adapted for image-to-image generation yet.`
 			);
 		}
 
 		if (options.provider === "zhipu") {
 			return await generateZhipuImages(options, input);
+		}
+
+		if (options.provider === "dashscope") {
+			return await generateDashScopeImages(options, input);
 		}
 
 		if (options.provider !== "openai") {

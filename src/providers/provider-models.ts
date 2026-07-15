@@ -69,6 +69,11 @@ function normalizeCapabilities(raw: Record<string, unknown>, fallback: ProviderM
 			: typeof raw.image_generation === "boolean"
 				? raw.image_generation
 				: fallback?.capabilities.imageGeneration,
+		imageEdit: typeof raw.supports_image_edit === "boolean"
+			? raw.supports_image_edit
+			: typeof raw.image_edit === "boolean"
+				? raw.image_edit
+				: fallback?.capabilities.imageEdit,
 		vision: fallback?.capabilities.vision
 	};
 

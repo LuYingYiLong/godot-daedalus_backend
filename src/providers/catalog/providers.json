@@ -67,5 +67,21 @@
     },
     "envBaseUrl": "ZAI_BASE_URL",
     "envModel": "ZAI_MODEL"
+  },
+  {
+    "id": "dashscope",
+    "displayName": "Alibaba Cloud Qwen",
+    "authType": "api-key",
+    "defaultModel": "qwen-plus",
+    "defaultEndpointType": "openai-chat-completions",
+    "endpointConfigs": {
+      "openai-chat-completions": {
+        "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "adapterFamily": "openai-compatible",
+        "modelsPath": "/models"
+      }
+    },
+    "envBaseUrl": "DASHSCOPE_BASE_URL",
+    "envModel": "DASHSCOPE_MODEL"
   }
 ]

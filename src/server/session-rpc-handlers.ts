@@ -315,8 +315,10 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 			break;
 
 		case "session.create": {
-			const requestedWorkspaceId: string | undefined = request.params.workspaceId;
-			let workspaceId: string | undefined = requestedWorkspaceId ?? session.activeWorkspace?.id;
+			const requestedWorkspaceId: string | null | undefined = request.params.workspaceId;
+			let workspaceId: string | undefined = requestedWorkspaceId === null
+				? undefined
+				: requestedWorkspaceId ?? session.activeWorkspace?.id;
 			const clientConnection = getClientConnection(socket);
 			if (
 				clientConnection?.clientType === "godot_plugin"

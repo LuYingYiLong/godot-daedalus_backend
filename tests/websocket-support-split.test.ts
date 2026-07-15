@@ -79,6 +79,24 @@ test("additional context formats script selections without mutating source items
 	assert.equal((item.data as Record<string, unknown>).hasSelection, true);
 });
 
+test("additional context exposes image ids for image generation tools", (): void => {
+	const section: string = createAdditionalContextPromptSection([{
+		id: "image-context-1",
+		kind: "image",
+		source: "manual",
+		title: "Reference image",
+		data: {
+			mimeType: "image/png",
+			attachmentId: "image-attachment-1",
+			byteSize: 5
+		}
+	}]);
+
+	assert.match(section, /imageContextId: image-context-1/);
+	assert.match(section, /attachmentId: image-attachment-1/);
+	assert.doesNotMatch(section, /aGVsbG8=/);
+});
+
 test("pending guides hydrate added, updated, applied and deleted events", (): void => {
 	const events: StoredSessionEvent[] = [
 		{

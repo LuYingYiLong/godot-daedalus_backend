@@ -105,6 +105,69 @@ test("failed write phase summary prefers failed checks over prior read summaries
 	assert.doesNotMatch(outcome.summary, /^\[gd_scene/);
 });
 
+test("write phase treats transient tool failure as resolved when same tool succeeds later", (): void => {
+	const observations: WorkflowToolObservation[] = applyEvents([
+		{
+			type: "tool.call",
+			step: 0,
+			toolCallId: "image-1",
+			toolName: "mcp_image_generate",
+			args: {},
+			serverId: "image",
+			serverName: "Image Generation",
+			category: "image",
+			title: "生成图片",
+			summary: "生成 1 张图片",
+			target: {
+				kind: "unknown",
+				label: "generated image"
+			}
+		},
+		{
+			type: "tool.error",
+			step: 0,
+			toolCallId: "image-1",
+			toolName: "mcp_image_generate",
+			message: "fetch failed"
+		},
+		{
+			type: "tool.call",
+			step: 1,
+			toolCallId: "image-2",
+			toolName: "mcp_image_generate",
+			args: {},
+			serverId: "image",
+			serverName: "Image Generation",
+			category: "image",
+			title: "生成图片",
+			summary: "生成 1 张图片",
+			target: {
+				kind: "unknown",
+				label: "generated image"
+			}
+		},
+		{
+			type: "tool.result",
+			step: 1,
+			toolCallId: "image-2",
+			toolName: "mcp_image_generate",
+			resultChars: 120,
+			truncated: false,
+			ok: true,
+			validationStatus: "passed",
+			summary: "mcp_image_generate passed",
+			artifactRefs: ["attachments/images/generated-image.png"]
+		}
+	]);
+	const outcome = createWorkflowPhaseOutcome(createPhase("write", "write"), "phase-run-1", "图片已生成。", observations);
+
+	assert.equal(outcome.status, "completed");
+	assert.deepEqual(outcome.failedChecks, []);
+	assert.deepEqual(outcome.requiredFixes, []);
+	assert.equal(outcome.summary, "mcp_image_generate passed");
+	assert.equal(outcome.toolObservations.length, 2);
+});
+
 test("verify phase without deterministic validation tool becomes blocked", (): void => {
 	const outcome = createWorkflowPhaseOutcome(createPhase("verify", "verify"), "phase-run-1", "我检查过了，应该没问题。", []);
 

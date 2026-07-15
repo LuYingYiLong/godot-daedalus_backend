@@ -17,6 +17,7 @@ export type ProviderModelCapabilities = {
 	webSearch?: boolean | undefined;
 	vision?: boolean | undefined;
 	imageGeneration?: boolean | undefined;
+	imageEdit?: boolean | undefined;
 };
 
 export type ProviderModelInfo = {
@@ -94,6 +95,7 @@ export function normalizeProviderModelCapabilities(capabilities: ProviderModelCa
 	copyBooleanCapability(normalized, source, "tools");
 	copyBooleanCapability(normalized, source, "webSearch");
 	copyBooleanCapability(normalized, source, "imageGeneration");
+	copyBooleanCapability(normalized, source, "imageEdit");
 	normalized.vision = source.vision ?? (source.imageInput === true || source.videoInput === true);
 
 	return normalized;
