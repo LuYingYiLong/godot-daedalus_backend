@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import test from "node:test";
-import { createToolProtocolCorrectionMessage, resolveRequiredToolChoice, runDeepSeekAgentStreaming, shouldDisableThinkingForToolCalls, shouldSkipRequiredToolChoice } from "../src/providers/deepseek-agent.js";
+import { createToolProtocolCorrectionMessage, resolveRequiredToolChoice, runOpenAICompatibleAgent, runOpenAICompatibleAgentStreaming, shouldDisableThinkingForToolCalls, shouldSkipRequiredToolChoice } from "../src/providers/openai-compatible-agent.js";
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
 import type { McpHost } from "../src/mcp/mcp-host.js";
 import type { AiChatParams } from "../src/protocol/types.js";
@@ -125,6 +125,60 @@ async function withStreamingAgentMockServer(run: (baseUrl: string, requests: Rec
 	}
 }
 
+async function withMiniMaxThinkTagMockServer(streaming: boolean, run: (baseUrl: string, requests: RecordedRequest[]) => Promise<void>): Promise<void> {
+	const requests: RecordedRequest[] = [];
+	const server: Server = createServer(async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
+		const body: Record<string, unknown> = await readRequestBody(request);
+		requests.push({ url: request.url ?? "", body });
+		assert.equal(request.url, "/chat/completions");
+
+		if (streaming) {
+			response.writeHead(200, { "Content-Type": "text/event-stream" });
+			for (const content of ["<thi", "nk>先分析一下", "</thi", "nk>最终答案。"]) {
+				writeSseChunk(response, {
+					id: "chatcmpl-minimax-thinking",
+					object: "chat.completion.chunk",
+					created: 1,
+					model: "MiniMax-M3",
+					choices: [{
+						index: 0,
+						delta: { content },
+						finish_reason: null
+					}]
+				});
+			}
+			response.end("data: [DONE]\n\n");
+			return;
+		}
+
+		response.writeHead(200, { "Content-Type": "application/json" });
+		response.end(JSON.stringify({
+			id: "chatcmpl-minimax-thinking",
+			object: "chat.completion",
+			created: 1,
+			model: "MiniMax-M3",
+			choices: [{
+				index: 0,
+				message: { role: "assistant", content: "<think>先分析一下</think>最终答案。" },
+				finish_reason: "stop"
+			}]
+		}));
+	});
+	server.listen(0, "127.0.0.1");
+	await once(server, "listening");
+	const address = server.address();
+	if (address === null || typeof address === "string") {
+		throw new Error("Mock server did not expose a TCP port");
+	}
+
+	try {
+		await run(`http://127.0.0.1:${address.port}`, requests);
+	} finally {
+		server.close();
+		await once(server, "close");
+	}
+}
+
 test("DeepSeek V4 thinking models skip required tool_choice", (): void => {
 	const tools: ChatCompletionTool[] = [{
 		type: "function",
@@ -195,6 +249,70 @@ test("tool protocol correction prompt distinguishes tool and no-tool phases", ()
 	assert.match(noToolPrompt, /自然语言结果/);
 });
 
+test("MiniMax streaming agent extracts think tags into thinking events", async (): Promise<void> => {
+	await withMiniMaxThinkTagMockServer(true, async (baseUrl: string, requests: RecordedRequest[]): Promise<void> => {
+		const deltas: string[] = [];
+		const thinking: string[] = [];
+		let thinkingDoneCount: number = 0;
+		const result = await runOpenAICompatibleAgentStreaming(
+			{ message: "回答一下", options: { stream: true } },
+			{ provider: "minimax", apiKey: "test-key", baseUrl, model: "MiniMax-M3" },
+			[],
+			"System prompt",
+			createMockMcpHost(),
+			new ApprovalGateway(),
+			[],
+			(event): void => {
+				if (event.type === "ai.delta") {
+					deltas.push(event.text);
+				}
+				if (event.type === "ai.thinking.delta") {
+					thinking.push(event.text);
+				}
+				if (event.type === "ai.thinking.done") {
+					thinkingDoneCount += 1;
+				}
+			}
+		);
+
+		assert.equal(result.status, "completed");
+		assert.equal(result.text, "最终答案。");
+		assert.deepEqual(deltas, ["最终答案。"]);
+		assert.deepEqual(thinking, ["先分析一下"]);
+		assert.equal(thinkingDoneCount, 1);
+		assert.equal(requests.length, 1);
+	});
+});
+
+test("MiniMax non-streaming agent strips think tags from visible text", async (): Promise<void> => {
+	await withMiniMaxThinkTagMockServer(false, async (baseUrl: string): Promise<void> => {
+		const thinking: string[] = [];
+		let thinkingDoneCount: number = 0;
+		const result = await runOpenAICompatibleAgent(
+			{ message: "回答一下" },
+			{ provider: "minimax", apiKey: "test-key", baseUrl, model: "MiniMax-M3" },
+			[],
+			"System prompt",
+			createMockMcpHost(),
+			new ApprovalGateway(),
+			[],
+			(event): void => {
+				if (event.type === "ai.thinking.delta") {
+					thinking.push(event.text);
+				}
+				if (event.type === "ai.thinking.done") {
+					thinkingDoneCount += 1;
+				}
+			}
+		);
+
+		assert.equal(result.status, "completed");
+		assert.equal(result.text, "最终答案。");
+		assert.deepEqual(thinking, ["先分析一下"]);
+		assert.equal(thinkingDoneCount, 1);
+	});
+});
+
 test("streaming agent finalizes when tool follow-up only returns reasoning content", async (): Promise<void> => {
 	await withStreamingAgentMockServer(async (baseUrl: string, requests: RecordedRequest[]): Promise<void> => {
 		const events: string[] = [];
@@ -206,7 +324,7 @@ test("streaming agent finalizes when tool follow-up only returns reasoning conte
 		};
 		(params.options as Record<string, unknown>).requireToolCallOnFirstStep = true;
 
-		const result = await runDeepSeekAgentStreaming(
+		const result = await runOpenAICompatibleAgentStreaming(
 			params,
 			{ provider: "zhipu", apiKey: "test-key", baseUrl, model: "glm-5.2" },
 			[],

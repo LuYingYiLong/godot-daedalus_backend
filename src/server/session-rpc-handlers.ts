@@ -1,14 +1,6 @@
 import WebSocket from "ws";
 import { composeSystemPrompt, listPromptTemplates } from "../prompts/registry.js";
 import type { AdditionalContextItem, AiChatParams, ChatMessage, ClientRequest, ModelProfile, ProviderId, ServerEvent } from "../protocol/types.js";
-import {
-	continueDeepSeekAgent,
-	continueDeepSeekAgentStreaming,
-	runDeepSeekAgent,
-	runDeepSeekAgentStreaming,
-	type DeepSeekAgentContinuation,
-	type DeepSeekAgentResult
-} from "../providers/deepseek-agent.js";
 import type { OnToolEvent, ToolEvent } from "../tools/tool-dispatcher.js";
 import { parseToolResultSummary } from "../tools/tool-result-parser.js";
 import { chatWithDeepSeek, createDeepSeekClient, resolveChatModel, type ProviderChatOptions } from "../providers/deepseek-client.js";
@@ -68,7 +60,7 @@ import {
 	modelSupportsImageInput,
 	ProviderImageInputError
 } from "../providers/provider-image-content.js";
-import { getProviderDefaultBaseUrl, getProviderDefaultModel, getProviderDisplayName, isProviderId } from "../providers/provider-registry.js";
+import { getProviderAdapterFamily, getProviderDefaultBaseUrl, getProviderDefaultEndpointType, getProviderDefaultModel, getProviderDisplayName, isProviderId } from "../providers/provider-registry.js";
 import { classifyProviderError, createProviderStatusEvent } from "../providers/provider-error.js";
 import { generateSessionTitle, shouldApplyGeneratedSessionTitle } from "./session-title.js";
 import { createSingleAnswerPlan, planWorkflow, READ_TOOLS, VERIFY_TOOLS, WRITE_TOOLS } from "../workflow/planner.js";
@@ -122,9 +114,11 @@ import { bumpWorkbenchRevision, serializeWorkbench } from "./workbench.js";
 import { normalizeChatParamsForMode, resolveAllowedToolsForChatParams } from "./chat-mode.js";
 import { logPromptTrace, logProjectInstructionTrace } from "./prompt-trace.js";
 import { isCancellationError, sendAgentCancelled, sendAiCancelled, beginRequestExecution, finishRequestExecution, parseMessage } from "./request-lifecycle.js";
-import { estimateTextTokens, estimateMessagesTokens, computeHistoryBudget, appendChatTurnToSession, selectHistoryForModel, createSummaryMessage, loadSessionCompressorPrompt, filterLlmContextMessages } from "./token-budget.js";
+import { estimateTextTokens, estimateMessagesTokens, computeHistoryBudget, appendChatTurnToSession, selectHistoryForModel, createSummaryMessage, loadSessionCompressorPrompt, filterLlmContextMessages, getTokenCounter } from "./token-budget.js";
 import { getSessionProjectPath, toChatMessage, clampSessionOpenMessageLimit, createPreviewValue, createTimelinePageResult, startFullSessionLoad, waitForFullSessionLoad } from "./session-preview.js";
 import { createProviderChatOptions } from "./provider-chat-options.js";
+import { hydrateImageAttachmentContexts } from "../session/session-attachments.js";
+import { getUserPrompt } from "../user-prompt-store.js";
 import { createGodotRuntimeStatus } from "./godot-runtime-status.js";
 import { clipTextByChars, cloneAdditionalContextItems, getAdditionalContextDataRecord, getContextNumber, getContextString, createLineColumnRangeText, appendScriptSelectionPromptLines, appendFilesystemSelectionPromptLines, createAdditionalContextPromptSection } from "./additional-context.js";
 import { MAX_GUIDE_TEXT_CHARS, createGuideId, createPendingGuide, serializePendingGuide, findPendingGuideIndexById, findPendingGuideByClientId, readEventDataObject, hydratePendingGuides, persistGuideEvent, formatGuidePromptSection, consumePendingGuideSection } from "./pending-guides.js";
@@ -224,6 +218,192 @@ async function applySessionApprovalMode(session: ClientSession, metadata?: Pick<
 	}
 
 	session.approvalGateway.setMode(await getApprovalMode());
+}
+
+type ContextEstimateSource = "provider" | "local";
+
+type TokenEstimatePart = {
+	tokens: number;
+	source: ContextEstimateSource;
+};
+
+type ContextEstimateParams = {
+	message?: string | undefined;
+	mode?: "agent" | "ask" | "plan" | undefined;
+	provider?: ProviderId | undefined;
+	model?: string | undefined;
+	additionalContext?: AdditionalContextItem[] | undefined;
+};
+
+function createProviderRuntimeContextText(provider: ProviderId, model: string): string {
+	const providerName: string = getProviderDisplayName(provider);
+	return [
+		`当前后端实际模型供应商：${providerName}（provider id: ${provider}）。`,
+		`当前后端实际模型 ID：${model}。`,
+		"如果用户询问“你是什么模型”“来自哪个供应商”“当前用的模型/供应商是什么”，必须优先基于以上运行时事实回答。",
+		"回答时可以说明你在产品角色上是 Godot Daedalus 的 Godot 开发助手，但不要用产品角色替代实际模型和供应商信息。"
+	].join("\n");
+}
+
+async function createContextEstimateProviderOptions(session: ClientSession, provider: ProviderId, model: string): Promise<ProviderChatOptions | null> {
+	const config: ProviderConfigWithSecret | null = await loadProviderConfigWithSecret(provider);
+	const apiKey: string | undefined = provider === session.activeProvider
+		? session.providerApiKey ?? config?.apiKey
+		: config?.apiKey;
+	if (apiKey === undefined) {
+		return null;
+	}
+
+	const endpointType = getProviderDefaultEndpointType(provider);
+	return {
+		provider,
+		apiKey,
+		model,
+		baseUrl: provider === session.activeProvider ? session.providerBaseUrl ?? config?.baseUrl : config?.baseUrl,
+		endpointType,
+		adapterFamily: getProviderAdapterFamily(provider, endpointType),
+		modelProfile: resolveModelProfile(provider, model)
+	};
+}
+
+async function estimateTextPart(options: ProviderChatOptions | null, text: string): Promise<TokenEstimatePart> {
+	if (text.trim().length === 0) {
+		return { tokens: 0, source: "local" };
+	}
+	if (options !== null) {
+		try {
+			const providerTokens: number | null = await estimateProviderTextTokens(options, text);
+			if (providerTokens !== null) {
+				return { tokens: providerTokens, source: "provider" };
+			}
+		} catch {
+			// UI 估算不能因为供应商 token estimator 不可用而失败。
+		}
+	}
+	return { tokens: await estimateTextTokens(text), source: "local" };
+}
+
+async function estimateCurrentMessagePart(options: ProviderChatOptions | null, params: AiChatParams): Promise<TokenEstimatePart> {
+	if (options !== null && hasImageAttachments(params)) {
+		try {
+			const providerTokens: number | null = await estimateProviderMessagesTokens(options, [createCurrentUserMessage(params)]);
+			if (providerTokens !== null) {
+				return { tokens: providerTokens, source: "provider" };
+			}
+		} catch {
+			// 继续走本地近似估算。
+		}
+	}
+
+	const textPart: TokenEstimatePart = await estimateTextPart(options, params.message);
+	let imageTokens: number = 0;
+	try {
+		imageTokens = getImageAttachments(params.additionalContext)
+			.reduce((sum: number, image): number => sum + Math.ceil(image.byteSize / 384), 0);
+	} catch {
+		imageTokens = 0;
+	}
+	return {
+		tokens: textPart.tokens + imageTokens,
+		source: textPart.source
+	};
+}
+
+function createCompressReason(session: ClientSession, activeSession: boolean, messageCount: number, hasCompressionKey: boolean): string | null {
+	if (!activeSession) {
+		return "No active session";
+	}
+	if (session.activeRunRequestId !== undefined) {
+		return "A run is active";
+	}
+	if (!hasCompressionKey) {
+		return `${getProviderDisplayName(session.activeProvider)} API key not configured`;
+	}
+	if (messageCount <= 8) {
+		return "Not enough messages";
+	}
+	return null;
+}
+
+async function createContextEstimateResult(session: ClientSession, params: ContextEstimateParams | undefined): Promise<Record<string, unknown>> {
+	const activeSession: boolean = session.sessionId !== undefined;
+	if (activeSession) {
+		await waitForFullSessionLoad(session);
+	}
+
+	const provider: ProviderId = params?.provider !== undefined && isProviderId(params.provider)
+		? params.provider
+		: session.activeProvider;
+	const model: string = params?.model?.trim() || (provider === session.activeProvider
+		? session.providerModel ?? session.modelProfile.model
+		: getProviderDefaultModel(provider));
+	const profile: ModelProfile = resolveModelProfile(provider, model);
+	const providerOptions: ProviderChatOptions | null = await createContextEstimateProviderOptions(session, provider, model);
+	const message: string = params?.message ?? session.workbenchComposer.text;
+	const mode: "agent" | "ask" | "plan" = params?.mode ?? session.workbenchComposer.chatMode ?? "agent";
+	const additionalContext: AdditionalContextItem[] = cloneAdditionalContextItems(params?.additionalContext ?? session.workbenchComposer.additionalContext) ?? [];
+	const rawChatParams: AiChatParams = { message, mode, additionalContext };
+	const chatParams: AiChatParams = activeSession
+		? await hydrateImageAttachmentContexts(session.sessionId, rawChatParams)
+		: rawChatParams;
+	const storedUserPrompt: string = await getUserPrompt();
+	const systemPrompt: string = await composeSystemPrompt(
+		undefined,
+		storedUserPrompt.length > 0 ? storedUserPrompt : undefined,
+		createProviderRuntimeContextText(provider, model),
+		mode
+	);
+	const additionalContextSection: string = createAdditionalContextPromptSection(chatParams.additionalContext);
+	const systemAndContextPart: TokenEstimatePart = await estimateTextPart(
+		providerOptions,
+		systemPrompt + (additionalContextSection.length > 0 ? `\n\n${additionalContextSection}` : "")
+	);
+	const currentMessagePart: TokenEstimatePart = await estimateCurrentMessagePart(providerOptions, chatParams);
+	const outputReserveTokens: number = profile.defaultOutputReserveTokens;
+	const historyBudgetTokens: number = await computeInputBudget({
+		profile,
+		outputReserveTokens,
+		systemPromptTokens: systemAndContextPart.tokens,
+		mcpContextTokens: 0,
+		toolDefinitionsTokens: 0,
+		currentMessageTokens: currentMessagePart.tokens,
+		tokenCounter: await getTokenCounter()
+	});
+	const historyMessages: ChatMessage[] = activeSession ? await selectHistoryForModel(session, historyBudgetTokens) : [];
+	const historyTokens: number = await estimateMessagesTokens(historyMessages);
+	const usedTokens: number = Math.max(
+		0,
+		systemAndContextPart.tokens
+		+ currentMessagePart.tokens
+		+ historyTokens
+		+ outputReserveTokens
+		+ profile.safetyMarginTokens
+	);
+	const contextWindowTokens: number = profile.contextWindowTokens;
+	const availableTokens: number = Math.max(0, contextWindowTokens - usedTokens);
+	const percent: number = contextWindowTokens > 0
+		? Math.min(100, Math.round((usedTokens / contextWindowTokens) * 1000) / 10)
+		: 0;
+	const compressionConfig: ProviderConfigWithSecret | null = activeSession ? await loadProviderConfigWithSecret(session.activeProvider) : null;
+	const hasCompressionKey: boolean = session.providerApiKey !== undefined || compressionConfig?.apiKey !== undefined;
+	const compressReason: string | null = createCompressReason(session, activeSession, session.messages.length, hasCompressionKey);
+
+	return {
+		usedTokens,
+		contextWindowTokens,
+		percent,
+		availableTokens,
+		historyTokens,
+		currentMessageTokens: currentMessagePart.tokens,
+		systemAndContextTokens: systemAndContextPart.tokens,
+		outputReserveTokens,
+		safetyMarginTokens: profile.safetyMarginTokens,
+		modelLabel: `${getProviderDisplayName(provider)} / ${model}`,
+		estimationSource: systemAndContextPart.source === "provider" || currentMessagePart.source === "provider" ? "provider" : "local",
+		canCompress: compressReason === null,
+		compressReason,
+		summaryActive: session.summaryMessage !== undefined
+	};
 }
 
 function createSessionInfoResult(session: ClientSession, mcpHost: McpHost, historyTokensStored: number | null = null): Record<string, unknown> {
@@ -777,6 +957,28 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 				ok: true,
 				result: metadata
 			});
+			break;
+		}
+
+		case "session.context.estimate": {
+			try {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: true,
+					result: await createContextEstimateResult(session, request.params)
+				});
+			} catch (error: unknown) {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: {
+						code: "context_estimate_error",
+						message: error instanceof Error ? error.message : "Context estimate failed"
+					}
+				});
+			}
 			break;
 		}
 

@@ -561,6 +561,18 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 	z.object({
 		type: z.literal("request"),
 		id: z.string(),
+		method: z.literal("session.context.estimate"),
+		params: z.object({
+			message: z.string().max(20000).optional(),
+			mode: z.enum(["agent", "ask", "plan"]).optional(),
+			provider: providerIdSchema.optional(),
+			model: z.string().min(1).optional(),
+			additionalContext: z.array(additionalContextItemSchema).max(10).optional(),
+		}).optional(),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
 		method: z.literal("session.workbench.get"),
 		params: z.object({}).optional(),
 	}),

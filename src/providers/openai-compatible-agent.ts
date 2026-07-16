@@ -32,8 +32,8 @@ const FINALIZE_AFTER_TOOL_LIMIT_PROMPT: string =
 	"工具调用阶段已经达到后端限制。请停止请求更多工具，基于目前已经获得的工具结果直接回答用户。"
 	+ "如果信息不完整，请明确说明哪些部分是根据已有信息总结的，哪些部分还需要进一步检查。";
 const TOOL_PROTOCOL_VIOLATION_RETRY_LIMIT: number = 1;
-export type DeepSeekAgentContinuation = ChatCompletionsAgentContinuation;
-export type DeepSeekAgentResult = ProviderAgentResult;
+export type OpenAICompatibleAgentContinuation = ChatCompletionsAgentContinuation;
+export type OpenAICompatibleAgentResult = ProviderAgentResult;
 
 type StreamedAssistantMessage = {
 	contentText: string;
@@ -395,6 +395,131 @@ class ToolSyntaxStreamFilter {
 	}
 }
 
+type ThinkTagSplitResult = {
+	visibleText: string;
+	thinkingText: string;
+	thinkingDone: boolean;
+};
+
+function shouldSplitThinkTags(options: DeepSeekChatOptions): boolean {
+	return options.provider === "minimax";
+}
+
+function isMiniMaxThinkOpeningFragment(text: string): boolean {
+	return /^<\s*(?:t(?:h(?:i(?:n(?:k)?)?)?)?)?$/iu.test(text);
+}
+
+function isMiniMaxThinkClosingFragment(text: string): boolean {
+	return /^<\s*\/\s*(?:t(?:h(?:i(?:n(?:k)?)?)?)?)?$/iu.test(text);
+}
+
+function findMiniMaxThinkOpeningTag(text: string): RegExpExecArray | null {
+	return /<\s*think(?:\s+[^<>]*?)?\s*>/iu.exec(text);
+}
+
+function findMiniMaxThinkClosingTag(text: string): RegExpExecArray | null {
+	return /<\/\s*think\s*>/iu.exec(text);
+}
+
+function appendReasoningContent(existing: string, addition: string): string {
+	if (addition.length === 0) {
+		return existing;
+	}
+	if (existing.length === 0) {
+		return addition;
+	}
+	return `${existing}\n${addition}`;
+}
+
+class MiniMaxThinkTagStreamFilter {
+	private pendingText: string = "";
+	private insideThink: boolean = false;
+
+	push(text: string): ThinkTagSplitResult {
+		this.pendingText += text;
+		return this.drain(false);
+	}
+
+	flush(): ThinkTagSplitResult {
+		return this.drain(true);
+	}
+
+	private drain(flush: boolean): ThinkTagSplitResult {
+		let visibleText: string = "";
+		let thinkingText: string = "";
+		let thinkingDone: boolean = false;
+
+		while (this.pendingText.length > 0) {
+			if (this.insideThink) {
+				const closingTag: RegExpExecArray | null = findMiniMaxThinkClosingTag(this.pendingText);
+				if (closingTag === null) {
+					if (flush) {
+						thinkingText += this.pendingText;
+						this.pendingText = "";
+						this.insideThink = false;
+						thinkingDone = true;
+						break;
+					}
+
+					const lastTagStart: number = this.pendingText.lastIndexOf("<");
+					if (lastTagStart >= 0 && isMiniMaxThinkClosingFragment(this.pendingText.slice(lastTagStart))) {
+						thinkingText += this.pendingText.slice(0, lastTagStart);
+						this.pendingText = this.pendingText.slice(lastTagStart);
+						break;
+					}
+
+					thinkingText += this.pendingText;
+					this.pendingText = "";
+					break;
+				}
+
+				thinkingText += this.pendingText.slice(0, closingTag.index);
+				this.pendingText = this.pendingText.slice(closingTag.index + closingTag[0].length);
+				this.insideThink = false;
+				thinkingDone = true;
+				continue;
+			}
+
+			const openingTag: RegExpExecArray | null = findMiniMaxThinkOpeningTag(this.pendingText);
+			if (openingTag === null) {
+				if (flush) {
+					visibleText += this.pendingText;
+					this.pendingText = "";
+					break;
+				}
+
+				const lastTagStart: number = this.pendingText.lastIndexOf("<");
+				if (lastTagStart >= 0 && isMiniMaxThinkOpeningFragment(this.pendingText.slice(lastTagStart))) {
+					visibleText += this.pendingText.slice(0, lastTagStart);
+					this.pendingText = this.pendingText.slice(lastTagStart);
+					break;
+				}
+
+				visibleText += this.pendingText;
+				this.pendingText = "";
+				break;
+			}
+
+			visibleText += this.pendingText.slice(0, openingTag.index);
+			this.pendingText = this.pendingText.slice(openingTag.index + openingTag[0].length);
+			this.insideThink = true;
+		}
+
+		return { visibleText, thinkingText, thinkingDone };
+	}
+}
+
+function splitMiniMaxThinkTags(text: string): ThinkTagSplitResult {
+	const filter = new MiniMaxThinkTagStreamFilter();
+	const first: ThinkTagSplitResult = filter.push(text);
+	const flushed: ThinkTagSplitResult = filter.flush();
+	return {
+		visibleText: first.visibleText + flushed.visibleText,
+		thinkingText: first.thinkingText + flushed.thinkingText,
+		thinkingDone: first.thinkingDone || flushed.thinkingDone
+	};
+}
+
 function getReasoningContent(message: unknown): string {
 	if (message === null || typeof message !== "object") {
 		return "";
@@ -509,9 +634,11 @@ async function readStreamingAssistantMessage(
 	const stream = await client.chat.completions.create(requestBody, { signal: abortSignal });
 	const toolCallAccumulators: Map<number, ToolCallAccumulator> = new Map();
 	const contentFilter: ToolSyntaxStreamFilter = new ToolSyntaxStreamFilter();
+	const thinkTagFilter: MiniMaxThinkTagStreamFilter | null = shouldSplitThinkTags(options) ? new MiniMaxThinkTagStreamFilter() : null;
 	let contentText = "";
 	let reasoningContent = "";
 	let emittedReasoning = false;
+	let openThinkTagReasoning = false;
 
 	for await (const chunk of stream) {
 		const delta: unknown = (chunk as ChatCompletionChunk).choices[0]?.delta;
@@ -528,9 +655,23 @@ async function readStreamingAssistantMessage(
 
 		const contentDelta: string = getContentDelta(delta);
 		if (contentDelta.length > 0) {
-			contentText += contentDelta;
+			const splitContent: ThinkTagSplitResult = thinkTagFilter?.push(contentDelta) ?? {
+				visibleText: contentDelta,
+				thinkingText: "",
+				thinkingDone: false
+			};
+			if (splitContent.thinkingText.length > 0) {
+				reasoningContent = appendReasoningContent(reasoningContent, splitContent.thinkingText);
+				openThinkTagReasoning = true;
+				onEvent?.({ type: "ai.thinking.delta", text: splitContent.thinkingText });
+			}
+			if (splitContent.thinkingDone && openThinkTagReasoning) {
+				onEvent?.({ type: "ai.thinking.done" });
+				openThinkTagReasoning = false;
+			}
+			contentText += splitContent.visibleText;
 			if (emitContentDeltas) {
-				const visibleDelta: string = contentFilter.push(contentDelta);
+				const visibleDelta: string = contentFilter.push(splitContent.visibleText);
 				if (visibleDelta.length > 0) {
 					onEvent?.({ type: "ai.delta", text: visibleDelta });
 				}
@@ -547,9 +688,32 @@ async function readStreamingAssistantMessage(
 	}
 
 	if (emitContentDeltas) {
+		const flushedThinkTags: ThinkTagSplitResult | null = thinkTagFilter?.flush() ?? null;
+		if (flushedThinkTags !== null) {
+			if (flushedThinkTags.thinkingText.length > 0) {
+				reasoningContent = appendReasoningContent(reasoningContent, flushedThinkTags.thinkingText);
+				openThinkTagReasoning = true;
+				onEvent?.({ type: "ai.thinking.delta", text: flushedThinkTags.thinkingText });
+			}
+			if (flushedThinkTags.thinkingDone && openThinkTagReasoning) {
+				onEvent?.({ type: "ai.thinking.done" });
+				openThinkTagReasoning = false;
+			}
+			contentText += flushedThinkTags.visibleText;
+			const visibleDelta: string = contentFilter.push(flushedThinkTags.visibleText);
+			if (visibleDelta.length > 0) {
+				onEvent?.({ type: "ai.delta", text: visibleDelta });
+			}
+		}
 		const visibleTail: string = contentFilter.flush();
 		if (visibleTail.length > 0) {
 			onEvent?.({ type: "ai.delta", text: visibleTail });
+		}
+	} else {
+		const flushedThinkTags: ThinkTagSplitResult | null = thinkTagFilter?.flush() ?? null;
+		if (flushedThinkTags !== null) {
+			reasoningContent = appendReasoningContent(reasoningContent, flushedThinkTags.thinkingText);
+			contentText += flushedThinkTags.visibleText;
 		}
 	}
 
@@ -616,11 +780,12 @@ async function createFinalAnswer(
 		return createToolResultLimitFallback(reason);
 	}
 
-	if (containsKnownToolSyntax(text)) {
+	const visibleText: string = shouldSplitThinkTags(options) ? splitMiniMaxThinkTags(text).visibleText : text;
+	if (visibleText.length === 0 || containsKnownToolSyntax(visibleText)) {
 		return createToolResultLimitFallback(reason);
 	}
 
-	return text;
+	return visibleText;
 }
 
 async function runAgentLoop(
@@ -639,7 +804,7 @@ async function runAgentLoop(
 	abortSignal?: AbortSignal | undefined,
 	toolResultEnricher?: ToolResultEnricher | undefined,
 	toolContext?: ToolExecutionContext | undefined
-): Promise<DeepSeekAgentResult> {
+): Promise<OpenAICompatibleAgentResult> {
 	let totalToolResultChars: number = initialToolResultChars;
 	const allowedToolNames: ReadonlySet<string> = getAllowedToolNames(tools);
 	let toolProtocolViolationRetries: number = 0;
@@ -695,6 +860,15 @@ async function runAgentLoop(
 			emitReasoningContent(message, onEvent);
 			toolCalls = message.tool_calls;
 			contentText = message.content;
+			if (shouldSplitThinkTags(options) && typeof contentText === "string") {
+				const splitContent: ThinkTagSplitResult = splitMiniMaxThinkTags(contentText);
+				if (splitContent.thinkingText.length > 0) {
+					reasoningContent = appendReasoningContent(reasoningContent, splitContent.thinkingText);
+					onEvent?.({ type: "ai.thinking.delta", text: splitContent.thinkingText });
+					onEvent?.({ type: "ai.thinking.done" });
+				}
+				contentText = splitContent.visibleText.length > 0 ? splitContent.visibleText : null;
+			}
 		}
 
 		if (toolCalls !== undefined && toolCalls.length > 0) {
@@ -839,7 +1013,7 @@ async function runAgentLoop(
 	};
 }
 
-export async function runDeepSeekAgent(
+export async function runOpenAICompatibleAgent(
 	params: AiChatParams,
 	options: DeepSeekChatOptions,
 	history: ChatMessage[],
@@ -851,7 +1025,7 @@ export async function runDeepSeekAgent(
 	abortSignal?: AbortSignal | undefined,
 	toolResultEnricher?: ToolResultEnricher | undefined,
 	toolContext?: ToolExecutionContext | undefined
-): Promise<DeepSeekAgentResult> {
+): Promise<OpenAICompatibleAgentResult> {
 	const client: OpenAI = createDeepSeekClient(options);
 	const toolCatalog = createWorkspaceToolCatalog(toolContext);
 	const tools = allowedToolNames !== undefined
@@ -868,7 +1042,7 @@ export async function runDeepSeekAgent(
 	return runAgentLoop(client, params, options, messages, mcpHost, gateway, tools, 0, maxSteps, 0, false, onEvent, abortSignal, toolResultEnricher, toolContext);
 }
 
-export async function runDeepSeekAgentStreaming(
+export async function runOpenAICompatibleAgentStreaming(
 	params: AiChatParams,
 	options: DeepSeekChatOptions,
 	history: ChatMessage[],
@@ -880,7 +1054,7 @@ export async function runDeepSeekAgentStreaming(
 	abortSignal?: AbortSignal | undefined,
 	toolResultEnricher?: ToolResultEnricher | undefined,
 	toolContext?: ToolExecutionContext | undefined
-): Promise<DeepSeekAgentResult> {
+): Promise<OpenAICompatibleAgentResult> {
 	const client: OpenAI = createDeepSeekClient(options);
 	const toolCatalog = createWorkspaceToolCatalog(toolContext);
 	const tools = allowedToolNames !== undefined
@@ -897,10 +1071,10 @@ export async function runDeepSeekAgentStreaming(
 	return runAgentLoop(client, params, options, messages, mcpHost, gateway, tools, 0, maxSteps, 0, true, onEvent, abortSignal, toolResultEnricher, toolContext);
 }
 
-export async function continueDeepSeekAgent(
+export async function continueOpenAICompatibleAgent(
 	params: AiChatParams,
 	options: DeepSeekChatOptions,
-	continuation: DeepSeekAgentContinuation,
+	continuation: OpenAICompatibleAgentContinuation,
 	approvedToolResult: ApprovedToolResult,
 	mcpHost: McpHost,
 	gateway: ApprovalGateway,
@@ -909,7 +1083,7 @@ export async function continueDeepSeekAgent(
 	abortSignal?: AbortSignal | undefined,
 	toolResultEnricher?: ToolResultEnricher | undefined,
 	toolContext?: ToolExecutionContext | undefined
-): Promise<DeepSeekAgentResult> {
+): Promise<OpenAICompatibleAgentResult> {
 	const client: OpenAI = createDeepSeekClient(options);
 	const toolCatalog = createWorkspaceToolCatalog(toolContext);
 	const tools = allowedToolNames !== undefined
@@ -964,10 +1138,10 @@ export async function continueDeepSeekAgent(
 	);
 }
 
-export async function continueDeepSeekAgentStreaming(
+export async function continueOpenAICompatibleAgentStreaming(
 	params: AiChatParams,
 	options: DeepSeekChatOptions,
-	continuation: DeepSeekAgentContinuation,
+	continuation: OpenAICompatibleAgentContinuation,
 	approvedToolResult: ApprovedToolResult,
 	mcpHost: McpHost,
 	gateway: ApprovalGateway,
@@ -976,7 +1150,7 @@ export async function continueDeepSeekAgentStreaming(
 	abortSignal?: AbortSignal | undefined,
 	toolResultEnricher?: ToolResultEnricher | undefined,
 	toolContext?: ToolExecutionContext | undefined
-): Promise<DeepSeekAgentResult> {
+): Promise<OpenAICompatibleAgentResult> {
 	const client: OpenAI = createDeepSeekClient(options);
 	const toolCatalog = createWorkspaceToolCatalog(toolContext);
 	const tools = allowedToolNames !== undefined

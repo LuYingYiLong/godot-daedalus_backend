@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { mock } from "node:test";
 import keytar from "keytar";
-import { runDeepSeekAgent } from "../src/providers/deepseek-agent.js";
+import { runOpenAICompatibleAgent } from "../src/providers/openai-compatible-agent.js";
 import { chatWithOpenAICompatible, streamChatWithOpenAICompatible } from "../src/providers/provider-chat-completions-client.js";
 import { fetchOpenAICompatibleModels, listProviderModels } from "../src/providers/provider-models.js";
 import { saveProviderConfig } from "../src/providers/provider-config-store.js";
@@ -153,7 +153,7 @@ test("Zhipu OpenAI-compatible requests preserve image input, streaming, and mode
 			}
 		};
 		(agentParams.options as Record<string, unknown>).requireToolCallOnFirstStep = true;
-		const agentResult = await runDeepSeekAgent(
+		const agentResult = await runOpenAICompatibleAgent(
 			agentParams,
 			{ ...options, model: "glm-5.2" },
 			[],

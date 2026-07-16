@@ -1,14 +1,6 @@
 import WebSocket from "ws";
 import { composeSystemPrompt, listPromptTemplates } from "../prompts/registry.js";
 import type { AdditionalContextItem, AiChatParams, ChatMessage, ClientRequest, ModelProfile, ProviderId, ServerEvent } from "../protocol/types.js";
-import {
-	continueDeepSeekAgent,
-	continueDeepSeekAgentStreaming,
-	runDeepSeekAgent,
-	runDeepSeekAgentStreaming,
-	type DeepSeekAgentContinuation,
-	type DeepSeekAgentResult
-} from "../providers/deepseek-agent.js";
 import type { OnToolEvent, ToolEvent } from "../tools/tool-dispatcher.js";
 import { parseToolResultSummary } from "../tools/tool-result-parser.js";
 import { chatWithDeepSeek, createDeepSeekClient, resolveChatModel, type ProviderChatOptions } from "../providers/deepseek-client.js";
