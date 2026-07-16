@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { mock } from "node:test";
@@ -79,7 +79,7 @@ test("custom MCP config update preserves identity and applies secret update sema
 		assert.equal(updated?.createdAt, createdAt);
 		assert.equal(updated?.description, "Updated");
 		assert.equal(updated?.enabled, false);
-		assert.equal(updated?.planAccess, "read");
+		assert.equal(updated?.planAccess, "disabled");
 		assert.equal(updated?.command, "uvx");
 		assert.deepEqual(updated?.args, ["new-mcp"]);
 		assert.deepEqual(updated?.envNames, ["NEW_TOKEN", "TOKEN"]);
@@ -117,7 +117,7 @@ test("custom MCP config update preserves identity and applies secret update sema
 		const stored = await listStoredCustomMcpServerConfigs();
 		assert.equal(stored[0]?.id, serverId);
 		assert.equal(stored[0]?.name, "Demo Tools");
-		assert.equal(stored[0]?.planAccess, "read");
+		assert.equal(stored[0]?.planAccess, "disabled");
 	});
 });
 
@@ -144,7 +144,7 @@ test("custom MCP config update can switch transports and preserve existing heade
 			}
 		});
 		assert.equal(switched?.transport, "http");
-		assert.equal(switched?.planAccess, "read");
+		assert.equal(switched?.planAccess, "disabled");
 		assert.equal(switched?.url, "https://example.com/mcp");
 		assert.deepEqual(switched?.headerNames, ["Authorization"]);
 		assert.equal(secrets.has(`mcp:${serverId}:env:TOKEN`), false);
@@ -159,8 +159,39 @@ test("custom MCP config update can switch transports and preserve existing heade
 			}
 		});
 		assert.equal(preserved?.url, "https://example.com/next");
-		assert.equal(preserved?.planAccess, "read");
+		assert.equal(preserved?.planAccess, "disabled");
 		assert.deepEqual(preserved?.headerNames, ["Authorization"]);
 		assert.equal(secrets.get(`mcp:${serverId}:header:Authorization`), "Bearer first");
+	});
+});
+
+test("custom MCP plan access is migrated and never exposed to plan mode", async (): Promise<void> => {
+	await withTempAppData(async (): Promise<void> => {
+		const configPath: string = getMcpServersConfigPath();
+		await mkdir(join(process.env.USERPROFILE!, ".daedalus", "config"), { recursive: true });
+		await writeFile(configPath, JSON.stringify([{
+			id: "custom-old-plan-server-12345678",
+			name: "Old Plan Server",
+			description: "Legacy read access",
+			transport: "stdio",
+			enabled: true,
+			planAccess: "read",
+			createdAt: "2026-01-01T00:00:00.000Z",
+			updatedAt: "2026-01-01T00:00:00.000Z",
+			command: "npx"
+		}], null, 2), "utf8");
+
+		const stored = await listStoredCustomMcpServerConfigs();
+		assert.equal(stored[0]?.planAccess, "disabled");
+		assert.doesNotMatch(await readFile(configPath, "utf8"), /"planAccess": "read"/);
+
+		const workspace: WorkspaceConfig = {
+			id: "workspace-a",
+			name: "Workspace A",
+			kind: "godot",
+			rootPath: "D:/Projects/Game"
+		};
+		const configs: McpServerConfig[] = await buildCustomMcpServerConfigs(workspace);
+		assert.equal(configs[0]?.planAccess, "disabled");
 	});
 });

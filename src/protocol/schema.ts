@@ -288,7 +288,7 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		method: z.literal("provider.config.set"),
 		params: z.object({
 			provider: providerIdSchema,
-			apiKey: z.string().optional(),
+			apiKey: z.string().min(1).nullable().optional(),
 			model: z.string().min(1).optional(),
 			baseUrl: z.string().min(1).max(1000).nullable().optional(),
 			activate: z.boolean().optional(),
@@ -395,6 +395,16 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		method: z.literal("skill.remove"),
 		params: z.object({
 			ref: skillRefSchema,
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("skill.install"),
+		params: z.object({
+			source: z.enum(["personal", "project"]),
+			kind: z.enum(["folder", "zip"]),
+			path: z.string().min(1),
 		}),
 	}),
 	z.object({
@@ -885,6 +895,14 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		type: z.literal("request"),
 		id: z.string(),
 		method: z.literal("workspace.select"),
+		params: z.object({
+			workspaceId: z.string().min(1),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("workspace.delete"),
 		params: z.object({
 			workspaceId: z.string().min(1),
 		}),

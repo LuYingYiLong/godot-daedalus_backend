@@ -83,7 +83,7 @@ function normalizeText(value: string | undefined, maxLength: number): string {
 }
 
 function normalizePlanAccess(value: CustomMcpPlanAccess | undefined): CustomMcpPlanAccess {
-	return value === "read" ? "read" : "disabled";
+	return "disabled";
 }
 
 function slugify(value: string): string {
@@ -200,6 +200,11 @@ function isStoredCustomMcpServerConfig(value: unknown): value is StoredCustomMcp
 		&& typeof record.updatedAt === "string";
 }
 
+function normalizeStoredConfig(config: StoredCustomMcpServerConfig): StoredCustomMcpServerConfig {
+	const planAccess: CustomMcpPlanAccess = normalizePlanAccess(config.planAccess);
+	return config.planAccess === planAccess ? config : { ...config, planAccess };
+}
+
 async function readStoredConfigs(): Promise<StoredCustomMcpServerConfig[]> {
 	try {
 		const raw: string = await readFile(getMcpServersConfigPath(), "utf8");
@@ -208,7 +213,14 @@ async function readStoredConfigs(): Promise<StoredCustomMcpServerConfig[]> {
 			return [];
 		}
 
-		return parsed.filter(isStoredCustomMcpServerConfig);
+		const storedConfigs: StoredCustomMcpServerConfig[] = parsed.filter(isStoredCustomMcpServerConfig);
+		const normalizedConfigs: StoredCustomMcpServerConfig[] = storedConfigs.map(normalizeStoredConfig);
+		if (normalizedConfigs.some((config: StoredCustomMcpServerConfig, index: number): boolean => {
+			return config !== storedConfigs[index];
+		})) {
+			await writeStoredConfigs(normalizedConfigs);
+		}
+		return normalizedConfigs;
 	} catch {
 		return [];
 	}

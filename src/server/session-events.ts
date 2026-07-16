@@ -11,6 +11,17 @@ import { logger } from "../logger.js";
 
 const THINKING_EVENT_FLUSH_CHARS = 800;
 
+function withSessionId(data: unknown, sessionId: string | undefined): unknown {
+	if (sessionId === undefined || typeof data !== "object" || data === null || Array.isArray(data)) {
+		return data;
+	}
+
+	return {
+		...data,
+		sessionId
+	};
+}
+
 export function shouldPersistSessionEvent(eventName: ServerEvent["event"]): boolean {
 	return eventName.startsWith("agent.")
 		|| eventName.startsWith("tool.")
@@ -202,18 +213,19 @@ export function sendSessionEvent(
 	data: unknown,
 	persistRequestId: string = requestId
 ): void {
+	const eventData: unknown = withSessionId(data, session.sessionId);
 	sendJson(socket, {
 		type: "event",
 		id: requestId,
 		event: eventName,
-		data
+		data: eventData
 	});
 
 	if (session.sessionId !== undefined) {
-		broadcastSessionEvent(socket, session.sessionId, requestId, eventName, data);
+		broadcastSessionEvent(socket, session.sessionId, requestId, eventName, eventData);
 	}
 
-	persistSessionEvent(session, eventName, data, persistRequestId);
+	persistSessionEvent(session, eventName, eventData, persistRequestId);
 }
 
 export function sendGlobalEvent(socket: WebSocket, requestId: string, eventName: ServerEvent["event"], data: unknown): void {

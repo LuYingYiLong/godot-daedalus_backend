@@ -383,13 +383,40 @@
     "ownedBy": "zhipu"
   },
   {
-    "id": "qwen-plus",
-    "displayName": "Qwen Plus",
+    "id": "qwen3.7-max",
+    "displayName": "Qwen3.7 Max",
     "provider": "dashscope",
     "endpointType": "openai-chat-completions",
     "contextWindowTokens": 1000000,
     "maxOutputTokens": 32000,
     "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
+    "ownedBy": "dashscope"
+  },
+  {
+    "id": "qwen3.7-plus",
+    "displayName": "Qwen3.7 Plus",
+    "provider": "dashscope",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 1000000,
+    "maxOutputTokens": 32000,
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
+    "ownedBy": "dashscope"
+  },
+  {
+    "id": "qwen3.6-flash",
+    "displayName": "Qwen3.6 Flash",
+    "provider": "dashscope",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 1000000,
+    "maxOutputTokens": 32000,
+    "capabilities": {
+      "reasoning": true,
       "tools": true
     },
     "ownedBy": "dashscope"
@@ -397,6 +424,45 @@
   {
     "id": "qwen-image-2.0-pro",
     "displayName": "Qwen Image 2.0 Pro",
+    "provider": "dashscope",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 32000,
+    "maxOutputTokens": 1,
+    "capabilities": {
+      "imageGeneration": true,
+      "imageEdit": true
+    },
+    "ownedBy": "dashscope"
+  },
+  {
+    "id": "qwen-image-2.0-pro-2026-06-22",
+    "displayName": "Qwen Image 2.0 Pro 2026-06-22",
+    "provider": "dashscope",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 32000,
+    "maxOutputTokens": 1,
+    "capabilities": {
+      "imageGeneration": true,
+      "imageEdit": true
+    },
+    "ownedBy": "dashscope"
+  },
+  {
+    "id": "qwen-image-2.0-pro-2026-04-22",
+    "displayName": "Qwen Image 2.0 Pro 2026-04-22",
+    "provider": "dashscope",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 32000,
+    "maxOutputTokens": 1,
+    "capabilities": {
+      "imageGeneration": true,
+      "imageEdit": true
+    },
+    "ownedBy": "dashscope"
+  },
+  {
+    "id": "qwen-image-2.0-pro-2026-03-03",
+    "displayName": "Qwen Image 2.0 Pro 2026-03-03",
     "provider": "dashscope",
     "endpointType": "openai-chat-completions",
     "contextWindowTokens": 32000,
@@ -421,8 +487,93 @@
     "ownedBy": "dashscope"
   },
   {
+    "id": "qwen-image-2.0-2026-03-03",
+    "displayName": "Qwen Image 2.0 2026-03-03",
+    "provider": "dashscope",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 32000,
+    "maxOutputTokens": 1,
+    "capabilities": {
+      "imageGeneration": true,
+      "imageEdit": true
+    },
+    "ownedBy": "dashscope"
+  },
+  {
+    "id": "qwen-image-max",
+    "displayName": "Qwen Image Max",
+    "provider": "dashscope",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 32000,
+    "maxOutputTokens": 1,
+    "capabilities": {
+      "imageGeneration": true
+    },
+    "ownedBy": "dashscope"
+  },
+  {
+    "id": "qwen-image-max-2025-12-30",
+    "displayName": "Qwen Image Max 2025-12-30",
+    "provider": "dashscope",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 32000,
+    "maxOutputTokens": 1,
+    "capabilities": {
+      "imageGeneration": true
+    },
+    "ownedBy": "dashscope"
+  },
+  {
+    "id": "qwen-image-plus",
+    "displayName": "Qwen Image Plus",
+    "provider": "dashscope",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 32000,
+    "maxOutputTokens": 1,
+    "capabilities": {
+      "imageGeneration": true
+    },
+    "ownedBy": "dashscope"
+  },
+  {
+    "id": "qwen-image-plus-2026-01-09",
+    "displayName": "Qwen Image Plus 2026-01-09",
+    "provider": "dashscope",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 32000,
+    "maxOutputTokens": 1,
+    "capabilities": {
+      "imageGeneration": true
+    },
+    "ownedBy": "dashscope"
+  },
+  {
+    "id": "qwen-image",
+    "displayName": "Qwen Image",
+    "provider": "dashscope",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 32000,
+    "maxOutputTokens": 1,
+    "capabilities": {
+      "imageGeneration": true
+    },
+    "ownedBy": "dashscope"
+  },
+  {
     "id": "qwen-image-edit-max",
     "displayName": "Qwen Image Edit Max",
+    "provider": "dashscope",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 32000,
+    "maxOutputTokens": 1,
+    "capabilities": {
+      "imageEdit": true
+    },
+    "ownedBy": "dashscope"
+  },
+  {
+    "id": "qwen-image-edit-max-2026-01-16",
+    "displayName": "Qwen Image Edit Max 2026-01-16",
     "provider": "dashscope",
     "endpointType": "openai-chat-completions",
     "contextWindowTokens": 32000,
@@ -445,6 +596,30 @@
     "ownedBy": "dashscope"
   },
   {
+    "id": "qwen-image-edit-plus-2025-12-15",
+    "displayName": "Qwen Image Edit Plus 2025-12-15",
+    "provider": "dashscope",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 32000,
+    "maxOutputTokens": 1,
+    "capabilities": {
+      "imageEdit": true
+    },
+    "ownedBy": "dashscope"
+  },
+  {
+    "id": "qwen-image-edit-plus-2025-10-30",
+    "displayName": "Qwen Image Edit Plus 2025-10-30",
+    "provider": "dashscope",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 32000,
+    "maxOutputTokens": 1,
+    "capabilities": {
+      "imageEdit": true
+    },
+    "ownedBy": "dashscope"
+  },
+  {
     "id": "qwen-image-edit",
     "displayName": "Qwen Image Edit",
     "provider": "dashscope",
@@ -455,5 +630,179 @@
       "imageEdit": true
     },
     "ownedBy": "dashscope"
+  },
+  {
+    "id": "doubao-seed-evolving",
+    "displayName": "Doubao Seed Evolving",
+    "provider": "volcengine",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 256000,
+    "maxOutputTokens": 32000,
+    "capabilities": {
+      "imageInput": true,
+      "videoInput": true,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
+    "ownedBy": "volcengine"
+  },
+  {
+    "id": "doubao-seed-2-1-pro-260628",
+    "displayName": "Doubao Seed 2.1 Pro",
+    "provider": "volcengine",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 256000,
+    "maxOutputTokens": 32000,
+    "capabilities": {
+      "imageInput": true,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
+    "ownedBy": "volcengine"
+  },
+  {
+    "id": "doubao-seedream-5-0-pro-260628",
+    "displayName": "Doubao Seedream 5.0 Pro",
+    "provider": "volcengine",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 32000,
+    "maxOutputTokens": 1,
+    "capabilities": {
+      "imageGeneration": true
+    },
+    "ownedBy": "volcengine"
+  },
+  {
+    "id": "MiniMax-M3",
+    "displayName": "MiniMax M3",
+    "provider": "minimax",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 1000000,
+    "maxOutputTokens": 131072,
+    "capabilities": {
+      "imageInput": true,
+      "videoInput": true,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
+    "ownedBy": "minimax"
+  },
+  {
+    "id": "MiniMax-M2.7",
+    "displayName": "MiniMax M2.7",
+    "provider": "minimax",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 204800,
+    "maxOutputTokens": 65536,
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
+    "ownedBy": "minimax"
+  },
+  {
+    "id": "MiniMax-M2.7-highspeed",
+    "displayName": "MiniMax M2.7 Highspeed",
+    "provider": "minimax",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 204800,
+    "maxOutputTokens": 65536,
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
+    "ownedBy": "minimax"
+  },
+  {
+    "id": "MiniMax-M2.5",
+    "displayName": "MiniMax M2.5",
+    "provider": "minimax",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 204800,
+    "maxOutputTokens": 65536,
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
+    "ownedBy": "minimax"
+  },
+  {
+    "id": "MiniMax-M2.5-highspeed",
+    "displayName": "MiniMax M2.5 Highspeed",
+    "provider": "minimax",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 204800,
+    "maxOutputTokens": 65536,
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
+    "ownedBy": "minimax"
+  },
+  {
+    "id": "MiniMax-M2.1",
+    "displayName": "MiniMax M2.1",
+    "provider": "minimax",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 204800,
+    "maxOutputTokens": 65536,
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
+    "ownedBy": "minimax"
+  },
+  {
+    "id": "MiniMax-M2.1-highspeed",
+    "displayName": "MiniMax M2.1 Highspeed",
+    "provider": "minimax",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 204800,
+    "maxOutputTokens": 65536,
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
+    "ownedBy": "minimax"
+  },
+  {
+    "id": "MiniMax-M2",
+    "displayName": "MiniMax M2",
+    "provider": "minimax",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 204800,
+    "maxOutputTokens": 65536,
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
+    "ownedBy": "minimax"
+  },
+  {
+    "id": "image-01",
+    "displayName": "Image 01",
+    "provider": "minimax",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 32000,
+    "maxOutputTokens": 1,
+    "capabilities": {
+      "imageGeneration": true
+    },
+    "ownedBy": "minimax"
+  },
+  {
+    "id": "image-01-live",
+    "displayName": "Image 01 Live",
+    "provider": "minimax",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 32000,
+    "maxOutputTokens": 1,
+    "capabilities": {
+      "imageGeneration": true
+    },
+    "ownedBy": "minimax"
   }
 ]

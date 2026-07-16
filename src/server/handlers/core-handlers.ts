@@ -7,19 +7,32 @@ import { createBackendHealthResult } from "../backend-health.js";
 import { createSlashCommandListResult } from "../slash-commands.js";
 import { listPromptTemplates } from "../../prompts/registry.js";
 import { listSkillSummaries } from "../../skills/catalog.js";
-import { getSkillContent, removePersonalSkill, setWorkspaceSkillEnabled, updateSkillContent } from "../../skills/management.js";
+import { getSkillContent, installSkillFromPath, removePersonalSkill, setWorkspaceSkillEnabled, updateSkillContent } from "../../skills/management.js";
 import type { SkillWorkspace } from "../../skills/types.js";
 import { sendGlobalEvent } from "../session-events.js";
 import { getUserPromptConfig, setUserPrompt } from "../../user-prompt-store.js";
+import { getDaedalusDir } from "../../app-paths.js";
 
-function getSkillWorkspace(session: ClientSession): SkillWorkspace {
+function getActiveSkillWorkspace(session: ClientSession): SkillWorkspace | undefined {
 	if (session.activeWorkspace !== undefined) {
 		return { id: session.activeWorkspace.id, rootPath: session.activeWorkspace.rootPath };
 	}
 	if (session.godotProjectPath !== undefined) {
 		return { id: `runtime:${session.godotProjectPath}`, rootPath: session.godotProjectPath };
 	}
-	throw new Error("No active workspace is available for skill management.");
+	return undefined;
+}
+
+function getSkillWorkspace(session: ClientSession): SkillWorkspace {
+	return getActiveSkillWorkspace(session) ?? { id: "studio:global", rootPath: getDaedalusDir() };
+}
+
+function getProjectSkillWorkspace(session: ClientSession): SkillWorkspace {
+	const workspace: SkillWorkspace | undefined = getActiveSkillWorkspace(session);
+	if (workspace === undefined) {
+		throw new Error("No active workspace is available for project skill management.");
+	}
+	return workspace;
 }
 
 async function sendSkillList(socket: WebSocket, requestId: string, workspace: SkillWorkspace): Promise<void> {
@@ -116,6 +129,14 @@ export async function handleCoreRequest(socket: WebSocket, request: ClientReques
 		await removePersonalSkill(workspace, request.params.ref);
 		await sendSkillList(socket, request.id, workspace);
 		sendGlobalEvent(socket, request.id, "skill.catalog.changed", { ref: request.params.ref });
+		break;
+	}
+
+	case "skill.install": {
+		const workspace: SkillWorkspace = request.params.source === "project" ? getProjectSkillWorkspace(session) : getSkillWorkspace(session);
+		const ref: string = await installSkillFromPath(workspace, request.params.source, request.params.kind, request.params.path);
+		await sendSkillList(socket, request.id, workspace);
+		sendGlobalEvent(socket, request.id, "skill.catalog.changed", { ref });
 		break;
 	}
 

@@ -34,7 +34,12 @@ async function withDashScopeMockServer(run: (baseUrl: string, requests: Recorded
 		if (request.url === "/compatible-mode/v1/models") {
 			assert.equal(request.headers.authorization, "Bearer dashscope-test-key");
 			response.writeHead(200, { "Content-Type": "application/json" });
-			response.end(JSON.stringify({ data: [{ id: "qwen-plus", owned_by: "dashscope" }] }));
+			response.end(JSON.stringify({
+				data: [
+					{ id: "qwen3.7-plus", owned_by: "dashscope" },
+					{ id: "qwen-legacy-unrecommended", owned_by: "dashscope" }
+				]
+			}));
 			return;
 		}
 
@@ -95,15 +100,19 @@ function getOnlyImageRequest(requests: RecordedRequest[]): RecordedRequest {
 	return request;
 }
 
-test("DashScope provider model list includes local image edit models when API omits them", async (): Promise<void> => {
+test("DashScope provider model list keeps the recommended catalog when API returns extra models", async (): Promise<void> => {
 	await withTempAppData(async (): Promise<void> => {
 		await withDashScopeMockServer(async (baseUrl: string): Promise<void> => {
 			const result = await listProviderModels("dashscope", "dashscope-test-key", `${baseUrl}/compatible-mode/v1`, true);
 
 			assert.equal(result.source, "api");
-			assert.equal(result.models.some((model): boolean => model.id === "qwen-plus"), true);
+			assert.equal(result.models.length, 20);
+			assert.equal(result.models.some((model): boolean => model.id === "qwen3.7-plus"), true);
+			assert.equal(result.models.some((model): boolean => model.id === "qwen-legacy-unrecommended"), false);
 			assert.equal(result.models.find((model): boolean => model.id === "qwen-image-2.0-pro")?.capabilities.imageGeneration, true);
 			assert.equal(result.models.find((model): boolean => model.id === "qwen-image-2.0-pro")?.capabilities.imageEdit, true);
+			assert.equal(result.models.find((model): boolean => model.id === "qwen-image-max")?.capabilities.imageGeneration, true);
+			assert.equal(result.models.find((model): boolean => model.id === "qwen-image-max")?.capabilities.imageEdit, undefined);
 			assert.equal(result.models.find((model): boolean => model.id === "qwen-image-edit")?.capabilities.imageGeneration, undefined);
 			assert.equal(result.models.find((model): boolean => model.id === "qwen-image-edit")?.capabilities.imageEdit, true);
 		});
@@ -122,7 +131,7 @@ test("DashScope image edit sends source images and saves a session artifact", as
 				provider: "dashscope",
 				apiKey: "dashscope-test-key",
 				baseUrl: `${baseUrl}/compatible-mode/v1`,
-				model: "qwen-plus",
+				model: "qwen3.7-plus",
 				modelRouting: {
 					imageGeneration: { provider: "dashscope", model: "qwen-image-2.0-pro" }
 				}
@@ -192,7 +201,7 @@ test("DashScope edit-only model requires a source image and omits unsupported op
 				provider: "dashscope",
 				apiKey: "dashscope-test-key",
 				baseUrl: `${baseUrl}/compatible-mode/v1`,
-				model: "qwen-plus",
+				model: "qwen3.7-plus",
 				modelRouting: {
 					imageGeneration: { provider: "dashscope", model: "qwen-image-edit" }
 				}
@@ -234,6 +243,46 @@ test("DashScope edit-only model requires a source image and omits unsupported op
 				n: 1,
 				negative_prompt: " ",
 				watermark: false
+			});
+		});
+	});
+});
+
+test("DashScope image-only models cap output count at one", async (): Promise<void> => {
+	await withTempAppData(async (): Promise<void> => {
+		await withDashScopeMockServer(async (baseUrl: string, requests: RecordedRequest[]): Promise<void> => {
+			mock.method(keytar, "setPassword", async (): Promise<void> => undefined);
+			mock.method(keytar, "getPassword", async (_service: string, account: string): Promise<string | null> => {
+				return account === "provider:dashscope:api_key" ? "dashscope-test-key" : null;
+			});
+
+			await saveProviderConfig({
+				provider: "dashscope",
+				apiKey: "dashscope-test-key",
+				baseUrl: `${baseUrl}/compatible-mode/v1`,
+				model: "qwen3.7-plus",
+				modelRouting: {
+					imageGeneration: { provider: "dashscope", model: "qwen-image-max" }
+				}
+			});
+
+			const sessionStore = await import("../src/session/session-store.js");
+			const { generateImage } = await import("../src/providers/image-generation.js");
+			const session = await sessionStore.createSession("DashScope image max");
+			await generateImage({
+				sessionId: session.id,
+				prompt: "生成一张 Godot 风格像素小屋",
+				count: 4
+			});
+
+			const imageRequest = getOnlyImageRequest(requests);
+			assert.equal(imageRequest.body.model, "qwen-image-max");
+			assert.deepEqual(imageRequest.body.parameters, {
+				n: 1,
+				negative_prompt: " ",
+				watermark: false,
+				prompt_extend: true,
+				size: "1024*1024"
 			});
 		});
 	});

@@ -675,6 +675,26 @@ export async function deleteArchivedSession(sessionId: string): Promise<void> {
 	await rm(dir, { recursive: true });
 }
 
+export async function deleteSessionsByWorkspace(workspaceId: string): Promise<{ deletedSessionIds: string[]; deletedArchivedSessionIds: string[] }> {
+	const sessions: SessionMetadata[] = await listSessions();
+	const archivedSessions: SessionMetadata[] = await listArchivedSessions();
+	const deletedSessionIds: string[] = sessions
+		.filter((metadata: SessionMetadata): boolean => metadata.workspaceId === workspaceId)
+		.map((metadata: SessionMetadata): string => metadata.id);
+	const deletedArchivedSessionIds: string[] = archivedSessions
+		.filter((metadata: SessionMetadata): boolean => metadata.workspaceId === workspaceId)
+		.map((metadata: SessionMetadata): string => metadata.id);
+
+	for (const sessionId of deletedSessionIds) {
+		await deleteSession(sessionId);
+	}
+	for (const sessionId of deletedArchivedSessionIds) {
+		await deleteArchivedSession(sessionId);
+	}
+
+	return { deletedSessionIds, deletedArchivedSessionIds };
+}
+
 export async function renameSession(sessionId: string, newTitle: string): Promise<SessionMetadata> {
 	const stored: StoredSession = await openSession(sessionId);
 	const updated: SessionMetadata = {

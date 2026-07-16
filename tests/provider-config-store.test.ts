@@ -101,6 +101,52 @@ test("provider config saves keys under provider-scoped keytar accounts", async (
 	});
 });
 
+test("provider config clears only the provider api key when apiKey is null", async (): Promise<void> => {
+	await withTempAppData(async (): Promise<void> => {
+		const deletedAccounts: string[] = [];
+		mock.method(keytar, "setPassword", async (): Promise<void> => undefined);
+		mock.method(keytar, "deletePassword", async (_service: string, account: string): Promise<boolean> => {
+			deletedAccounts.push(account);
+			return true;
+		});
+		mock.method(keytar, "getPassword", async (): Promise<string | null> => null);
+
+		await saveProviderConfig({
+			provider: "deepseek",
+			apiKey: "deepseek-key",
+			model: "deepseek-v4-pro",
+			baseUrl: "https://proxy.example/v1"
+		});
+		await saveProviderModelsCache("deepseek", [{
+			id: "deepseek-v4-pro",
+			displayName: "DeepSeek V4 Pro",
+			provider: "deepseek",
+			endpointType: "openai-chat-completions",
+			contextWindowTokens: 128_000,
+			maxOutputTokens: 8_192,
+			capabilities: { tools: true }
+		}]);
+
+		await saveProviderConfig({
+			provider: "deepseek",
+			apiKey: null,
+			model: "deepseek-v4-pro",
+			baseUrl: "https://proxy.example/v1",
+			activate: false
+		});
+
+		const status = await getProviderConfigStatus();
+		const deepseek = status.providers.find((provider): boolean => provider.provider === "deepseek");
+		assert.deepEqual(deletedAccounts, ["provider:deepseek:api_key"]);
+		assert.equal(deepseek?.configured, false);
+		assert.equal(deepseek?.apiKeyMasked, null);
+		assert.equal(deepseek?.model, "deepseek-v4-pro");
+		assert.equal(deepseek?.baseUrl, "https://proxy.example/v1");
+		assert.equal(deepseek?.modelsCache.length, 1);
+		assert.equal(deepseek?.modelsCache[0]?.id, "deepseek-v4-pro");
+	});
+});
+
 test("provider config migrates v2 provider config to schema v3", async (): Promise<void> => {
 	await withTempAppData(async (): Promise<void> => {
 		const configDir: string = join(process.env.USERPROFILE!, ".daedalus", "config");

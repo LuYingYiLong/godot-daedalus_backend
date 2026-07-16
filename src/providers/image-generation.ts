@@ -335,6 +335,34 @@ type ZhipuImageGenerationResponse = {
 	};
 };
 
+type VolcengineImageGenerationResponse = {
+	data?: Array<{
+		url?: string | undefined;
+		b64_json?: string | undefined;
+		revised_prompt?: string | undefined;
+	}> | undefined;
+	output_format?: string | undefined;
+	error?: {
+		code?: string | undefined;
+		message?: string | undefined;
+	} | undefined;
+};
+
+type MiniMaxImageGenerationResponse = {
+	data?: {
+		image_base64?: string[] | string | undefined;
+		image_urls?: string[] | string | undefined;
+	} | undefined;
+	base_resp?: {
+		status_code?: number | undefined;
+		status_msg?: string | undefined;
+	} | undefined;
+	error?: {
+		code?: string | undefined;
+		message?: string | undefined;
+	} | undefined;
+};
+
 async function generateZhipuImages(options: ProviderChatOptions, input: ImageGenerationInput): Promise<ImageGenerationResult> {
 	const model: string = options.model ?? "glm-image";
 	const baseUrl: string = resolveProviderBaseUrl(options.provider, options.baseUrl);
@@ -395,6 +423,160 @@ async function generateZhipuImages(options: ProviderChatOptions, input: ImageGen
 	};
 }
 
+async function generateVolcengineImages(options: ProviderChatOptions, input: ImageGenerationInput): Promise<ImageGenerationResult> {
+	const model: string = options.model ?? "doubao-seedream-5-0-pro-260628";
+	const baseUrl: string = resolveProviderBaseUrl(options.provider, options.baseUrl);
+	const response: Response = await fetch(`${baseUrl}/images/generations`, {
+		method: "POST",
+		headers: {
+			"Authorization": `Bearer ${options.apiKey}`,
+			"Content-Type": "application/json"
+		},
+		body: JSON.stringify({
+			model,
+			prompt: createPrompt(input),
+			n: input.count ?? 1,
+			size: mapAspectRatioToOpenAIImageSize(input.aspectRatio ?? "1:1"),
+			response_format: "url",
+			watermark: false
+		})
+	});
+	const text: string = await response.text();
+	let parsed: VolcengineImageGenerationResponse;
+	try {
+		parsed = JSON.parse(text) as VolcengineImageGenerationResponse;
+	} catch {
+		throw new ImageGenerationError("image_generation_failed", `Volcengine Ark image generation returned invalid JSON: HTTP ${response.status}`);
+	}
+	if (!response.ok || parsed.error !== undefined) {
+		throw new ImageGenerationError(
+			"image_generation_failed",
+			parsed.error?.message ?? `Volcengine Ark image generation failed: HTTP ${response.status}`
+		);
+	}
+
+	const images = parsed.data ?? [];
+	if (images.length === 0) {
+		throw new ImageGenerationError("image_generation_failed", "Provider returned no generated images.");
+	}
+
+	const artifacts: GeneratedImageArtifactMetadata[] = [];
+	for (const image of images.slice(0, input.count ?? 1)) {
+		const bytes: Buffer = typeof image.b64_json === "string" && image.b64_json.length > 0
+			? Buffer.from(image.b64_json, "base64")
+			: await readImageUrlBytes(image.url ?? "");
+		const mimeType: string = parsed.output_format === "jpeg" || (image.url !== undefined && /\.jpe?g(?:$|\?)/iu.test(image.url))
+			? "image/jpeg"
+			: parsed.output_format === "webp" || (image.url !== undefined && /\.webp(?:$|\?)/iu.test(image.url))
+				? "image/webp"
+				: "image/png";
+		artifacts.push(await saveGeneratedImageArtifact({
+			sessionId: input.sessionId,
+			bytes,
+			mimeType,
+			provider: options.provider,
+			model,
+			prompt: input.prompt,
+			revisedPrompt: image.revised_prompt
+		}));
+	}
+
+	return {
+		status: "completed",
+		prompt: input.prompt,
+		provider: options.provider,
+		model,
+		artifacts
+	};
+}
+
+function normalizeMiniMaxStringList(value: string[] | string | undefined): string[] {
+	if (Array.isArray(value)) {
+		return value.filter((item: string): boolean => item.length > 0);
+	}
+	return typeof value === "string" && value.length > 0 ? [value] : [];
+}
+
+function guessMiniMaxUrlMimeType(url: string): string {
+	if (/\.jpe?g(?:$|\?)/iu.test(url)) {
+		return "image/jpeg";
+	}
+	if (/\.webp(?:$|\?)/iu.test(url)) {
+		return "image/webp";
+	}
+	return "image/png";
+}
+
+async function generateMiniMaxImages(options: ProviderChatOptions, input: ImageGenerationInput): Promise<ImageGenerationResult> {
+	const model: string = options.model ?? "image-01";
+	const baseUrl: string = resolveProviderBaseUrl(options.provider, options.baseUrl);
+	const response: Response = await fetch(`${baseUrl}/image_generation`, {
+		method: "POST",
+		headers: {
+			"Authorization": `Bearer ${options.apiKey}`,
+			"Content-Type": "application/json"
+		},
+		body: JSON.stringify({
+			model,
+			prompt: createPrompt(input),
+			aspect_ratio: input.aspectRatio ?? "1:1",
+			response_format: "base64",
+			n: input.count ?? 1,
+			prompt_optimizer: true,
+			aigc_watermark: false
+		})
+	});
+	const text: string = await response.text();
+	let parsed: MiniMaxImageGenerationResponse;
+	try {
+		parsed = JSON.parse(text) as MiniMaxImageGenerationResponse;
+	} catch {
+		throw new ImageGenerationError("image_generation_failed", `MiniMax image generation returned invalid JSON: HTTP ${response.status}`);
+	}
+	if (!response.ok || parsed.error !== undefined || (parsed.base_resp?.status_code !== undefined && parsed.base_resp.status_code !== 0)) {
+		throw new ImageGenerationError(
+			"image_generation_failed",
+			parsed.error?.message ?? parsed.base_resp?.status_msg ?? `MiniMax image generation failed: HTTP ${response.status}`
+		);
+	}
+
+	const base64Images: string[] = normalizeMiniMaxStringList(parsed.data?.image_base64);
+	const imageUrls: string[] = normalizeMiniMaxStringList(parsed.data?.image_urls);
+	if (base64Images.length === 0 && imageUrls.length === 0) {
+		throw new ImageGenerationError("image_generation_failed", "Provider returned no generated images.");
+	}
+
+	const artifacts: GeneratedImageArtifactMetadata[] = [];
+	for (const imageBase64 of base64Images.slice(0, input.count ?? 1)) {
+		artifacts.push(await saveGeneratedImageArtifact({
+			sessionId: input.sessionId,
+			bytes: Buffer.from(imageBase64, "base64"),
+			mimeType: "image/jpeg",
+			provider: options.provider,
+			model,
+			prompt: input.prompt
+		}));
+	}
+	for (const url of imageUrls.slice(0, Math.max(0, (input.count ?? 1) - artifacts.length))) {
+		artifacts.push(await saveGeneratedImageArtifact({
+			sessionId: input.sessionId,
+			bytes: await readImageUrlBytes(url),
+			mimeType: guessMiniMaxUrlMimeType(url),
+			provider: options.provider,
+			model,
+			prompt: input.prompt
+		}));
+	}
+
+	return {
+		status: "completed",
+		prompt: input.prompt,
+		provider: options.provider,
+		model,
+		artifacts
+	};
+}
+
 type DashScopeImageContent = {
 	image?: string | undefined;
 	text?: string | undefined;
@@ -432,9 +614,21 @@ function shouldOmitQwenImageEditOptionalParameters(model: string): boolean {
 	return model === "qwen-image-edit";
 }
 
+function getDashScopeImageCount(model: string, input: ImageGenerationInput): number {
+	if (
+		model === "qwen-image-edit"
+		|| model === "qwen-image"
+		|| model.startsWith("qwen-image-max")
+		|| model.startsWith("qwen-image-plus")
+	) {
+		return 1;
+	}
+	return input.count ?? 1;
+}
+
 function createDashScopeImageParameters(model: string, input: ImageGenerationInput): Record<string, unknown> {
 	const parameters: Record<string, unknown> = {
-		n: shouldOmitQwenImageEditOptionalParameters(model) ? 1 : input.count ?? 1,
+		n: getDashScopeImageCount(model, input),
 		negative_prompt: " ",
 		watermark: false
 	};
@@ -489,7 +683,7 @@ async function generateDashScopeImages(options: ProviderChatOptions, input: Imag
 	}
 
 	const artifacts: GeneratedImageArtifactMetadata[] = [];
-	for (const url of urls.slice(0, input.count ?? 1)) {
+	for (const url of urls.slice(0, getDashScopeImageCount(model, input))) {
 		const bytes: Buffer = await readImageUrlBytes(url);
 		artifacts.push(await saveGeneratedImageArtifact({
 			sessionId: input.sessionId,
@@ -550,6 +744,14 @@ export async function generateImage(input: ImageGenerationInput): Promise<ImageG
 
 		if (options.provider === "dashscope") {
 			return await generateDashScopeImages(options, input);
+		}
+
+		if (options.provider === "volcengine") {
+			return await generateVolcengineImages(options, input);
+		}
+
+		if (options.provider === "minimax") {
+			return await generateMiniMaxImages(options, input);
 		}
 
 		if (options.provider !== "openai") {

@@ -2,12 +2,13 @@ import type WebSocket from "ws";
 import type { ClientRequest } from "../../protocol/types.js";
 import type { McpHost } from "../../mcp/mcp-host.js";
 import type { ClientSession } from "../client-session.js";
+import { clearActiveSession } from "../client-session.js";
 import { sendJson } from "../send-json.js";
-import { findWorkspace, hydrateWorkspacesFromSessionMetadata, loadWorkspaces } from "../../workspace/registry.js";
+import { deleteWorkspace, findWorkspace, hydrateWorkspacesFromSessionMetadata, loadWorkspaces } from "../../workspace/registry.js";
 import type { WorkspaceConfig } from "../../workspace/types.js";
 import { updateClientConnection } from "../client-connections.js";
 import { logger } from "../../logger.js";
-import { listArchivedSessions, listSessions } from "../../session/session-store.js";
+import { deleteSessionsByWorkspace, listArchivedSessions, listSessions } from "../../session/session-store.js";
 
 export async function handleWorkspaceRequest(socket: WebSocket, request: ClientRequest, session: ClientSession, mcpHost: McpHost): Promise<void> {
 	switch (request.method) {
@@ -91,6 +92,60 @@ export async function handleWorkspaceRequest(socket: WebSocket, request: ClientR
 					kind: workspace.kind,
 					rootPath: workspace.rootPath
 				}
+			}
+		});
+		break;
+	}
+
+	case "workspace.delete": {
+		const workspace: WorkspaceConfig | undefined = findWorkspace(request.params.workspaceId);
+
+		if (!workspace) {
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: false,
+				error: {
+					code: "workspace_not_found",
+					message: `Workspace not found: ${request.params.workspaceId}`
+				}
+			});
+			break;
+		}
+
+		const deletion = await deleteSessionsByWorkspace(workspace.id);
+		deleteWorkspace(workspace.id);
+		await mcpHost.closeWorkspace(workspace.id);
+
+		if (session.sessionId !== undefined && deletion.deletedSessionIds.includes(session.sessionId)) {
+			clearActiveSession(session);
+		}
+		if (session.activeWorkspace?.id === workspace.id) {
+			session.activeWorkspace = undefined;
+			session.godotProjectPath = undefined;
+			session.godotExecutablePath = undefined;
+			updateClientConnection(socket, {
+				workspaceId: null,
+				workspaceRoot: null
+			});
+		}
+
+		logger.info("workspace", "deleted", {
+			workspaceId: workspace.id,
+			rootPath: workspace.rootPath,
+			deletedSessions: deletion.deletedSessionIds.length,
+			deletedArchivedSessions: deletion.deletedArchivedSessionIds.length
+		});
+
+		sendJson(socket, {
+			type: "response",
+			id: request.id,
+			ok: true,
+			result: {
+				deleted: true,
+				workspaceId: workspace.id,
+				deletedSessionIds: deletion.deletedSessionIds,
+				deletedArchivedSessionIds: deletion.deletedArchivedSessionIds
 			}
 		});
 		break;

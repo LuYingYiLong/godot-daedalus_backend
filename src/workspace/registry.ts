@@ -176,6 +176,22 @@ export function findWorkspace(workspaceId: string): WorkspaceConfig | undefined 
 	return loadWorkspaces().find((w: WorkspaceConfig): boolean => w.id === workspaceId);
 }
 
+export function deleteWorkspace(workspaceId: string): WorkspaceConfig | undefined {
+	const workspace: WorkspaceConfig | undefined = findWorkspace(workspaceId);
+	if (workspace === undefined) {
+		return undefined;
+	}
+
+	runtimeWorkspaces.delete(workspaceId);
+	const configuredWorkspaces: WorkspaceConfig[] = loadConfiguredWorkspaces();
+	const remainingWorkspaces: WorkspaceConfig[] = configuredWorkspaces.filter((item: WorkspaceConfig): boolean => item.id !== workspaceId);
+	if (remainingWorkspaces.length !== configuredWorkspaces.length) {
+		saveConfiguredWorkspaces(remainingWorkspaces);
+	}
+
+	return workspace;
+}
+
 export function getDefaultWorkspace(): WorkspaceConfig | undefined {
 	const workspaces: WorkspaceConfig[] = loadWorkspaces();
 	const defaultId: string | undefined = process.env.DEFAULT_WORKSPACE;

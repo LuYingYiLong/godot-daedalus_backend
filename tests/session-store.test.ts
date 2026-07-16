@@ -158,6 +158,22 @@ test("session store persists frontend session metadata", async (): Promise<void>
 	});
 });
 
+test("session store deletes active and archived sessions by workspace", async (): Promise<void> => {
+	await withTempAppData(async (store): Promise<void> => {
+		const active = await store.createSession("Active workspace session", "workspace-a");
+		const archived = await store.createSession("Archived workspace session", "workspace-a");
+		const other = await store.createSession("Other workspace session", "workspace-b");
+		await store.archiveSession(archived.id);
+
+		const result = await store.deleteSessionsByWorkspace("workspace-a");
+
+		assert.deepEqual(result.deletedSessionIds, [active.id]);
+		assert.deepEqual(result.deletedArchivedSessionIds, [archived.id]);
+		assert.deepEqual((await store.listSessions()).map((metadata) => metadata.id), [other.id]);
+		assert.deepEqual(await store.listArchivedSessions(), []);
+	});
+});
+
 test("session store rejects unsafe session ids", async (): Promise<void> => {
 	await withTempAppData(async (store): Promise<void> => {
 		await assert.rejects(() => store.openSession("../session-escape"), /Invalid session id/);

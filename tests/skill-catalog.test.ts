@@ -1,17 +1,62 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 import { parseSkillDocument } from "../src/skills/frontmatter.js";
 import { listSkillSummaries, resolveCatalogSkill } from "../src/skills/catalog.js";
-import { createSkill, removePersonalSkill, setWorkspaceSkillEnabled, updateSkillContent } from "../src/skills/management.js";
+import { createSkill, installSkillFromPath, removePersonalSkill, setWorkspaceSkillEnabled, updateSkillContent } from "../src/skills/management.js";
+import { clientRequestSchema } from "../src/protocol/schema.js";
+import { REQUEST_HANDLERS } from "../src/server/request-dispatcher.js";
 
 const userProfileRoot: string = await mkdtemp(join(tmpdir(), "daedalus-skills-userprofile-"));
 process.env.USERPROFILE = userProfileRoot;
 
 function skillDocument(name: string, description: string): string {
 	return `---\nname: ${name}\ndescription: "${description}"\n---\n\n# ${name}\n\nFollow this workflow.`;
+}
+
+function quotePowerShellString(value: string): string {
+	return `'${value.replaceAll("'", "''")}'`;
+}
+
+function runCommand(command: string, args: string[], cwd?: string): Promise<void> {
+	return new Promise((resolvePromise, reject): void => {
+		const child = spawn(command, args, { cwd, windowsHide: true });
+		let stdout: string = "";
+		let stderr: string = "";
+		child.stdout.setEncoding("utf8");
+		child.stderr.setEncoding("utf8");
+		child.stdout.on("data", (chunk: string): void => {
+			stdout += chunk;
+		});
+		child.stderr.on("data", (chunk: string): void => {
+			stderr += chunk;
+		});
+		child.on("error", reject);
+		child.on("close", (code: number | null): void => {
+			if (code === 0) {
+				resolvePromise();
+			} else {
+				reject(new Error(stderr.trim() || stdout.trim() || `Command failed: ${command}`));
+			}
+		});
+	});
+}
+
+async function createZip(sourceDirectory: string, zipPath: string): Promise<void> {
+	if (process.platform === "win32") {
+		await runCommand("powershell.exe", [
+			"-NoProfile",
+			"-ExecutionPolicy",
+			"Bypass",
+			"-Command",
+			`Compress-Archive -Path ${quotePowerShellString(join(sourceDirectory, "*"))} -DestinationPath ${quotePowerShellString(zipPath)} -Force`
+		]);
+		return;
+	}
+	await runCommand("zip", ["-qr", zipPath, "."], sourceDirectory);
 }
 
 test("strict skill frontmatter requires name, description, and body", (): void => {
@@ -52,4 +97,40 @@ test("skill management creates atomically, validates updates, and only removes p
 	await assert.rejects(resolveCatalogSkill(workspace, ref), /Unknown skill/);
 	const projectRef: string = await createSkill(workspace, "project", "project-skill", skillDocument("Project", "Version controlled."));
 	await assert.rejects(removePersonalSkill(workspace, projectRef), /not removable/);
+});
+
+test("skill install imports folders and zipped single-root skills", async (): Promise<void> => {
+	const projectRoot: string = await mkdtemp(join(tmpdir(), "daedalus-skills-install-"));
+	const workspace = { id: "install-workspace", rootPath: projectRoot };
+	const folderSkillDir: string = join(await mkdtemp(join(tmpdir(), "daedalus-skill-source-")), "folder-skill");
+	await mkdir(folderSkillDir, { recursive: true });
+	await writeFile(join(folderSkillDir, "SKILL.md"), skillDocument("Folder Skill", "Installed from folder."), "utf8");
+	const folderRef: string = await installSkillFromPath(workspace, "personal", "folder", folderSkillDir);
+	assert.equal(folderRef, "personal:folder-skill");
+	assert.equal((await resolveCatalogSkill(workspace, folderRef, true)).enabled, true);
+	await assert.rejects(installSkillFromPath(workspace, "personal", "folder", folderSkillDir), /already exists/);
+
+	const zipRoot: string = await mkdtemp(join(tmpdir(), "daedalus-skill-zip-root-"));
+	const nestedSkillDir: string = join(zipRoot, "zip-skill");
+	await mkdir(nestedSkillDir, { recursive: true });
+	await writeFile(join(nestedSkillDir, "SKILL.md"), skillDocument("Zip Skill", "Installed from zip."), "utf8");
+	const zipPath: string = join(await mkdtemp(join(tmpdir(), "daedalus-skill-zip-")), "archive.zip");
+	await createZip(zipRoot, zipPath);
+	const zipRef: string = await installSkillFromPath(workspace, "project", "zip", zipPath);
+	assert.equal(zipRef, "project:zip-skill");
+	assert.equal((await resolveCatalogSkill(workspace, zipRef, true)).enabled, true);
+
+	const invalidDir: string = join(await mkdtemp(join(tmpdir(), "daedalus-skill-invalid-")), "missing-skill");
+	await mkdir(invalidDir, { recursive: true });
+	await assert.rejects(installSkillFromPath(workspace, "personal", "folder", invalidDir), /SKILL\.md/);
+});
+
+test("skill install is registered in schema and dispatcher", (): void => {
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "install-skill",
+		method: "skill.install",
+		params: { source: "personal", kind: "folder", path: "/tmp/example" }
+	}).success, true);
+	assert.equal(REQUEST_HANDLERS.has("skill.install"), true);
 });

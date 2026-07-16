@@ -117,6 +117,7 @@ export const REQUEST_HANDLER_METHODS: readonly ClientRequest["method"][] = [
 	"skill.set_enabled",
 	"skill.update",
 	"skill.remove",
+	"skill.install",
 	"skill.reload",
 	"session.reset",
 	"session.info",
@@ -178,6 +179,7 @@ export const REQUEST_HANDLER_METHODS: readonly ClientRequest["method"][] = [
 	"editor.tool.result",
 	"workspace.list",
 	"workspace.select",
+	"workspace.delete",
 	"workspace.info"
 ] as const;
 
@@ -195,6 +197,7 @@ export const REQUEST_HANDLERS: ReadonlyMap<ClientRequest["method"], RequestHandl
 	["skill.set_enabled", handleCoreRequest],
 	["skill.update", handleCoreRequest],
 	["skill.remove", handleCoreRequest],
+	["skill.install", handleCoreRequest],
 	["skill.reload", handleCoreRequest],
 	["provider.configure", handleProviderRequest],
 	["provider.config.get", handleProviderRequest],
@@ -266,6 +269,7 @@ export const REQUEST_HANDLERS: ReadonlyMap<ClientRequest["method"], RequestHandl
 	["editor.tool.result", handleEditorRequest],
 	["workspace.list", handleWorkspaceRequest],
 	["workspace.select", handleWorkspaceRequest],
+	["workspace.delete", handleWorkspaceRequest],
 	["workspace.info", handleWorkspaceRequest]
 ]);
 

@@ -21,7 +21,7 @@ const KEYTAR_SERVICE: string = "Godot Daedalus";
 
 export type ProviderConfigInput = {
 	provider: ProviderId;
-	apiKey?: string | undefined;
+	apiKey?: string | null | undefined;
 	model?: string | undefined;
 	baseUrl?: string | null | undefined;
 	activate?: boolean | undefined;
@@ -425,7 +425,10 @@ export async function saveProviderConfig(input: ProviderConfigInput): Promise<Pr
 		throw new Error(`Unknown provider: ${input.provider}`);
 	}
 
-	const apiKey: string | undefined = normalizeOptionalString(input.apiKey);
+	const apiKey: string | undefined = input.apiKey === null ? undefined : normalizeOptionalString(input.apiKey);
+	if (input.apiKey === null) {
+		await keytar.deletePassword(KEYTAR_SERVICE, getKeytarAccount(input.provider));
+	}
 	if (apiKey !== undefined) {
 		await keytar.setPassword(KEYTAR_SERVICE, getKeytarAccount(input.provider), apiKey);
 	}

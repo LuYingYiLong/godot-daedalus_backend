@@ -48,6 +48,24 @@ test("workspace registry persists runtime workspaces", async (): Promise<void> =
 	});
 });
 
+test("workspace registry deletes persisted runtime workspaces", async (): Promise<void> => {
+	await withTempAppData(async (registry, appDataDir): Promise<void> => {
+		const projectDir: string = await fs.mkdtemp(path.join(os.tmpdir(), "godot-daedalus-project-"));
+		const workspace = registry.upsertRuntimeWorkspace(registry.createRuntimeWorkspace(projectDir));
+		const deleted: WorkspaceConfig | undefined = registry.deleteWorkspace(workspace.id);
+		const configPath: string = path.join(appDataDir, ".daedalus", "config", "workspaces.json");
+		const persisted = JSON.parse(await fs.readFile(configPath, "utf8")) as Array<Record<string, unknown>>;
+
+		assert.equal(deleted?.id, workspace.id);
+		assert.equal(registry.findWorkspace(workspace.id), undefined);
+		assert.equal(registry.loadWorkspaces().some((item: WorkspaceConfig): boolean => item.id === workspace.id), false);
+		assert.deepEqual(persisted, []);
+		assert.equal(await fs.stat(projectDir).then((stats): boolean => stats.isDirectory()), true);
+
+		await fs.rm(projectDir, { recursive: true, force: true });
+	});
+});
+
 test("workspace registry hydrates missing runtime workspaces from session metadata", async (): Promise<void> => {
 	await withTempAppData(async (registry): Promise<void> => {
 		const hydrated: WorkspaceConfig[] = registry.hydrateWorkspacesFromSessionMetadata([

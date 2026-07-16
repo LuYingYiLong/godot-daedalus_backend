@@ -72,3 +72,14 @@ test("session.timeline accepts afterOffset page request", (): void => {
 		}
 	}).success, true);
 });
+
+test("workspace.delete accepts workspace id", (): void => {
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "workspace-delete",
+		method: "workspace.delete",
+		params: {
+			workspaceId: "workspace-a"
+		}
+	}).success, true);
+});

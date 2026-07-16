@@ -9,7 +9,8 @@ import type {
 	ProviderDefinition,
 	ProviderEndpointConfig,
 	ProviderModelCapabilities,
-	ProviderModelInfo
+	ProviderModelInfo,
+	ProviderModelListMode
 } from "./provider-types.js";
 
 export type {
@@ -18,7 +19,8 @@ export type {
 	ProviderDefinition,
 	ProviderEndpointConfig,
 	ProviderModelCapabilities,
-	ProviderModelInfo
+	ProviderModelInfo,
+	ProviderModelListMode
 } from "./provider-types.js";
 export { normalizeProviderModelCapabilities } from "./provider-types.js";
 
@@ -29,6 +31,7 @@ type RawProviderCatalogEntry = {
 	defaultModel: string;
 	defaultEndpointType: EndpointType;
 	endpointConfigs: Record<string, ProviderEndpointConfig>;
+	modelListMode?: ProviderModelListMode | undefined;
 	envBaseUrl?: string | undefined;
 	envModel?: string | undefined;
 };
@@ -98,6 +101,10 @@ function isEndpointType(value: unknown): value is EndpointType {
 
 function isAdapterFamily(value: unknown): value is AdapterFamily {
 	return value === "openai-compatible" || value === "openai-responses";
+}
+
+function isProviderModelListMode(value: unknown): value is ProviderModelListMode {
+	return value === "api-plus-catalog" || value === "catalog-recommended";
 }
 
 function parseTemperatureConstraint(value: unknown, providerId: string, endpointType: string): ProviderEndpointConfig["temperature"] {
@@ -195,6 +202,7 @@ function parseProviders(value: unknown): RawProviderCatalogEntry[] {
 			defaultModel: readString(item, "defaultModel"),
 			defaultEndpointType: defaultEndpointTypeValue,
 			endpointConfigs,
+			modelListMode: isProviderModelListMode(item.modelListMode) ? item.modelListMode : undefined,
 			envBaseUrl: typeof item.envBaseUrl === "string" ? item.envBaseUrl : undefined,
 			envModel: typeof item.envModel === "string" ? item.envModel : undefined
 		};
@@ -287,6 +295,7 @@ function buildCatalog(): ProviderCatalog {
 			defaultEndpointType: rawProvider.defaultEndpointType,
 			defaultBaseUrl: defaultEndpoint.baseUrl,
 			defaultModel: rawProvider.defaultModel,
+			modelListMode: rawProvider.modelListMode ?? "api-plus-catalog",
 			modelsPath: defaultEndpoint.modelsPath,
 			endpointConfigs: rawProvider.endpointConfigs,
 			fallbackModels
@@ -376,7 +385,12 @@ export function getProviderFallbackModels(provider: ProviderId): ProviderModelIn
 }
 
 export function mergeProviderModelsWithCatalog(provider: ProviderId, models: ProviderModelInfo[]): ProviderModelInfo[] {
+	const definition: ProviderDefinition = getProviderDefinition(provider);
 	const fallbackModels: ProviderModelInfo[] = getProviderFallbackModels(provider);
+	if (definition.modelListMode === "catalog-recommended") {
+		return fallbackModels;
+	}
+
 	const fallbackById: Map<string, ProviderModelInfo> = new Map(
 		fallbackModels.map((model: ProviderModelInfo): [string, ProviderModelInfo] => [model.id, model])
 	);

@@ -90,8 +90,8 @@ export function unregisterClientConnection(socket: WebSocket): ClientConnectionI
 export function updateClientConnection(socket: WebSocket, update: {
 	clientType?: ClientType | undefined;
 	clientName?: string | undefined;
-	workspaceId?: string | undefined;
-	workspaceRoot?: string | undefined;
+	workspaceId?: string | null | undefined;
+	workspaceRoot?: string | null | undefined;
 	editorInstanceId?: string | undefined;
 	capabilities?: ClientCapabilities | undefined;
 }): ClientConnectionInfo {
@@ -102,8 +102,12 @@ export function updateClientConnection(socket: WebSocket, update: {
 
 	record.clientType = update.clientType ?? record.clientType;
 	record.clientName = update.clientName ?? record.clientName;
-	record.workspaceId = update.workspaceId ?? record.workspaceId;
-	record.workspaceRoot = update.workspaceRoot ?? record.workspaceRoot;
+	if (Object.hasOwn(update, "workspaceId")) {
+		record.workspaceId = update.workspaceId ?? undefined;
+	}
+	if (Object.hasOwn(update, "workspaceRoot")) {
+		record.workspaceRoot = update.workspaceRoot ?? undefined;
+	}
 	record.editorInstanceId = update.editorInstanceId ?? record.editorInstanceId;
 	record.capabilities = update.capabilities ?? record.capabilities;
 	return toPublicInfo(record);

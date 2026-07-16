@@ -28,7 +28,10 @@
         "modelsPath": "/models",
         "tokenEstimatePath": "/tokenizers/estimate-token-count",
         "requiredToolChoice": "omit",
-        "temperature": { "min": 1, "max": 1 }
+        "temperature": {
+          "min": 1,
+          "max": 1
+        }
       }
     },
     "envBaseUrl": "MOONSHOT_BASE_URL",
@@ -62,7 +65,10 @@
         "adapterFamily": "openai-compatible",
         "modelsPath": "/models",
         "requiredToolChoice": "auto",
-        "temperature": { "min": 0.01, "max": 1 }
+        "temperature": {
+          "min": 0.01,
+          "max": 1
+        }
       }
     },
     "envBaseUrl": "ZAI_BASE_URL",
@@ -72,7 +78,8 @@
     "id": "dashscope",
     "displayName": "Alibaba Cloud Qwen",
     "authType": "api-key",
-    "defaultModel": "qwen-plus",
+    "defaultModel": "qwen3.7-plus",
+    "modelListMode": "catalog-recommended",
     "defaultEndpointType": "openai-chat-completions",
     "endpointConfigs": {
       "openai-chat-completions": {
@@ -83,5 +90,39 @@
     },
     "envBaseUrl": "DASHSCOPE_BASE_URL",
     "envModel": "DASHSCOPE_MODEL"
+  },
+  {
+    "id": "volcengine",
+    "displayName": "Volcengine Ark",
+    "authType": "api-key",
+    "defaultModel": "doubao-seed-evolving",
+    "modelListMode": "catalog-recommended",
+    "defaultEndpointType": "openai-chat-completions",
+    "endpointConfigs": {
+      "openai-chat-completions": {
+        "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
+        "adapterFamily": "openai-compatible",
+        "modelsPath": "/models"
+      }
+    },
+    "envBaseUrl": "VOLCENGINE_ARK_BASE_URL",
+    "envModel": "VOLCENGINE_ARK_MODEL"
+  },
+  {
+    "id": "minimax",
+    "displayName": "MiniMax",
+    "authType": "api-key",
+    "defaultModel": "MiniMax-M3",
+    "modelListMode": "catalog-recommended",
+    "defaultEndpointType": "openai-chat-completions",
+    "endpointConfigs": {
+      "openai-chat-completions": {
+        "baseUrl": "https://api.minimaxi.com/v1",
+        "adapterFamily": "openai-compatible",
+        "modelsPath": "/models"
+      }
+    },
+    "envBaseUrl": "MINIMAX_BASE_URL",
+    "envModel": "MINIMAX_MODEL"
   }
 ]

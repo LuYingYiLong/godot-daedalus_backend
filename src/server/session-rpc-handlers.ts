@@ -170,7 +170,7 @@ import { runWorkflowPhase, createWorkflowPhasePrompt } from "./workflow/phase-ru
 import { createWorkflowPendingContinuation, continueWorkflowExecution } from "./workflow/continuation.js";
 import { startWorkflowExecution } from "./workflow/executor.js";
 import { ensureProviderConfigured } from "../application/provider-session-service.js";
-import { bindConnectionToSessionRuntime, getClientConnection, getSessionRuntime, getSessionSubscriberInfos, subscribeSocketToSession, unsubscribeSocketFromSession } from "./client-connections.js";
+import { bindConnectionToSessionRuntime, getClientConnection, getSessionRuntime, getSessionSubscriberInfos, subscribeSocketToSession, unsubscribeSocketFromSession, updateClientConnection } from "./client-connections.js";
 import { createSessionBrowserSnapshot } from "./session-browser-snapshot.js";
 import { logger } from "../logger.js";
 import { getApprovalMode } from "../approval-settings-store.js";
@@ -403,6 +403,14 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 				if (workspace.godotExecutablePath) {
 					session.godotExecutablePath = workspace.godotExecutablePath;
 				}
+			} else if (requestedWorkspaceId === null) {
+				session.activeWorkspace = undefined;
+				session.godotProjectPath = undefined;
+				session.godotExecutablePath = undefined;
+				updateClientConnection(socket, {
+					workspaceId: null,
+					workspaceRoot: null
+				});
 			}
 
 			session = bindConnectionToSessionRuntime(socket, metadata.id, session);
@@ -488,9 +496,22 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 						if (workspace.godotExecutablePath) {
 							session.godotExecutablePath = workspace.godotExecutablePath;
 						}
+					} else {
+						session.activeWorkspace = undefined;
+						session.godotProjectPath = undefined;
+						session.godotExecutablePath = undefined;
 					}
 
 					session = bindConnectionToSessionRuntime(socket, timeline.metadata.id, session);
+				}
+				if (timeline.metadata.workspaceId === undefined) {
+					session.activeWorkspace = undefined;
+					session.godotProjectPath = undefined;
+					session.godotExecutablePath = undefined;
+					updateClientConnection(socket, {
+						workspaceId: null,
+						workspaceRoot: null
+					});
 				}
 				applySessionMetadata(session, timeline.metadata);
 				await applySessionApprovalMode(session, timeline.metadata);

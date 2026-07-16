@@ -4,6 +4,8 @@ export type EndpointType = "openai-chat-completions" | "openai-responses";
 
 export type AdapterFamily = "openai-compatible" | "openai-responses";
 
+export type ProviderModelListMode = "api-plus-catalog" | "catalog-recommended";
+
 export type ModelRef = {
 	providerId: ProviderId;
 	modelId: string;
@@ -50,6 +52,7 @@ export type ProviderDefinition = {
 	defaultEndpointType: EndpointType;
 	defaultBaseUrl: string;
 	defaultModel: string;
+	modelListMode: ProviderModelListMode;
 	modelsPath: string;
 	tokenEstimatePath?: string | undefined;
 	envBaseUrl?: string | undefined;

@@ -153,6 +153,16 @@ test("provider.config.set schema accepts task model routing", (): void => {
 			baseUrl: null
 		}
 	}).success, true);
+
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "provider-routing-clear-api-key",
+		method: "provider.config.set",
+		params: {
+			provider: "deepseek",
+			apiKey: null
+		}
+	}).success, true);
 });
 
 test("session create and save schema accept frontend session metadata", (): void => {
