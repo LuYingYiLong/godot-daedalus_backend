@@ -109,7 +109,9 @@ import {
 	type SlashCommandResult
 } from "./slash-commands.js";
 import { serializeMessageQueue } from "./message-queue.js";
-import { bumpWorkbenchRevision, serializeWorkbench } from "./workbench.js";
+import { bumpWorkbenchRevision, emitWorkbenchUpdated, serializeWorkbench } from "./workbench.js";
+import { createRuntimeSessionUiMetadata } from "./session-ui-metadata.js";
+import { compressSessionHistory } from "./session-compression.js";
 
 import { normalizeChatParamsForMode, resolveAllowedToolsForChatParams } from "./chat-mode.js";
 import { logPromptTrace, logProjectInstructionTrace } from "./prompt-trace.js";
@@ -241,7 +243,7 @@ function createProviderRuntimeContextText(provider: ProviderId, model: string): 
 		`当前后端实际模型供应商：${providerName}（provider id: ${provider}）。`,
 		`当前后端实际模型 ID：${model}。`,
 		"如果用户询问“你是什么模型”“来自哪个供应商”“当前用的模型/供应商是什么”，必须优先基于以上运行时事实回答。",
-		"回答时可以说明你在产品角色上是 Godot Daedalus 的 Godot 开发助手，但不要用产品角色替代实际模型和供应商信息。"
+		"回答时可以说明你在产品角色上是 Daedalus Assistant；Godot 是产品强项，但不要用产品角色替代实际模型和供应商信息。"
 	].join("\n");
 }
 
@@ -914,6 +916,7 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 			const sessionUiMetadata: Partial<SessionMetadata> = createSessionUiMetadata(request.params);
 			await saveSession(session.sessionId, session.messages, {
 				...createWorkspaceMetadataSnapshot(session.activeWorkspace),
+				...createRuntimeSessionUiMetadata(session),
 				...sessionUiMetadata,
 			});
 			if (Object.keys(sessionUiMetadata).length > 0) {
@@ -932,6 +935,65 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 				result: { saved: true, sessionId: session.sessionId, messageCount: session.messages.length }
 			});
 			break;
+
+		case "session.model.set": {
+			await waitForFullSessionLoad(session);
+			if (!session.sessionId) {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: { code: "no_session", message: "No active session to update. Open or create a session first." }
+				});
+				break;
+			}
+
+			const provider: ProviderId = request.params.provider;
+			const model: string = request.params.model.trim();
+			if (!isProviderId(provider) || model.length === 0) {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: { code: "invalid_model", message: "Invalid provider or model." }
+				});
+				break;
+			}
+
+			await waitForSessionEventPersistence(session);
+			await saveSession(session.sessionId, session.messages, {
+				...createWorkspaceMetadataSnapshot(session.activeWorkspace),
+				...createRuntimeSessionUiMetadata(session),
+				provider,
+				model,
+			});
+
+			const providerChanged: boolean = provider !== session.activeProvider;
+			session.activeProvider = provider;
+			session.providerModel = model;
+			session.modelProfile = resolveModelProfile(provider, model);
+			session.workbenchComposer.provider = undefined;
+			session.workbenchComposer.model = undefined;
+			session.workbenchComposer.updatedAt = new Date().toISOString();
+			if (providerChanged) {
+				session.providerApiKey = undefined;
+				session.providerBaseUrl = undefined;
+			}
+			bumpWorkbenchRevision(session);
+
+			const stored = await openSession(session.sessionId);
+			emitWorkbenchUpdated(socket, request.id, session);
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: true,
+				result: {
+					metadata: stored.metadata,
+					workbench: serializeWorkbench(session)
+				}
+			});
+			break;
+		}
 
 		case "session.delete":
 			await deleteSession(request.params.sessionId);
@@ -1007,63 +1069,11 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 
 			try {
 				const keepRecent = request.params?.keepRecent ?? 8;
-				const allMessages: ChatMessage[] = session.messages;
-
-				if (allMessages.length <= keepRecent) {
-					sendJson(socket, {
-						type: "response",
-						id: request.id,
-						ok: true,
-						result: { compressed: false, reason: "Not enough messages", messageCount: allMessages.length }
-					});
-					break;
-				}
-
-				const oldMessages = allMessages.slice(0, allMessages.length - keepRecent);
-				const conversationText = filterLlmContextMessages(oldMessages)
-					.map((m) => `${m.role}: ${m.content.slice(0, 300)}`)
-					.join("\n");
-
-				const client = createDeepSeekClient(createProviderChatOptions(session, apiKey));
-				const compressorOptions: ProviderChatOptions = createProviderChatOptions(session, apiKey);
-				const compressorPrompt: string = await loadSessionCompressorPrompt();
-				const completion = await client.chat.completions.create({
-					model: resolveChatModel(compressorOptions),
-					messages: [
-						{
-							role: "system",
-							content: compressorPrompt
-						},
-						{ role: "user", content: conversationText }
-					],
-					max_tokens: 800
-				});
-
-				const summaryContent: string = completion.choices[0]?.message?.content ?? "(empty summary)";
-
-				const summaryObj: SessionSummary = {
-					content: summaryContent,
-					messageCount: oldMessages.length,
-					tokenEstimate: Math.ceil(conversationText.length / 3),
-					generatedAt: new Date().toISOString()
-				};
-
-				await writeSummary(session.sessionId, summaryObj);
-				const recentMessages = allMessages.slice(allMessages.length - keepRecent);
-				session.summaryMessage = createSummaryMessage(summaryObj);
-				session.summaryCoveredMessageCount = summaryObj.messageCount;
-				session.messages = allMessages;
-
 				sendJson(socket, {
 					type: "response",
 					id: request.id,
 					ok: true,
-					result: {
-						compressed: true,
-						oldMessageCount: oldMessages.length,
-						keptMessageCount: recentMessages.length,
-						summaryLength: summaryContent.length
-					}
+					result: await compressSessionHistory(session, apiKey, keepRecent)
 				});
 			} catch (error: unknown) {
 				sendJson(socket, {

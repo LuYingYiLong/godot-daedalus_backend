@@ -201,6 +201,16 @@ test("session create and save schema accept frontend session metadata", (): void
 
 	assert.equal(clientRequestSchema.safeParse({
 		type: "request",
+		id: "session-model-set",
+		method: "session.model.set",
+		params: {
+			provider: "minimax",
+			model: "MiniMax-M3"
+		}
+	}).success, true);
+
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
 		id: "session-save-bad-mode",
 		method: "session.save",
 		params: {

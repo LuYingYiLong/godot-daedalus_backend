@@ -93,6 +93,7 @@ import {
 	type ThinkingEventBuffer
 } from "./client-session.js";
 import { getToolPolicy } from "../tools/tool-policy.js";
+import { filterToolNamesForWorkspace, getNoWorkspaceToolNames } from "../tools/tool-catalog.js";
 import { ApprovalGateway, ReadOnlyToolApprovalGateway, type PendingApproval } from "../tools/approval-gateway.js";
 import { getLlmToolExecutionIdentity } from "../tools/tool-idempotency.js";
 import { resolveToolMapping } from "../tools/tool-mapping.js";
@@ -115,7 +116,7 @@ import { clearWorkbenchComposer, emitWorkbenchUpdated, serializeWorkbench, setWo
 import { normalizeChatParamsForMode, resolveAllowedToolsForChatParams } from "./chat-mode.js";
 import { logPromptTrace, logProjectInstructionTrace } from "./prompt-trace.js";
 import { isCancellationError, sendAgentCancelled, sendAiCancelled, beginRequestExecution, finishRequestExecution, parseMessage } from "./request-lifecycle.js";
-import { estimateTextTokens, estimateMessagesTokens, computeHistoryBudget, appendChatTurnToSession, appendFailedChatTurnToSession, selectHistoryForModel, createSummaryMessage, loadSessionCompressorPrompt } from "./token-budget.js";
+import { estimateTextTokens, estimateMessagesTokens, estimateTextTokensForProvider, estimateCurrentMessageTokensForProvider, computeHistoryBudget, appendChatTurnToSession, appendUserMessageToSession, appendFailedChatTurnToSession, selectHistoryForModel, createSummaryMessage, loadSessionCompressorPrompt, filterLlmContextMessages } from "./token-budget.js";
 import { getSessionProjectPath, toChatMessage, clampSessionOpenMessageLimit, createPreviewValue, createTimelinePageResult, startFullSessionLoad, waitForFullSessionLoad } from "./session-preview.js";
 import { createProviderChatOptions } from "./provider-chat-options.js";
 import { createGodotRuntimeStatus } from "./godot-runtime-status.js";
@@ -146,6 +147,7 @@ import {
 
 import {
 	createPendingAiContinuation,
+	cancelPendingApprovalsForRequest,
 	persistApprovalRequested,
 	registerPendingApprovalContinuation,
 	loadHydratedPendingApprovalStates,
@@ -168,9 +170,134 @@ import { logger } from "../logger.js";
 import { createInitialPlan } from "./plan-mode.js";
 import { createPlanGetResult, type StoredPlan } from "./plan-store.js";
 import { getUserPrompt } from "../user-prompt-store.js";
+import { compressSessionHistory } from "./session-compression.js";
 
 function isImageGenerationOnlyToolRestriction(toolNames: readonly string[] | undefined): boolean {
 	return toolNames !== undefined && toolNames.length === 1 && toolNames[0] === "mcp_image_generate";
+}
+
+class ContextTooLargeError extends Error {
+	readonly code: string = "context_too_large";
+
+	constructor(message: string) {
+		super(message);
+		this.name = "ContextTooLargeError";
+	}
+}
+
+type ContextUsageEstimate = {
+	usedTokens: number;
+	contextWindowTokens: number;
+	percent: number;
+	availableTokens: number;
+	historyTokens: number;
+	currentMessageTokens: number;
+	systemAndContextTokens: number;
+	outputReserveTokens: number;
+	safetyMarginTokens: number;
+};
+
+function getFullContextHistoryMessages(session: ClientSession, excludeRequestId?: string | undefined): ChatMessage[] {
+	const filterRequest = (messages: ChatMessage[]): ChatMessage[] => excludeRequestId === undefined
+		? messages
+		: messages.filter((message: ChatMessage): boolean => message.requestId !== excludeRequestId);
+	if (session.summaryMessage === undefined) {
+		return filterRequest(filterLlmContextMessages(session.messages));
+	}
+
+	const recentSourceMessages: ChatMessage[] = session.summaryCoveredMessageCount !== undefined
+		? session.messages.slice(session.summaryCoveredMessageCount)
+		: session.messages;
+	return [session.summaryMessage, ...filterRequest(filterLlmContextMessages(recentSourceMessages))];
+}
+
+async function estimateFullContextUsage(
+	session: ClientSession,
+	requestId: string,
+	options: ProviderChatOptions,
+	params: AiChatParams,
+	systemPrompt: string,
+	contextPrompt: string,
+	abortSignal?: AbortSignal | undefined
+): Promise<ContextUsageEstimate> {
+	const systemPromptTokens: number = await estimateTextTokensForProvider(options, systemPrompt, abortSignal);
+	const contextPromptTokens: number = await estimateTextTokensForProvider(options, contextPrompt, abortSignal);
+	const currentMessageTokens: number = await estimateCurrentMessageTokensForProvider(options, params, abortSignal);
+	const historyTokens: number = await estimateMessagesTokens(getFullContextHistoryMessages(session, requestId));
+	const outputReserveTokens: number = params.options?.maxTokens ?? session.modelProfile.defaultOutputReserveTokens;
+	const safetyMarginTokens: number = session.modelProfile.safetyMarginTokens;
+	const usedTokens: number = Math.max(0, systemPromptTokens + contextPromptTokens + currentMessageTokens + historyTokens + outputReserveTokens + safetyMarginTokens);
+	const contextWindowTokens: number = session.modelProfile.contextWindowTokens;
+	const percent: number = contextWindowTokens > 0
+		? Math.min(100, Math.round((usedTokens / contextWindowTokens) * 1000) / 10)
+		: 0;
+	return {
+		usedTokens,
+		contextWindowTokens,
+		percent,
+		availableTokens: Math.max(0, contextWindowTokens - usedTokens),
+		historyTokens,
+		currentMessageTokens,
+		systemAndContextTokens: systemPromptTokens + contextPromptTokens,
+		outputReserveTokens,
+		safetyMarginTokens
+	};
+}
+
+async function maybeAutoCompressContextBeforeRun(
+	socket: WebSocket,
+	requestId: string,
+	session: ClientSession,
+	apiKey: string,
+	options: ProviderChatOptions,
+	params: AiChatParams,
+	systemPrompt: string,
+	contextPrompt: string,
+	abortSignal?: AbortSignal | undefined
+): Promise<ContextUsageEstimate> {
+	sendSessionEvent(socket, requestId, session, "ai.status", {
+		stage: "context_estimate",
+		title: "Context",
+		details: "Estimating context usage",
+		message: "Estimating context usage"
+	});
+	let estimate: ContextUsageEstimate = await estimateFullContextUsage(session, requestId, options, params, systemPrompt, contextPrompt, abortSignal);
+	if (estimate.percent >= 85 && session.messages.length > 8) {
+		sendSessionEvent(socket, requestId, session, "ai.status", {
+			stage: "context_compress",
+			title: "Compressing context",
+			details: "Compressing conversation history",
+			message: "Compressing conversation history",
+			percent: estimate.percent,
+			usedTokens: estimate.usedTokens,
+			contextWindowTokens: estimate.contextWindowTokens
+		});
+		const compression = await compressSessionHistory(session, apiKey, 8);
+		sendSessionEvent(socket, requestId, session, "ai.status", {
+			stage: "context_compress_done",
+			title: compression.compressed ? "Context compressed" : "Context compression skipped",
+			details: compression.compressed ? "Conversation history compressed" : compression.reason,
+			message: compression.compressed ? "Conversation history compressed" : compression.reason,
+			compressed: compression.compressed
+		});
+		estimate = await estimateFullContextUsage(session, requestId, options, params, systemPrompt, contextPrompt, abortSignal);
+	}
+
+	if (estimate.usedTokens > estimate.contextWindowTokens) {
+		sendSessionEvent(socket, requestId, session, "ai.status", {
+			stage: "context_too_large",
+			status: "error",
+			title: "Context too large",
+			details: "Context is larger than the selected model window",
+			message: "Context is larger than the selected model window",
+			percent: estimate.percent,
+			usedTokens: estimate.usedTokens,
+			contextWindowTokens: estimate.contextWindowTokens
+		});
+		throw new ContextTooLargeError(`当前会话上下文约 ${estimate.usedTokens.toLocaleString()} tokens，超过所选模型窗口 ${estimate.contextWindowTokens.toLocaleString()} tokens。请压缩会话、减少附件或切换到更大上下文模型。`);
+	}
+
+	return estimate;
 }
 
 function createSessionInfoResult(session: ClientSession, mcpHost: McpHost, historyTokensStored: number | null = null): Record<string, unknown> {
@@ -225,13 +352,26 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				controller.abort();
 				session.activeAbortControllers.delete(request.params.requestId);
 			}
+			const cancelledApprovalIds: string[] = await cancelPendingApprovalsForRequest(session, request.params.requestId);
+			if (cancelledApprovalIds.length > 0) {
+				session.activeRunRequestId = session.activeRunRequestId === request.params.requestId
+					? undefined
+					: session.activeRunRequestId;
+				setWorkbenchActiveRun(session, {
+					status: "idle",
+					requestId: request.params.requestId
+				});
+				emitWorkbenchUpdated(socket, request.id, session);
+				sendAgentCancelled(socket, request.params.requestId, session, request.params.requestId, "cancelled");
+			}
 			sendJson(socket, {
 				type: "response",
 				id: request.id,
 				ok: true,
 				result: {
-					cancelled: controller !== undefined,
-					requestId: request.params.requestId
+					cancelled: controller !== undefined || cancelledApprovalIds.length > 0,
+					requestId: request.params.requestId,
+					cancelledApprovalIds
 				}
 			});
 			break;
@@ -311,6 +451,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 			session.activeRunRequestId = request.id;
 			const runStartedAtMs: number = Date.now();
 			const turnStartedAt: string = new Date().toISOString();
+			let persistedParams: AiChatParams = params;
 			setWorkbenchActiveRun(session, {
 				status: "streaming",
 				requestId: request.id,
@@ -334,6 +475,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 					...imagePreprocess.params,
 					systemPrompt: imagePreprocess.params.systemPrompt ?? (storedUserPrompt.length > 0 ? storedUserPrompt : undefined)
 				};
+				persistedParams = effectiveParams;
 				logger.info("ai", "chat_started", {
 					requestId: request.id,
 					sessionId: session.sessionId,
@@ -369,10 +511,12 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 					});
 					break;
 				}
-				const skillWorkspace: SkillWorkspace = session.activeWorkspace !== undefined
+				const skillWorkspace: SkillWorkspace | undefined = session.activeWorkspace !== undefined
 					? { id: session.activeWorkspace.id, rootPath: session.activeWorkspace.rootPath }
-					: { id: `runtime:${session.godotProjectPath ?? "unknown"}`, rootPath: session.godotProjectPath ?? process.cwd() };
-				const explicitSkills: CatalogSkill[] = await resolveExplicitSkills(skillWorkspace, effectiveParams.skillRefs ?? []);
+					: undefined;
+				const explicitSkills: CatalogSkill[] = skillWorkspace !== undefined
+					? await resolveExplicitSkills(skillWorkspace, effectiveParams.skillRefs ?? [])
+					: [];
 				const builtinToolRestriction: readonly string[] | undefined = resolveBuiltinToolRestriction(explicitSkills);
 				const imageGenerationOnly: boolean = isImageGenerationOnlyToolRestriction(builtinToolRestriction);
 				let allowedToolNames: readonly string[] | undefined = resolveAllowedToolsForChatParams(effectiveParams, builtinToolRestriction, session.activeWorkspace?.id);
@@ -382,6 +526,11 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				if (allowedToolNames !== undefined && !allowedToolNames.includes("mcp_skills_load")) {
 					allowedToolNames = [...allowedToolNames, "mcp_skills_load"];
 				}
+				if (session.activeWorkspace === undefined) {
+					allowedToolNames = allowedToolNames !== undefined
+						? filterToolNamesForWorkspace(allowedToolNames, undefined)
+						: getNoWorkspaceToolNames();
+				}
 				const promptId = effectiveParams.promptId ?? explicitSkills.find((skill): boolean => skill.defaultPromptId !== undefined)?.defaultPromptId;
 				const systemPrompt: string = await composeSystemPrompt(
 					promptId,
@@ -390,7 +539,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 					effectiveParams.mode
 				);
 				const skillPrompt: string = composeExplicitSkillPrompt(explicitSkills);
-				const skillCatalogPrompt: string = await composeSkillCatalogPrompt(skillWorkspace);
+				const skillCatalogPrompt: string = skillWorkspace !== undefined ? await composeSkillCatalogPrompt(skillWorkspace) : "";
 				const mcpSystemContext: string = await createMcpSystemContext(mcpHost, session);
 				const additionalContextSection: string = createAdditionalContextPromptSection(effectiveParams.additionalContext);
 				const guidePromptSection: string = consumePendingGuideSection(socket, request.id, session);
@@ -420,7 +569,26 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 					session.summaryMessage = undefined;
 					session.summaryCoveredMessageCount = undefined;
 				}
-				maybeScheduleSessionTitleGeneration(socket, request.id, session, effectiveParams, options, session.messages.length === 0);
+				const wasEmptyBeforeUserMessage: boolean = session.messages.length === 0;
+				await appendUserMessageToSession(
+					session,
+					effectiveParams.message,
+					request.id,
+					turnStartedAt,
+					effectiveParams.additionalContext
+				);
+				maybeScheduleSessionTitleGeneration(socket, request.id, session, effectiveParams, options, wasEmptyBeforeUserMessage);
+				await maybeAutoCompressContextBeforeRun(
+					socket,
+					request.id,
+					session,
+					apiKey,
+					options,
+					effectiveParams,
+					systemPrompt,
+					skillPrompt + skillCatalogPrompt + mcpSystemContext + additionalContextSection + guidePromptSection,
+					abortController.signal
+				);
 				const historyBudgetTokens: number = await computeHistoryBudget(
 					session.modelProfile,
 					options,
@@ -429,12 +597,14 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 					skillPrompt + skillCatalogPrompt + mcpSystemContext + additionalContextSection + guidePromptSection,
 					abortController.signal
 				);
-				const history: ChatMessage[] = await selectHistoryForModel(session, historyBudgetTokens);
+				const history: ChatMessage[] = await selectHistoryForModel(session, historyBudgetTokens, request.id);
 				let workflowPlan: WorkflowPlan | null = null;
 				if (builtinToolRestriction !== undefined && (effectiveParams.mode !== "ask" || imageGenerationOnly)) {
 					workflowPlan = createSingleAnswerPlan(effectiveParams, allowedToolNames);
 				} else if (requestHasImages) {
 					workflowPlan = createSingleAnswerPlan(effectiveParams, []);
+				} else if (session.activeWorkspace === undefined) {
+					workflowPlan = createSingleAnswerPlan(effectiveParams, allowedToolNames);
 				} else if (slashCommandResult.type === "none") {
 					if (effectiveParams.mode === "ask" && isCurrentProjectFactRequest(effectiveParams.message)) {
 						workflowPlan = createReadOnlyFactWorkflowPlan(effectiveParams);
@@ -515,6 +685,15 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 						durationMs: Date.now() - runStartedAtMs
 					});
 					sendAgentCancelled(socket, request.id, session);
+					sendJson(socket, {
+						type: "response",
+						id: request.id,
+						ok: true,
+						result: {
+							cancelled: true,
+							requestId: request.id
+						}
+					});
 					break;
 				}
 				if (error instanceof ProviderImageInputError) {
@@ -524,6 +703,42 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 						code: error.code,
 						message: error.message
 					});
+					sendJson(socket, {
+						type: "response",
+						id: request.id,
+						ok: false,
+						error: {
+							code: error.code,
+							message: error.message
+						}
+					});
+					break;
+				}
+				if (error instanceof ContextTooLargeError) {
+					logger.warn("ai", "context_too_large", {
+						requestId: request.id,
+						sessionId: session.sessionId,
+						workspaceId: session.activeWorkspace?.id,
+						message: error.message
+					});
+					sendSessionEvent(socket, request.id, session, "agent.run.error", {
+						runId: request.id,
+						code: error.code,
+						message: error.message
+					});
+					await waitForSessionEventPersistence(session);
+					await appendFailedChatTurnToSession(
+						session,
+						persistedParams.message,
+						{
+							code: error.code,
+							message: error.message
+						},
+						request.id,
+						turnStartedAt,
+						undefined,
+						persistedParams.additionalContext
+					);
 					sendJson(socket, {
 						type: "response",
 						id: request.id,
@@ -551,7 +766,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				await waitForSessionEventPersistence(session);
 				await appendFailedChatTurnToSession(
 					session,
-					params.message,
+					persistedParams.message,
 					{
 						code: providerError.code,
 						message: providerError.message
@@ -559,7 +774,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 					request.id,
 					turnStartedAt,
 					undefined,
-					params.additionalContext
+					persistedParams.additionalContext
 				);
 				sendJson(socket, {
 					type: "response",

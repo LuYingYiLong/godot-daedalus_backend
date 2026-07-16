@@ -398,6 +398,7 @@ class ToolSyntaxStreamFilter {
 type ThinkTagSplitResult = {
 	visibleText: string;
 	thinkingText: string;
+	thinkingStarted: boolean;
 	thinkingDone: boolean;
 };
 
@@ -447,6 +448,7 @@ class MiniMaxThinkTagStreamFilter {
 	private drain(flush: boolean): ThinkTagSplitResult {
 		let visibleText: string = "";
 		let thinkingText: string = "";
+		let thinkingStarted: boolean = false;
 		let thinkingDone: boolean = false;
 
 		while (this.pendingText.length > 0) {
@@ -503,9 +505,10 @@ class MiniMaxThinkTagStreamFilter {
 			visibleText += this.pendingText.slice(0, openingTag.index);
 			this.pendingText = this.pendingText.slice(openingTag.index + openingTag[0].length);
 			this.insideThink = true;
+			thinkingStarted = true;
 		}
 
-		return { visibleText, thinkingText, thinkingDone };
+		return { visibleText, thinkingText, thinkingStarted, thinkingDone };
 	}
 }
 
@@ -516,6 +519,7 @@ function splitMiniMaxThinkTags(text: string): ThinkTagSplitResult {
 	return {
 		visibleText: first.visibleText + flushed.visibleText,
 		thinkingText: first.thinkingText + flushed.thinkingText,
+		thinkingStarted: first.thinkingStarted || flushed.thinkingStarted,
 		thinkingDone: first.thinkingDone || flushed.thinkingDone
 	};
 }
@@ -658,8 +662,13 @@ async function readStreamingAssistantMessage(
 			const splitContent: ThinkTagSplitResult = thinkTagFilter?.push(contentDelta) ?? {
 				visibleText: contentDelta,
 				thinkingText: "",
+				thinkingStarted: false,
 				thinkingDone: false
 			};
+			if (splitContent.thinkingStarted && splitContent.thinkingText.length === 0 && !splitContent.thinkingDone && !openThinkTagReasoning) {
+				openThinkTagReasoning = true;
+				onEvent?.({ type: "ai.thinking.delta", text: "" });
+			}
 			if (splitContent.thinkingText.length > 0) {
 				reasoningContent = appendReasoningContent(reasoningContent, splitContent.thinkingText);
 				openThinkTagReasoning = true;
@@ -690,6 +699,10 @@ async function readStreamingAssistantMessage(
 	if (emitContentDeltas) {
 		const flushedThinkTags: ThinkTagSplitResult | null = thinkTagFilter?.flush() ?? null;
 		if (flushedThinkTags !== null) {
+			if (flushedThinkTags.thinkingStarted && flushedThinkTags.thinkingText.length === 0 && !flushedThinkTags.thinkingDone && !openThinkTagReasoning) {
+				openThinkTagReasoning = true;
+				onEvent?.({ type: "ai.thinking.delta", text: "" });
+			}
 			if (flushedThinkTags.thinkingText.length > 0) {
 				reasoningContent = appendReasoningContent(reasoningContent, flushedThinkTags.thinkingText);
 				openThinkTagReasoning = true;

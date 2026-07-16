@@ -88,3 +88,69 @@ test("failed transcript-only turns persist but stay out of LLM context", async (
 		assert.equal((await store.openSession(metadata.id)).events.length, 0);
 	});
 });
+
+test("chat turn persistence reuses pre-saved user message", async (): Promise<void> => {
+	const previousUserProfile: string | undefined = process.env.USERPROFILE;
+	const previousDisableTokenizer: string | undefined = process.env.DISABLE_DEEPSEEK_TOKENIZER;
+	const appDataDir: string = await fs.mkdtemp(path.join(os.tmpdir(), "godot-daedalus-token-budget-chat-"));
+	process.env.USERPROFILE = appDataDir;
+	process.env.DISABLE_DEEPSEEK_TOKENIZER = "1";
+	try {
+		const store = await import("../src/session/session-store.js");
+		const tokenBudget = await import("../src/server/token-budget.js");
+		const metadata = await store.createSession("Streaming turn", undefined);
+		const session: ClientSession = createClientSession(undefined);
+		session.sessionId = metadata.id;
+		session.sessionTitle = metadata.title;
+
+		const userSaved = await tokenBudget.appendUserMessageToSession(
+			session,
+			"生成一张科幻战机图",
+			"request-streaming",
+			"2026-07-16T00:00:00.000Z",
+			[{ id: "ctx-style", kind: "file", title: "style.txt", source: "manual", summary: "key art" }]
+		);
+		assert.equal(userSaved, true);
+		assert.equal((await store.openSession(metadata.id)).messages.length, 1);
+
+		const turnSaved = await tokenBudget.appendChatTurnToSession(
+			session,
+			[],
+			"生成一张科幻战机图",
+			"已生成图片。",
+			"request-streaming",
+			"2026-07-16T00:00:00.000Z",
+			"2026-07-16T00:00:03.000Z",
+			[{ id: "ctx-style", kind: "file", title: "style.txt", source: "manual", summary: "key art" }]
+		);
+		assert.equal(turnSaved, true);
+		assert.equal(session.messages.length, 2);
+		assert.equal(session.messages.filter((message: ChatMessage): boolean => message.requestId === "request-streaming" && message.role === "user").length, 1);
+		assert.equal(session.messages[0]?.additionalContext?.[0]?.title, "style.txt");
+
+		const duplicateSaved = await tokenBudget.appendChatTurnToSession(
+			session,
+			[],
+			"生成一张科幻战机图",
+			"已生成图片。",
+			"request-streaming"
+		);
+		assert.equal(duplicateSaved, false);
+
+		const opened = await store.openSession(metadata.id);
+		assert.equal(opened.messages.length, 2);
+		assert.deepEqual(opened.messages.map((message: ChatMessage): string => message.role), ["user", "assistant"]);
+	} finally {
+		if (previousUserProfile === undefined) {
+			delete process.env.USERPROFILE;
+		} else {
+			process.env.USERPROFILE = previousUserProfile;
+		}
+		if (previousDisableTokenizer === undefined) {
+			delete process.env.DISABLE_DEEPSEEK_TOKENIZER;
+		} else {
+			process.env.DISABLE_DEEPSEEK_TOKENIZER = previousDisableTokenizer;
+		}
+		await fs.rm(appDataDir, { recursive: true, force: true });
+	}
+});

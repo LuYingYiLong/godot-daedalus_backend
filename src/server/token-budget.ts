@@ -5,6 +5,7 @@ import { type TokenCounter } from "../tokens/token-counter.js";
 import { createTokenCounter } from "../tokens/token-counter-factory.js";
 import { computeInputBudget, selectMessagesWithinBudget } from "../session/session-compressor.js";
 import type { SessionSummary } from "../session/session-store.js";
+import { createWorkspaceMetadataSnapshot, saveSession } from "../session/session-store.js";
 import { estimateProviderMessagesTokens, estimateProviderTextTokens } from "../providers/provider-token-estimator.js";
 import {
 	createCurrentUserMessage,
@@ -140,7 +141,58 @@ export async function appendChatTurnToSession(
 	assistantCreatedAt: string = new Date().toISOString(),
 	additionalContext?: readonly AdditionalContextItem[] | undefined
 ): Promise<boolean> {
-	if (session.messages.some((message: ChatMessage): boolean => message.requestId === requestId)) {
+	if (!session.sessionId) {
+		return false;
+	}
+
+	const clonedAdditionalContext: AdditionalContextItem[] | undefined = cloneAdditionalContextItems(additionalContext);
+	const nextMessages: ChatMessage[] = [...session.messages];
+	const existingUserIndex: number = nextMessages.findIndex((message: ChatMessage): boolean => message.requestId === requestId && message.role === "user");
+	const existingAssistantIndex: number = nextMessages.findIndex((message: ChatMessage): boolean => message.requestId === requestId && message.role === "assistant");
+	let changed: boolean = false;
+
+	if (existingUserIndex < 0) {
+		const userChatMessage: ChatMessage = { role: "user", content: userMessage, requestId, createdAt: userCreatedAt };
+		if (clonedAdditionalContext !== undefined) {
+			userChatMessage.additionalContext = clonedAdditionalContext;
+		}
+		nextMessages.push(userChatMessage);
+		changed = true;
+	} else if (clonedAdditionalContext !== undefined && nextMessages[existingUserIndex]?.additionalContext === undefined) {
+		nextMessages[existingUserIndex] = {
+			...nextMessages[existingUserIndex]!,
+			additionalContext: clonedAdditionalContext
+		};
+		changed = true;
+	}
+
+	if (existingAssistantIndex < 0) {
+		nextMessages.push({ role: "assistant", content: assistantMessage, requestId, createdAt: assistantCreatedAt });
+		changed = true;
+	}
+
+	if (!changed) {
+		return false;
+	}
+
+	session.messages = nextMessages;
+	await saveSession(session.sessionId, session.messages, {
+		...createWorkspaceMetadataSnapshot(session.activeWorkspace)
+	});
+	return true;
+}
+
+export async function appendUserMessageToSession(
+	session: ClientSession,
+	userMessage: string,
+	requestId: string,
+	userCreatedAt: string = new Date().toISOString(),
+	additionalContext?: readonly AdditionalContextItem[] | undefined
+): Promise<boolean> {
+	if (!session.sessionId) {
+		return false;
+	}
+	if (session.messages.some((message: ChatMessage): boolean => message.requestId === requestId && message.role === "user")) {
 		return false;
 	}
 
@@ -150,18 +202,20 @@ export async function appendChatTurnToSession(
 		userChatMessage.additionalContext = clonedAdditionalContext;
 	}
 
-	const nextMessages: ChatMessage[] = [
-		...session.messages,
-		userChatMessage,
-		{ role: "assistant", content: assistantMessage, requestId, createdAt: assistantCreatedAt }
-	];
-	session.messages = nextMessages;
+	session.messages = [...session.messages, userChatMessage];
+	await saveSession(session.sessionId, session.messages, {
+		...createWorkspaceMetadataSnapshot(session.activeWorkspace)
+	});
 	return true;
 }
 
-export async function selectHistoryForModel(session: ClientSession, budgetTokens: number): Promise<ChatMessage[]> {
+export async function selectHistoryForModel(session: ClientSession, budgetTokens: number, excludeRequestId?: string | undefined): Promise<ChatMessage[]> {
+	const filterRequest = (messages: ChatMessage[]): ChatMessage[] => excludeRequestId === undefined
+		? messages
+		: messages.filter((message: ChatMessage): boolean => message.requestId !== excludeRequestId);
+
 	if (session.summaryMessage === undefined) {
-		return selectHistoryWithinBudget(filterLlmContextMessages(session.messages), budgetTokens);
+		return selectHistoryWithinBudget(filterRequest(filterLlmContextMessages(session.messages)), budgetTokens);
 	}
 
 	const summaryTokens: number = await estimateMessagesTokens([session.summaryMessage]);
@@ -169,7 +223,7 @@ export async function selectHistoryForModel(session: ClientSession, budgetTokens
 	const recentSourceMessages: ChatMessage[] = session.summaryCoveredMessageCount !== undefined
 		? session.messages.slice(session.summaryCoveredMessageCount)
 		: session.messages;
-	const recentMessages: ChatMessage[] = await selectHistoryWithinBudget(filterLlmContextMessages(recentSourceMessages), recentBudgetTokens);
+	const recentMessages: ChatMessage[] = await selectHistoryWithinBudget(filterRequest(filterLlmContextMessages(recentSourceMessages)), recentBudgetTokens);
 	return [session.summaryMessage, ...recentMessages];
 }
 

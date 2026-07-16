@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import * as fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import {
@@ -9,6 +12,7 @@ import {
 } from "../src/session/approval-persistence.js";
 import type { StoredApprovalEvent } from "../src/session/session-store.js";
 import type { PendingAiContinuation } from "../src/server/client-session.js";
+import { createClientSession } from "../src/server/client-session.js";
 import type { PendingApproval } from "../src/tools/approval-gateway.js";
 
 function createPendingApproval(): PendingApproval {
@@ -151,4 +155,52 @@ test("hydrated approval states keep in-memory approvals created during continuat
 		mergedStates.map((state) => state.approval.approvalId).sort(),
 		["approval-memory-race", "approval-test"]
 	);
+});
+
+test("cancelling a request clears pending approval continuation and persistence", async (): Promise<void> => {
+	const previousUserProfile: string | undefined = process.env.USERPROFILE;
+	const previousDisableTokenizer: string | undefined = process.env.DISABLE_DEEPSEEK_TOKENIZER;
+	const appDataDir: string = await fs.mkdtemp(path.join(os.tmpdir(), "godot-daedalus-approval-cancel-"));
+	process.env.USERPROFILE = appDataDir;
+	process.env.DISABLE_DEEPSEEK_TOKENIZER = "1";
+	try {
+		const suffix: string = `${Date.now()}-${Math.random()}`;
+		const store = await import(`../src/session/session-store.js?case=${suffix}`);
+		const continuationModule = await import(`../src/server/approval-continuation.js?case=${suffix}`);
+		const metadata = await store.createSession("Approval cancel", "workspace-a");
+		const session = createClientSession(undefined);
+		session.sessionId = metadata.id;
+		const pendingApproval: PendingApproval = createPendingApproval();
+		const pendingContinuation: PendingAiContinuation = createPendingContinuation();
+		session.approvalGateway.upsertPending(pendingApproval);
+		session.pendingAiContinuations.set(pendingApproval.approvalId, pendingContinuation);
+		await store.appendApprovalEvent(
+			metadata.id,
+			pendingApproval.approvalId,
+			pendingContinuation.requestId,
+			"requested",
+			createPersistedApprovalRequestedData(pendingApproval, pendingContinuation, "workspace-a")
+		);
+
+		const cancelledIds: string[] = await continuationModule.cancelPendingApprovalsForRequest(session, pendingContinuation.requestId);
+		assert.deepEqual(cancelledIds, [pendingApproval.approvalId]);
+		assert.equal(session.approvalGateway.listPending().length, 0);
+		assert.equal(session.pendingAiContinuations.size, 0);
+
+		const events = await store.readApprovalEvents(metadata.id);
+		assert.equal(events.some((event: StoredApprovalEvent): boolean => event.event === "cancelled"), true);
+		assert.deepEqual(foldPendingApprovalStates(events), []);
+	} finally {
+		if (previousUserProfile === undefined) {
+			delete process.env.USERPROFILE;
+		} else {
+			process.env.USERPROFILE = previousUserProfile;
+		}
+		if (previousDisableTokenizer === undefined) {
+			delete process.env.DISABLE_DEEPSEEK_TOKENIZER;
+		} else {
+			process.env.DISABLE_DEEPSEEK_TOKENIZER = previousDisableTokenizer;
+		}
+		await fs.rm(appDataDir, { recursive: true, force: true });
+	}
 });

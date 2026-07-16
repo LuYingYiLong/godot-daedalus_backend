@@ -16,6 +16,7 @@ import { waitForFullSessionLoad } from "./session-preview.js";
 import {
 	waitForSessionEventPersistence
 } from "./session-events.js";
+import { createRuntimeSessionUiMetadata } from "./session-ui-metadata.js";
 import { getClientConnection, getConnectionSession, hasOtherConnectionsForSession, registerClientConnection, unregisterClientConnection } from "./client-connections.js";
 import { withMcpRequestContext } from "../mcp/request-context.js";
 import { logger } from "../logger.js";
@@ -132,6 +133,7 @@ async function saveSessionOnDisconnect(session: ClientSession): Promise<void> {
 
 	await saveSession(sessionId, session.messages, {
 		...createWorkspaceMetadataSnapshot(session.activeWorkspace),
+		...createRuntimeSessionUiMetadata(session),
 	});
 }
 

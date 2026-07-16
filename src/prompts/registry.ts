@@ -14,8 +14,8 @@ export const DEFAULT_PROMPT_ID: PromptId = "godot.assistant";
 export const promptTemplates: Record<PromptId, PromptTemplate> = {
 	"godot.assistant": {
 		id: "godot.assistant",
-		name: "Godot Assistant",
-		description: "General Godot Development Assistant",
+		name: "Daedalus Assistant",
+		description: "General Daedalus assistant with strong Godot project support",
 		path: "src/prompts/templates/base/godot-assistant.md"
 	},
 	"gdscript.reviewer": {

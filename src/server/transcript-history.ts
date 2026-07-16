@@ -43,22 +43,8 @@ export async function appendFailedChatTurnToSession(
 	if (!session.sessionId) {
 		return false;
 	}
-	if (session.messages.some((message: ChatMessage): boolean => message.requestId === requestId)) {
-		return false;
-	}
 
-	const userChatMessage: ChatMessage = {
-		role: "user",
-		content: userMessage,
-		requestId,
-		createdAt: userCreatedAt,
-		excludeFromLlmContext: true
-	};
 	const clonedAdditionalContext: AdditionalContextItem[] | undefined = cloneAdditionalContextItems(additionalContext);
-	if (clonedAdditionalContext !== undefined) {
-		userChatMessage.additionalContext = clonedAdditionalContext;
-	}
-
 	const assistantChatMessage: ChatMessage = {
 		role: "assistant",
 		content: assistantMessage,
@@ -71,12 +57,45 @@ export async function appendFailedChatTurnToSession(
 			message: error.message
 		}
 	};
+	const nextMessages: ChatMessage[] = [...session.messages];
+	const existingUserIndex: number = nextMessages.findIndex((message: ChatMessage): boolean => message.requestId === requestId && message.role === "user");
+	const existingAssistantIndex: number = nextMessages.findIndex((message: ChatMessage): boolean => message.requestId === requestId && message.role === "assistant");
+	let changed: boolean = false;
 
-	session.messages = [
-		...session.messages,
-		userChatMessage,
-		assistantChatMessage
-	];
+	if (existingUserIndex < 0) {
+		const userChatMessage: ChatMessage = {
+			role: "user",
+			content: userMessage,
+			requestId,
+			createdAt: userCreatedAt,
+			excludeFromLlmContext: true
+		};
+		if (clonedAdditionalContext !== undefined) {
+			userChatMessage.additionalContext = clonedAdditionalContext;
+		}
+		nextMessages.push(userChatMessage);
+		changed = true;
+	} else {
+		nextMessages[existingUserIndex] = {
+			...nextMessages[existingUserIndex]!,
+			excludeFromLlmContext: true,
+			...(clonedAdditionalContext !== undefined && nextMessages[existingUserIndex]?.additionalContext === undefined
+				? { additionalContext: clonedAdditionalContext }
+				: {})
+		};
+		changed = true;
+	}
+
+	if (existingAssistantIndex < 0) {
+		nextMessages.push(assistantChatMessage);
+		changed = true;
+	}
+
+	if (!changed) {
+		return false;
+	}
+
+	session.messages = nextMessages;
 	await saveSession(session.sessionId, session.messages, {
 		...createWorkspaceMetadataSnapshot(session.activeWorkspace),
 	});

@@ -105,6 +105,26 @@ const DEFAULT_WORKFLOW_TOOL_NAMES: Record<WorkflowToolGroup, readonly string[]> 
 	]
 };
 
+const NO_WORKSPACE_TOOL_NAMES: ReadonlySet<string> = new Set([
+	"mcp_skills_load",
+	"mcp_image_generate"
+]);
+
+export function isToolAvailableWithoutWorkspace(toolName: string): boolean {
+	return NO_WORKSPACE_TOOL_NAMES.has(toolName);
+}
+
+export function filterToolNamesForWorkspace(toolNames: readonly string[], workspaceId?: string | undefined): string[] {
+	if (workspaceId !== undefined) {
+		return [...toolNames];
+	}
+	return toolNames.filter(isToolAvailableWithoutWorkspace);
+}
+
+export function getNoWorkspaceToolNames(): string[] {
+	return [...NO_WORKSPACE_TOOL_NAMES];
+}
+
 export type ToolCatalogEntry = {
 	id: string;
 	definition: ChatCompletionTool;

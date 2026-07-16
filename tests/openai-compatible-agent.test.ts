@@ -125,7 +125,7 @@ async function withStreamingAgentMockServer(run: (baseUrl: string, requests: Rec
 	}
 }
 
-async function withMiniMaxThinkTagMockServer(streaming: boolean, run: (baseUrl: string, requests: RecordedRequest[]) => Promise<void>): Promise<void> {
+async function withMiniMaxThinkTagMockServer(streaming: boolean, run: (baseUrl: string, requests: RecordedRequest[]) => Promise<void>, streamChunks: string[] = ["<thi", "nk>先分析一下", "</thi", "nk>最终答案。"]): Promise<void> {
 	const requests: RecordedRequest[] = [];
 	const server: Server = createServer(async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
 		const body: Record<string, unknown> = await readRequestBody(request);
@@ -134,7 +134,7 @@ async function withMiniMaxThinkTagMockServer(streaming: boolean, run: (baseUrl: 
 
 		if (streaming) {
 			response.writeHead(200, { "Content-Type": "text/event-stream" });
-			for (const content of ["<thi", "nk>先分析一下", "</thi", "nk>最终答案。"]) {
+			for (const content of streamChunks) {
 				writeSseChunk(response, {
 					id: "chatcmpl-minimax-thinking",
 					object: "chat.completion.chunk",
@@ -282,6 +282,35 @@ test("MiniMax streaming agent extracts think tags into thinking events", async (
 		assert.equal(thinkingDoneCount, 1);
 		assert.equal(requests.length, 1);
 	});
+});
+
+test("MiniMax streaming agent opens thinking when think tag arrives before text", async (): Promise<void> => {
+	await withMiniMaxThinkTagMockServer(true, async (baseUrl: string): Promise<void> => {
+		const thinking: string[] = [];
+		let thinkingDoneCount: number = 0;
+		const result = await runOpenAICompatibleAgentStreaming(
+			{ message: "回答一下", options: { stream: true } },
+			{ provider: "minimax", apiKey: "test-key", baseUrl, model: "MiniMax-M3" },
+			[],
+			"System prompt",
+			createMockMcpHost(),
+			new ApprovalGateway(),
+			[],
+			(event): void => {
+				if (event.type === "ai.thinking.delta") {
+					thinking.push(event.text);
+				}
+				if (event.type === "ai.thinking.done") {
+					thinkingDoneCount += 1;
+				}
+			}
+		);
+
+		assert.equal(result.status, "completed");
+		assert.equal(result.text, "最终答案。");
+		assert.deepEqual(thinking, ["", "先分析一下"]);
+		assert.equal(thinkingDoneCount, 1);
+	}, ["<", "think", ">", "先分析一下", "</", "think", ">", "最终答案。"]);
 });
 
 test("MiniMax non-streaming agent strips think tags from visible text", async (): Promise<void> => {

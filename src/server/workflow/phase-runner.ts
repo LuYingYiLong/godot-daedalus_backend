@@ -20,12 +20,17 @@ import { createAgentToolEventForwarder, createEmptyWorkflowPhaseToolStats, updat
 import type { WorkflowPhaseRunResult, WorkflowPhaseToolStats } from "./shared-types.js";
 import { isEmptyProviderResponseError } from "./provider-errors.js";
 import { createSceneViewToolResultEnricher } from "./scene-view-enricher.js";
+import { filterToolNamesForWorkspace } from "../../tools/tool-catalog.js";
 
 const SCENE_VIEW_CAPTURE_TOOL: string = "mcp_godot_editor_capture_scene_view";
 const SKILL_LOAD_TOOL: string = "mcp_skills_load";
 
 export function createRuntimeWorkflowPhase(phase: WorkflowPhase, mcpHost: McpHost, session?: ClientSession | undefined): WorkflowPhase {
-	const allowedTools: string[] = phase.allowedTools.includes(SKILL_LOAD_TOOL) ? [...phase.allowedTools] : [...phase.allowedTools, SKILL_LOAD_TOOL];
+	const workspaceId: string | undefined = session?.activeWorkspace?.id;
+	const allowedTools: string[] = filterToolNamesForWorkspace(
+		phase.allowedTools.includes(SKILL_LOAD_TOOL) ? [...phase.allowedTools] : [...phase.allowedTools, SKILL_LOAD_TOOL],
+		workspaceId
+	);
 	if (allowedTools.includes(SCENE_VIEW_CAPTURE_TOOL) && !mcpHost.getEditorBridge().supportsTool("capture_scene_view", session?.activeWorkspace?.id, session?.editorInstanceId)) {
 		return {
 			...phase,
@@ -101,18 +106,21 @@ export async function createWorkflowPhasePrompt(
 	guidePromptSection: string = ""
 ): Promise<string> {
 	const systemPrompt: string = await composeSystemPrompt(phase.promptId ?? params.promptId, params.systemPrompt, createProviderRuntimeContext(session), params.mode);
+	const runtimePhase: WorkflowPhase = createRuntimeWorkflowPhase(phase, mcpHost, session);
 	const phaseSkillPrompt: string = await composeSkillPrompt(phase.skillId);
-	const skillWorkspace: SkillWorkspace = session.activeWorkspace !== undefined
+	const skillWorkspace: SkillWorkspace | undefined = session.activeWorkspace !== undefined
 		? { id: session.activeWorkspace.id, rootPath: session.activeWorkspace.rootPath }
-		: { id: `runtime:${session.godotProjectPath ?? "unknown"}`, rootPath: session.godotProjectPath ?? process.cwd() };
-	const explicitSkillPrompt: string = composeExplicitSkillPrompt(await resolveExplicitSkills(skillWorkspace, params.skillRefs ?? []));
-	const skillCatalogPrompt: string = await composeSkillCatalogPrompt(skillWorkspace);
+		: undefined;
+	const explicitSkillPrompt: string = skillWorkspace !== undefined
+		? composeExplicitSkillPrompt(await resolveExplicitSkills(skillWorkspace, params.skillRefs ?? []))
+		: "";
+	const skillCatalogPrompt: string = skillWorkspace !== undefined ? await composeSkillCatalogPrompt(skillWorkspace) : "";
 	const skillPrompt: string = [phaseSkillPrompt, explicitSkillPrompt, skillCatalogPrompt].filter((section): boolean => section.length > 0).join("\n\n");
 	const mcpSystemContext: string = await createMcpSystemContext(mcpHost, session);
 	const additionalContextSection: string = createAdditionalContextPromptSection(params.additionalContext);
 	const fullSystemPrompt: string = [
 		systemPrompt,
-		createPhasePrompt(phase, skillPrompt, mcpSystemContext, params.mode),
+		createPhasePrompt(runtimePhase, skillPrompt, mcpSystemContext, params.mode),
 		additionalContextSection,
 		guidePromptSection
 	].join("\n\n");

@@ -397,6 +397,19 @@ export async function continueWorkflowExecution(
 						mcpServers: mcpHost.getConnectedServerIds()
 					}
 				}, persistRequestId);
+				sendJson(socket, {
+					type: "response",
+					id: requestId,
+					ok: true,
+					result: {
+						text: agentResult.text,
+						context: {
+							historyMessagesStored: session.messages.length,
+							historyBudgetTokens: state.historyBudgetTokens,
+							mcpServers: mcpHost.getConnectedServerIds()
+						}
+					}
+				});
 			} else {
 				sendSessionEvent(socket, requestId, session, "agent.message.done", {
 					runId: plan.id,

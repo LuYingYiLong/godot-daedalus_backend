@@ -82,6 +82,41 @@ export async function registerPendingApprovalContinuation(
 	await persistApprovalRequested(session, mcpHost, approvalId, pendingContinuation);
 }
 
+export async function cancelPendingApprovalsForRequest(session: ClientSession, requestId: string): Promise<string[]> {
+	const approvalIds: Set<string> = new Set();
+	for (const pendingApproval of session.approvalGateway.listPending()) {
+		const continuation: PendingAiContinuation | undefined = session.pendingAiContinuations.get(pendingApproval.approvalId);
+		if (continuation?.requestId === requestId) {
+			approvalIds.add(pendingApproval.approvalId);
+		}
+	}
+
+	if (session.sessionId !== undefined) {
+		const states: PendingApprovalState[] = foldPendingApprovalStates(await readApprovalEvents(session.sessionId));
+		for (const state of states) {
+			if (state.requestId === requestId) {
+				approvalIds.add(state.approval.approvalId);
+			}
+		}
+	}
+
+	const cancelledApprovalIds: string[] = [];
+	for (const approvalId of approvalIds) {
+		const pendingApproval: PendingApproval | undefined = session.approvalGateway.removePending(approvalId);
+		session.pendingAiContinuations.delete(approvalId);
+		cancelledApprovalIds.push(approvalId);
+		if (session.sessionId !== undefined) {
+			await appendApprovalEvent(session.sessionId, approvalId, requestId, "cancelled", {
+				approvalId,
+				toolName: pendingApproval?.llmToolName ?? null,
+				reason: "run_cancelled"
+			});
+		}
+	}
+
+	return cancelledApprovalIds;
+}
+
 export async function loadHydratedPendingApprovalStates(
 	session: ClientSession,
 	apiKey?: string | undefined

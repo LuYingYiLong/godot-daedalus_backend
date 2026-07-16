@@ -298,7 +298,7 @@ export function createProviderRuntimeContext(session: ClientSession): string {
 		`当前后端实际模型供应商：${providerName}（provider id: ${session.activeProvider}）。`,
 		`当前后端实际模型 ID：${modelName}。`,
 		"如果用户询问“你是什么模型”“来自哪个供应商”“当前用的模型/供应商是什么”，必须优先基于以上运行时事实回答。",
-		"回答时可以说明你在产品角色上是 Godot Daedalus 的 Godot 开发助手，但不要用产品角色替代实际模型和供应商信息。"
+		"回答时可以说明你在产品角色上是 Daedalus Assistant；Godot 是产品强项，但不要用产品角色替代实际模型和供应商信息。"
 	].join("\n");
 }
 
@@ -318,6 +318,15 @@ export async function createMcpSystemContext(mcpHost: McpHost, session: ClientSe
 	const serverIds: string[] = mcpHost.getConnectedServerIds(workspaceId);
 	const godotRuntime: Record<string, unknown> = createGodotRuntimeStatus(session, mcpHost);
 	const sections: string[] = [];
+
+	if (session.activeWorkspace === undefined) {
+		sections.push("## 工作区状态");
+		sections.push("- 当前会话未选择工作区。");
+		sections.push("- Godot 项目、编辑器、LSP/DAP 和项目文件工具在本轮不可用；不要尝试读取、创建或修改 Godot 项目。");
+		sections.push("- 如果用户需要项目级操作，请要求用户先选择或添加工作区；如果只是普通问答或图片生成，可以继续完成。");
+		sections.push("");
+		return sections.join("\n");
+	}
 
 	// Godot environment section
 	if (session.godotExecutablePath || session.godotProjectPath || session.activeWorkspace) {
