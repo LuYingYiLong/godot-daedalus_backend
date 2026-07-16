@@ -54,7 +54,8 @@ const sessionUiMetadataParamsSchema = z.object({
 	provider: providerIdSchema.optional(),
 	model: z.string().min(1).optional(),
 	chatMode: z.enum(["agent", "ask", "plan"]).optional(),
-	approvalMode: z.enum(["manual", "auto-safe"]).optional()
+	approvalMode: z.enum(["manual", "auto-safe"]).optional(),
+	workflowTodoCollapsed: z.boolean().optional()
 }).strict();
 
 export const additionalContextItemSchema = z.object({
@@ -577,6 +578,15 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 			provider: providerIdSchema.optional(),
 			model: z.string().min(1).optional(),
 			additionalContext: z.array(additionalContextItemSchema).max(10).optional(),
+		}).optional(),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("session.workflow.todo.dismiss"),
+		params: z.object({
+			workflowId: z.string().min(1).optional(),
+			runId: z.string().min(1).optional(),
 		}).optional(),
 	}),
 	z.object({

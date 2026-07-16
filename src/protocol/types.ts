@@ -116,6 +116,7 @@ export type ServerEvent = {
 		| "workflow.started"
 		| "workflow.phase.started"
 		| "workflow.todo.updated"
+		| "workflow.todo.dismissed"
 		| "workflow.phase.outcome"
 		| "workflow.phase.done"
 		| "workflow.done"

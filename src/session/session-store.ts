@@ -28,6 +28,7 @@ export type SessionMetadata = {
 	model?: string | undefined;
 	chatMode?: SessionChatMode | undefined;
 	approvalMode?: "manual" | "auto-safe" | undefined;
+	workflowTodoCollapsed?: boolean | undefined;
 	archivedAt?: string | undefined;
 	createdAt: string;
 	updatedAt: string;

@@ -718,6 +718,38 @@ function collectAssistantRequestIds(messages: StoredMessage[]): Set<string> {
 	return ids;
 }
 
+function getSnapshotTodoIdentity(snapshot: unknown): string | null {
+	if (typeof snapshot !== "object" || snapshot === null || Array.isArray(snapshot)) {
+		return null;
+	}
+
+	const record = snapshot as { workflowId?: unknown; runId?: unknown };
+	if (typeof record.workflowId === "string" && record.workflowId.length > 0) {
+		return record.workflowId;
+	}
+	if (typeof record.runId === "string" && record.runId.length > 0) {
+		return record.runId;
+	}
+
+	return null;
+}
+
+function getDismissedTodoIdentity(data: unknown): string | null {
+	return getSnapshotTodoIdentity(data);
+}
+
+function shouldClearDismissedSnapshot(snapshot: unknown | null, dismissedIdentity: string | null): boolean {
+	if (snapshot === null) {
+		return false;
+	}
+	if (dismissedIdentity === null) {
+		return true;
+	}
+
+	const snapshotIdentity: string | null = getSnapshotTodoIdentity(snapshot);
+	return snapshotIdentity === null || snapshotIdentity === dismissedIdentity;
+}
+
 function findLatestSnapshots(events: StoredSessionEvent[]): { latestWorkflowSnapshot: unknown | null; latestAgentSnapshot: unknown | null } {
 	let latestWorkflowSnapshot: unknown | null = null;
 	let latestAgentSnapshot: unknown | null = null;
@@ -727,6 +759,15 @@ function findLatestSnapshots(events: StoredSessionEvent[]): { latestWorkflowSnap
 		}
 		if (event.event === "agent.run.snapshot") {
 			latestAgentSnapshot = event.data;
+		}
+		if (event.event === "workflow.todo.dismissed") {
+			const dismissedIdentity: string | null = getDismissedTodoIdentity(event.data);
+			if (shouldClearDismissedSnapshot(latestWorkflowSnapshot, dismissedIdentity)) {
+				latestWorkflowSnapshot = null;
+			}
+			if (shouldClearDismissedSnapshot(latestAgentSnapshot, dismissedIdentity)) {
+				latestAgentSnapshot = null;
+			}
 		}
 	}
 

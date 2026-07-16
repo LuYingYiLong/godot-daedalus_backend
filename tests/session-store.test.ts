@@ -135,19 +135,22 @@ test("session store persists frontend session metadata", async (): Promise<void>
 			provider: "moonshot",
 			model: "kimi-k2.7-code",
 			chatMode: "ask",
-			approvalMode: "manual"
+			approvalMode: "manual",
+			workflowTodoCollapsed: true
 		});
 
 		assert.equal(metadata.provider, "moonshot");
 		assert.equal(metadata.model, "kimi-k2.7-code");
 		assert.equal(metadata.chatMode, "ask");
 		assert.equal(metadata.approvalMode, "manual");
+		assert.equal(metadata.workflowTodoCollapsed, true);
 
 		await store.saveSession(metadata.id, [], {
 			provider: "deepseek",
 			model: "deepseek-v4-pro",
 			chatMode: "plan",
-			approvalMode: "auto-safe"
+			approvalMode: "auto-safe",
+			workflowTodoCollapsed: false
 		});
 
 		const opened = await store.openSession(metadata.id);
@@ -155,6 +158,7 @@ test("session store persists frontend session metadata", async (): Promise<void>
 		assert.equal(opened.metadata.model, "deepseek-v4-pro");
 		assert.equal(opened.metadata.chatMode, "plan");
 		assert.equal(opened.metadata.approvalMode, "auto-safe");
+		assert.equal(opened.metadata.workflowTodoCollapsed, false);
 	});
 });
 

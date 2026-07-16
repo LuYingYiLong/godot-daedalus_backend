@@ -83,3 +83,21 @@ test("workspace.delete accepts workspace id", (): void => {
 		}
 	}).success, true);
 });
+
+test("session.workflow.todo.dismiss accepts optional workflow identity", (): void => {
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "todo-dismiss",
+		method: "session.workflow.todo.dismiss",
+		params: {
+			workflowId: "workflow-a",
+			runId: "workflow-run-a"
+		}
+	}).success, true);
+
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "todo-dismiss-empty",
+		method: "session.workflow.todo.dismiss"
+	}).success, true);
+});

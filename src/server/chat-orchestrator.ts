@@ -255,12 +255,6 @@ async function maybeAutoCompressContextBeforeRun(
 	contextPrompt: string,
 	abortSignal?: AbortSignal | undefined
 ): Promise<ContextUsageEstimate> {
-	sendSessionEvent(socket, requestId, session, "ai.status", {
-		stage: "context_estimate",
-		title: "Context",
-		details: "Estimating context usage",
-		message: "Estimating context usage"
-	});
 	let estimate: ContextUsageEstimate = await estimateFullContextUsage(session, requestId, options, params, systemPrompt, contextPrompt, abortSignal);
 	if (estimate.percent >= 85 && session.messages.length > 8) {
 		sendSessionEvent(socket, requestId, session, "ai.status", {

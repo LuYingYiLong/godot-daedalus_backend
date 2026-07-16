@@ -195,7 +195,8 @@ test("session create and save schema accept frontend session metadata", (): void
 		params: {
 			provider: "moonshot",
 			model: "kimi-k2.7-code",
-			chatMode: "plan"
+			chatMode: "plan",
+			workflowTodoCollapsed: true
 		}
 	}).success, true);
 

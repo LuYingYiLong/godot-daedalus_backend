@@ -191,6 +191,7 @@ function createSessionUiMetadata(params: {
 	model?: string | undefined;
 	chatMode?: SessionChatMode | undefined;
 	approvalMode?: "manual" | "auto-safe" | undefined;
+	workflowTodoCollapsed?: boolean | undefined;
 } | undefined): Partial<SessionMetadata> {
 	if (params === undefined) {
 		return {};
@@ -208,6 +209,9 @@ function createSessionUiMetadata(params: {
 	}
 	if (params.approvalMode !== undefined) {
 		metadata.approvalMode = params.approvalMode;
+	}
+	if (params.workflowTodoCollapsed !== undefined) {
+		metadata.workflowTodoCollapsed = params.workflowTodoCollapsed;
 	}
 
 	return metadata;
@@ -1041,6 +1045,40 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 					}
 				});
 			}
+			break;
+		}
+
+		case "session.workflow.todo.dismiss": {
+			await waitForFullSessionLoad(session);
+			if (!session.sessionId) {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: { code: "no_session", message: "No active session" }
+				});
+				break;
+			}
+
+			const workflowId: string | undefined = request.params?.workflowId;
+			const runId: string | undefined = request.params?.runId;
+			const dismissedAt: string = new Date().toISOString();
+			sendSessionEvent(socket, request.id, session, "workflow.todo.dismissed", {
+				...(workflowId !== undefined ? { workflowId } : {}),
+				...(runId !== undefined ? { runId } : {}),
+				dismissedAt
+			});
+			await waitForSessionEventPersistence(session);
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: true,
+				result: {
+					dismissed: true,
+					workflowId: workflowId ?? null,
+					runId: runId ?? null
+				}
+			});
 			break;
 		}
 

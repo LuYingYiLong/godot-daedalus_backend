@@ -174,6 +174,38 @@ test("canonical timeline keeps plan execution as independent blocks with tools a
 	});
 });
 
+test("canonical timeline keeps workflow todo after done until dismissed", (): void => {
+	const todoSnapshot = {
+		workflowId: "workflow-a",
+		todos: [
+			{ id: "phase-write", title: "实现修改", status: "done" }
+		]
+	};
+	const storedWithDone: StoredSession = session([], [
+		event("event-todo", "workflow-run", "workflow.todo.updated", "2026-07-09T00:01:04.000Z", todoSnapshot),
+		event("event-done", "workflow-run", "workflow.done", "2026-07-09T00:01:05.000Z", {
+			workflowId: "workflow-a"
+		})
+	]);
+
+	const doneResult = buildCanonicalTimelineBlocks(storedWithDone);
+	assert.deepEqual(doneResult.latestWorkflowSnapshot, todoSnapshot);
+
+	const storedWithDismiss: StoredSession = session([], [
+		event("event-todo", "workflow-run", "workflow.todo.updated", "2026-07-09T00:01:04.000Z", todoSnapshot),
+		event("event-done", "workflow-run", "workflow.done", "2026-07-09T00:01:05.000Z", {
+			workflowId: "workflow-a"
+		}),
+		event("event-dismiss", "workflow-run", "workflow.todo.dismissed", "2026-07-09T00:01:06.000Z", {
+			workflowId: "workflow-a",
+			dismissedAt: "2026-07-09T00:01:06.000Z"
+		})
+	]);
+
+	const dismissResult = buildCanonicalTimelineBlocks(storedWithDismiss);
+	assert.equal(dismissResult.latestWorkflowSnapshot, null);
+});
+
 test("canonical timeline inserts summary start marker before final summary markdown", (): void => {
 	const stored: StoredSession = session(
 		[
