@@ -162,6 +162,31 @@ test("session store persists frontend session metadata", async (): Promise<void>
 	});
 });
 
+test("session metadata updates do not rewrite persisted messages", async (): Promise<void> => {
+	await withTempAppData(async (store): Promise<void> => {
+		const metadata = await store.createSession("Metadata only session");
+		await store.appendMessage(metadata.id, {
+			role: "user",
+			content: "keep me",
+			requestId: "req-keep",
+			createdAt: "2026-07-03T00:00:00.000Z"
+		});
+		const before = await store.openSession(metadata.id);
+		assert.equal(before.messages.length, 1);
+
+		const updated = await store.updateSessionMetadata(metadata.id, {
+			workflowTodoCollapsed: true,
+			model: "MiniMax-M3"
+		});
+		assert.equal(updated.workflowTodoCollapsed, true);
+
+		const after = await store.openSession(metadata.id);
+		assert.equal(after.metadata.workflowTodoCollapsed, true);
+		assert.equal(after.metadata.model, "MiniMax-M3");
+		assert.deepEqual(after.messages, before.messages);
+	});
+});
+
 test("session store deletes active and archived sessions by workspace", async (): Promise<void> => {
 	await withTempAppData(async (store): Promise<void> => {
 		const active = await store.createSession("Active workspace session", "workspace-a");

@@ -804,5 +804,166 @@
       "imageGeneration": true
     },
     "ownedBy": "minimax"
+  },
+  {
+    "id": "step-3.7-flash",
+    "displayName": "Step 3.7 Flash",
+    "provider": "stepfun",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 256000,
+    "maxOutputTokens": 32768,
+    "capabilities": {
+      "imageInput": true,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
+    "ownedBy": "stepfun"
+  },
+  {
+    "id": "step-3.5-flash",
+    "displayName": "Step 3.5 Flash",
+    "provider": "stepfun",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 256000,
+    "maxOutputTokens": 32768,
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
+    "ownedBy": "stepfun"
+  },
+  {
+    "id": "step-3.5-flash-2603",
+    "displayName": "Step 3.5 Flash 2603",
+    "provider": "stepfun",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 256000,
+    "maxOutputTokens": 32768,
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
+    "ownedBy": "stepfun"
+  },
+  {
+    "id": "4.0Ultra",
+    "displayName": "Spark 4.0 Ultra",
+    "provider": "iflytek",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 32768,
+    "maxOutputTokens": 32768,
+    "capabilities": {
+      "tools": true
+    },
+    "ownedBy": "iflytek"
+  },
+  {
+    "id": "pro-128k",
+    "displayName": "Spark Pro 128K",
+    "provider": "iflytek",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 131072,
+    "maxOutputTokens": 32768,
+    "capabilities": {},
+    "ownedBy": "iflytek"
+  },
+  {
+    "id": "generalv3",
+    "displayName": "Spark Pro",
+    "provider": "iflytek",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 8192,
+    "maxOutputTokens": 8192,
+    "capabilities": {},
+    "ownedBy": "iflytek"
+  },
+  {
+    "id": "lite",
+    "displayName": "Spark Lite",
+    "provider": "iflytek",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 8192,
+    "maxOutputTokens": 4096,
+    "capabilities": {},
+    "ownedBy": "iflytek"
+  },
+  {
+    "id": "kimi-k2.7-code",
+    "displayName": "Kimi K2.7 Code",
+    "provider": "opencode",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 256000,
+    "maxOutputTokens": 32000,
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
+    "ownedBy": "opencode"
+  },
+  {
+    "id": "deepseek-v4-pro",
+    "displayName": "DeepSeek V4 Pro",
+    "provider": "opencode",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 1000000,
+    "maxOutputTokens": 384000,
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
+    "ownedBy": "opencode"
+  },
+  {
+    "id": "deepseek-v4-flash",
+    "displayName": "DeepSeek V4 Flash",
+    "provider": "opencode",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 1000000,
+    "maxOutputTokens": 384000,
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
+    "ownedBy": "opencode"
+  },
+  {
+    "id": "glm-5.2",
+    "displayName": "GLM 5.2",
+    "provider": "opencode",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 1000000,
+    "maxOutputTokens": 128000,
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
+    "ownedBy": "opencode"
+  },
+  {
+    "id": "minimax-m3",
+    "displayName": "MiniMax M3",
+    "provider": "opencode",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 1000000,
+    "maxOutputTokens": 131072,
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
+    "ownedBy": "opencode"
+  },
+  {
+    "id": "grok-4.5",
+    "displayName": "Grok 4.5",
+    "provider": "opencode",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 256000,
+    "maxOutputTokens": 32000,
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
+    "ownedBy": "opencode"
   }
 ]

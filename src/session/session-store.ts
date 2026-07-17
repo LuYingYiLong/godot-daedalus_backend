@@ -437,6 +437,14 @@ export async function saveSession(sessionId: string, messages: ChatMessage[], me
 	await writeFile(msgFile, lines.join(""), "utf8");
 }
 
+export async function updateSessionMetadata(sessionId: string, metadata: Partial<SessionMetadata>): Promise<SessionMetadata> {
+	const metaFile: string = metaPath(sessionId);
+	const existing: StoredSession = await openSession(sessionId);
+	const updated: SessionMetadata = mergeSessionMetadata(existing.metadata, metadata);
+	await writeJsonFileAtomic(metaFile, updated);
+	return updated;
+}
+
 export async function rewindSessionFromRequest(sessionId: string, requestId: string): Promise<StoredMessage[]> {
 	const stored: StoredSession = await openSession(sessionId);
 	const startIndex: number = stored.messages.findIndex((message: StoredMessage): boolean => message.requestId === requestId);

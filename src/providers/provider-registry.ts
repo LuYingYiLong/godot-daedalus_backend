@@ -42,6 +42,7 @@ type RawEndpointConfig = {
 	modelsPath?: string | undefined;
 	tokenEstimatePath?: string | undefined;
 	requiredToolChoice?: "auto" | "omit" | undefined;
+	toolCallsSwitch?: unknown;
 	temperature?: {
 		min?: unknown;
 		max?: unknown;
@@ -104,7 +105,7 @@ function isAdapterFamily(value: unknown): value is AdapterFamily {
 }
 
 function isProviderModelListMode(value: unknown): value is ProviderModelListMode {
-	return value === "api-plus-catalog" || value === "catalog-recommended";
+	return value === "api-plus-catalog" || value === "catalog-recommended" || value === "catalog-only";
 }
 
 function parseTemperatureConstraint(value: unknown, providerId: string, endpointType: string): ProviderEndpointConfig["temperature"] {
@@ -155,6 +156,12 @@ function parseEndpointConfig(value: unknown, providerId: string, endpointType: s
 			throw new Error(`Provider ${providerId} endpoint ${endpointType} has unsupported requiredToolChoice`);
 		}
 		config.requiredToolChoice = value.requiredToolChoice;
+	}
+	if (value.toolCallsSwitch !== undefined) {
+		if (typeof value.toolCallsSwitch !== "boolean") {
+			throw new Error(`Provider ${providerId} endpoint ${endpointType} toolCallsSwitch must be a boolean`);
+		}
+		config.toolCallsSwitch = value.toolCallsSwitch;
 	}
 	const temperature = parseTemperatureConstraint(value.temperature, providerId, endpointType);
 	if (temperature !== undefined) {
@@ -387,7 +394,7 @@ export function getProviderFallbackModels(provider: ProviderId): ProviderModelIn
 export function mergeProviderModelsWithCatalog(provider: ProviderId, models: ProviderModelInfo[]): ProviderModelInfo[] {
 	const definition: ProviderDefinition = getProviderDefinition(provider);
 	const fallbackModels: ProviderModelInfo[] = getProviderFallbackModels(provider);
-	if (definition.modelListMode === "catalog-recommended") {
+	if (definition.modelListMode === "catalog-recommended" || definition.modelListMode === "catalog-only") {
 		return fallbackModels;
 	}
 

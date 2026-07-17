@@ -153,6 +153,10 @@ export async function listProviderModels(
 	baseUrl: string | undefined,
 	refresh: boolean = false
 ): Promise<ProviderModelsListResult> {
+	if (getProviderDefinition(provider).modelListMode === "catalog-only") {
+		return { provider, models: getProviderFallbackModels(provider), stale: false, source: "fallback" };
+	}
+
 	const options: ProviderChatOptions = { provider, apiKey: apiKey ?? "", baseUrl };
 	if (apiKey !== undefined && refresh) {
 		try {

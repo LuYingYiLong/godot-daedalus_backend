@@ -30,12 +30,13 @@ import {
 } from "../workspace/registry.js";
 import type { WorkspaceConfig } from "../workspace/types.js";
 import {
-	createSession, openSession, saveSession, listSessions,
+	createSession, openSession, listSessions,
 	archiveSession, deleteArchivedSession, deleteSession, listArchivedSessions, renameSession, restoreArchivedSession,
 	rewindSessionFromRequest,
 	readSummary, writeSummary,
 	appendSessionEvent, appendApprovalEvent, appendWorkflowEvent, appendAgentEvent, clearSessionEvents, readApprovalEvents,
 	createWorkspaceMetadataSnapshot,
+	updateSessionMetadata,
 	openSessionRecentTimeline, openSessionTimelinePage, openSessionTimelinePageAfter,
 	type SessionChatMode,
 	type SessionMetadata,
@@ -918,7 +919,7 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 			}
 			await waitForSessionEventPersistence(session);
 			const sessionUiMetadata: Partial<SessionMetadata> = createSessionUiMetadata(request.params);
-			await saveSession(session.sessionId, session.messages, {
+			await updateSessionMetadata(session.sessionId, {
 				...createWorkspaceMetadataSnapshot(session.activeWorkspace),
 				...createRuntimeSessionUiMetadata(session),
 				...sessionUiMetadata,
@@ -965,7 +966,7 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 			}
 
 			await waitForSessionEventPersistence(session);
-			await saveSession(session.sessionId, session.messages, {
+			await updateSessionMetadata(session.sessionId, {
 				...createWorkspaceMetadataSnapshot(session.activeWorkspace),
 				...createRuntimeSessionUiMetadata(session),
 				provider,

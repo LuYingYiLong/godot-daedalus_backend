@@ -50,6 +50,12 @@ type ToolCallAccumulator = {
 	argumentsText: string;
 };
 
+type ToolNameAliasContext = {
+	tools: ChatCompletionTool[];
+	originalToAlias: ReadonlyMap<string, string>;
+	aliasToOriginal: ReadonlyMap<string, string>;
+};
+
 function shouldRequireToolCallOnStep(params: AiChatParams, step: number, startStep: number): boolean {
 	const options: Record<string, unknown> | undefined = params.options as Record<string, unknown> | undefined;
 	return step === startStep && options?.requireToolCallOnFirstStep === true;
@@ -94,6 +100,21 @@ function applyDeepSeekToolMode(
 	body.extra_body = extraBody;
 }
 
+function applyProviderToolRequestOptions(
+	requestBody: ChatCompletionCreateParamsNonStreaming | ChatCompletionCreateParamsStreaming,
+	options: DeepSeekChatOptions,
+	tools: readonly ChatCompletionTool[]
+): void {
+	if (tools.length === 0) {
+		return;
+	}
+
+	const endpointConfig = getProviderEndpointConfig(options.provider, options.endpointType);
+	if (endpointConfig.toolCallsSwitch === true) {
+		(requestBody as unknown as Record<string, unknown>).tool_calls_switch = true;
+	}
+}
+
 function applyToolChoiceForStep(
 	requestBody: ChatCompletionCreateParamsNonStreaming | ChatCompletionCreateParamsStreaming,
 	params: AiChatParams,
@@ -112,6 +133,147 @@ function applyToolChoiceForStep(
 	}
 
 	requestBody.tool_choice = toolChoice;
+}
+
+function isProviderSafeToolName(toolName: string): boolean {
+	return /^[A-Za-z][A-Za-z0-9_]{0,31}$/u.test(toolName);
+}
+
+function createToolAlias(toolName: string, index: number, usedAliases: Set<string>): string {
+	const suffix: string = `_t${index + 1}`;
+	const stripped: string = toolName
+		.replace(/^mcp_godot_/u, "")
+		.replace(/^mcp_terminal_/u, "")
+		.replace(/^mcp_/u, "");
+	let base: string = stripped
+		.replace(/[^A-Za-z0-9_]/gu, "_")
+		.replace(/_+/gu, "_")
+		.replace(/^_+/u, "");
+
+	if (!/^[A-Za-z]/u.test(base)) {
+		base = `tool_${base}`;
+	}
+	if (base.length === 0) {
+		base = "tool";
+	}
+
+	let candidate: string = base.length <= 32 ? base : `${base.slice(0, Math.max(1, 32 - suffix.length))}${suffix}`;
+	if (!/^[A-Za-z]/u.test(candidate)) {
+		candidate = `t${candidate.slice(1)}`;
+	}
+
+	let collisionIndex: number = 1;
+	while (usedAliases.has(candidate)) {
+		const collisionSuffix: string = `_t${index + 1}_${collisionIndex}`;
+		candidate = `${base.slice(0, Math.max(1, 32 - collisionSuffix.length))}${collisionSuffix}`;
+		if (!/^[A-Za-z]/u.test(candidate)) {
+			candidate = `t${candidate.slice(1)}`;
+		}
+		collisionIndex += 1;
+	}
+
+	return candidate;
+}
+
+function createToolNameAliasContext(options: DeepSeekChatOptions, tools: ChatCompletionTool[]): ToolNameAliasContext {
+	if (options.provider !== "iflytek") {
+		return { tools, originalToAlias: new Map(), aliasToOriginal: new Map() };
+	}
+
+	const originalToAlias: Map<string, string> = new Map();
+	const aliasToOriginal: Map<string, string> = new Map();
+	const usedAliases: Set<string> = new Set();
+	const aliasedTools: ChatCompletionTool[] = tools.map((tool: ChatCompletionTool, index: number): ChatCompletionTool => {
+		if (tool.type !== "function") {
+			return tool;
+		}
+
+		const originalName: string = tool.function.name;
+		const alias: string = isProviderSafeToolName(originalName) && !usedAliases.has(originalName)
+			? originalName
+			: createToolAlias(originalName, index, usedAliases);
+		usedAliases.add(alias);
+		if (alias === originalName) {
+			return tool;
+		}
+
+		originalToAlias.set(originalName, alias);
+		aliasToOriginal.set(alias, originalName);
+		return {
+			...tool,
+			function: {
+				...tool.function,
+				name: alias,
+				description: `Original tool name: ${originalName}. ${tool.function.description ?? ""}`.trim()
+			}
+		};
+	});
+
+	return { tools: aliasedTools, originalToAlias, aliasToOriginal };
+}
+
+function createProviderRequestMessages(
+	messages: ChatCompletionMessageParam[],
+	aliasContext: ToolNameAliasContext
+): ChatCompletionMessageParam[] {
+	if (aliasContext.originalToAlias.size === 0) {
+		return messages;
+	}
+
+	return messages.map((message: ChatCompletionMessageParam): ChatCompletionMessageParam => {
+		const record = message as unknown as { tool_calls?: ChatCompletionMessageToolCall[] };
+		if (!Array.isArray(record.tool_calls)) {
+			return message;
+		}
+
+		const toolCalls: ChatCompletionMessageToolCall[] = record.tool_calls.map((toolCall: ChatCompletionMessageToolCall): ChatCompletionMessageToolCall => {
+			if (!isFunctionToolCall(toolCall)) {
+				return toolCall;
+			}
+			const alias: string | undefined = aliasContext.originalToAlias.get(toolCall.function.name);
+			if (alias === undefined) {
+				return toolCall;
+			}
+			return {
+				...toolCall,
+				function: {
+					...toolCall.function,
+					name: alias
+				}
+			};
+		});
+
+		return {
+			...message,
+			tool_calls: toolCalls
+		} as ChatCompletionMessageParam;
+	});
+}
+
+function normalizeProviderToolCalls(
+	toolCalls: ChatCompletionMessageToolCall[] | undefined,
+	aliasContext: ToolNameAliasContext
+): ChatCompletionMessageToolCall[] | undefined {
+	if (toolCalls === undefined || aliasContext.aliasToOriginal.size === 0) {
+		return toolCalls;
+	}
+
+	return toolCalls.map((toolCall: ChatCompletionMessageToolCall): ChatCompletionMessageToolCall => {
+		if (!isFunctionToolCall(toolCall)) {
+			return toolCall;
+		}
+		const originalName: string | undefined = aliasContext.aliasToOriginal.get(toolCall.function.name);
+		if (originalName === undefined) {
+			return toolCall;
+		}
+		return {
+			...toolCall,
+			function: {
+				...toolCall.function,
+				name: originalName
+			}
+		};
+	});
 }
 
 function extractTextContent(content: ChatCompletionMessageParam["content"]): string {
@@ -618,22 +780,25 @@ async function readStreamingAssistantMessage(
 	options: DeepSeekChatOptions,
 	messages: ChatCompletionMessageParam[],
 	tools: ChatCompletionTool[],
+	aliasContext: ToolNameAliasContext,
 	step: number,
 	startStep: number,
 	onEvent?: OnToolEvent,
 	emitContentDeltas: boolean = true,
 	abortSignal?: AbortSignal | undefined
 ): Promise<StreamedAssistantMessage> {
+	const requestTools: ChatCompletionTool[] = aliasContext.tools;
 	const requestBody: ChatCompletionCreateParamsStreaming = {
 		model: resolveChatModel(options),
-		messages,
-		tools,
+		messages: createProviderRequestMessages(messages, aliasContext),
+		tools: requestTools,
 		stream: true
 	};
 
-	applyToolChoiceForStep(requestBody, params, options, step, startStep, tools);
+	applyToolChoiceForStep(requestBody, params, options, step, startStep, requestTools);
 	applyChatOptions(requestBody, params, options);
-	applyDeepSeekToolMode(requestBody, options, tools);
+	applyDeepSeekToolMode(requestBody, options, requestTools);
+	applyProviderToolRequestOptions(requestBody, options, requestTools);
 
 	const stream = await client.chat.completions.create(requestBody, { signal: abortSignal });
 	const toolCallAccumulators: Map<number, ToolCallAccumulator> = new Map();
@@ -770,7 +935,8 @@ async function createFinalAnswer(
 	options: DeepSeekChatOptions,
 	messages: ChatCompletionMessageParam[],
 	reason: string,
-	abortSignal?: AbortSignal | undefined
+	abortSignal?: AbortSignal | undefined,
+	aliasContext?: ToolNameAliasContext | undefined
 ): Promise<string> {
 	const finalMessages: ChatCompletionMessageParam[] = [
 		...messages,
@@ -781,7 +947,7 @@ async function createFinalAnswer(
 	];
 	const requestBody: ChatCompletionCreateParamsNonStreaming = {
 		model: resolveChatModel(options),
-		messages: finalMessages
+		messages: aliasContext === undefined ? finalMessages : createProviderRequestMessages(finalMessages, aliasContext)
 	};
 
 	applyChatOptions(requestBody, params, options);
@@ -819,6 +985,7 @@ async function runAgentLoop(
 	toolContext?: ToolExecutionContext | undefined
 ): Promise<OpenAICompatibleAgentResult> {
 	let totalToolResultChars: number = initialToolResultChars;
+	const aliasContext: ToolNameAliasContext = createToolNameAliasContext(options, tools);
 	const allowedToolNames: ReadonlySet<string> = getAllowedToolNames(tools);
 	let toolProtocolViolationRetries: number = 0;
 
@@ -839,6 +1006,7 @@ async function runAgentLoop(
 				options,
 				messages,
 				tools,
+				aliasContext,
 				step,
 				startStep,
 				onEvent,
@@ -851,15 +1019,17 @@ async function runAgentLoop(
 			emittedContentText = streamedMessage.emittedContentText;
 			suppressedStreamToolSyntax = streamedMessage.suppressedToolSyntax;
 		} else {
+			const requestTools: ChatCompletionTool[] = aliasContext.tools;
 			const requestBody: ChatCompletionCreateParamsNonStreaming = {
 				model: resolveChatModel(options),
-				messages,
-				tools
+				messages: createProviderRequestMessages(messages, aliasContext),
+				tools: requestTools
 			};
 
-			applyToolChoiceForStep(requestBody, params, options, step, startStep, tools);
+			applyToolChoiceForStep(requestBody, params, options, step, startStep, requestTools);
 			applyChatOptions(requestBody, params, options);
-			applyDeepSeekToolMode(requestBody, options, tools);
+			applyDeepSeekToolMode(requestBody, options, requestTools);
+			applyProviderToolRequestOptions(requestBody, options, requestTools);
 
 			const completion = await client.chat.completions.create(requestBody, { signal: abortSignal });
 			const choice = completion.choices[0];
@@ -884,6 +1054,7 @@ async function runAgentLoop(
 			}
 		}
 
+		toolCalls = normalizeProviderToolCalls(toolCalls, aliasContext);
 		if (toolCalls !== undefined && toolCalls.length > 0) {
 			toolCalls = filterToolCallsForAllowedTools(toolCalls, allowedToolNames);
 		}
@@ -899,7 +1070,8 @@ async function runAgentLoop(
 						options,
 						messages,
 						"模型读取工具结果后只返回了 thinking/reasoning_content，没有返回用户可见正文",
-						abortSignal
+						abortSignal,
+						aliasContext
 					);
 					if (streamAssistant) {
 						onEvent?.({ type: "ai.delta", text: finalText });
@@ -995,7 +1167,8 @@ async function runAgentLoop(
 				options,
 				messages,
 				reason,
-				abortSignal
+				abortSignal,
+				aliasContext
 			);
 			if (streamAssistant) {
 				onEvent?.({ type: "ai.delta", text: finalText });
@@ -1014,7 +1187,8 @@ async function runAgentLoop(
 		options,
 		messages,
 		`工具调用达到最大步数 ${maxSteps}，当前工具结果总量为 ${totalToolResultChars} 字符`,
-		abortSignal
+		abortSignal,
+		aliasContext
 	);
 	if (streamAssistant) {
 		onEvent?.({ type: "ai.delta", text: finalText });
@@ -1102,6 +1276,7 @@ export async function continueOpenAICompatibleAgent(
 	const tools = allowedToolNames !== undefined
 		? toolCatalog.getDefinitionsForNames(allowedToolNames)
 		: toolCatalog.getDefinitions();
+	const aliasContext: ToolNameAliasContext = createToolNameAliasContext(options, tools);
 	const messages: ChatCompletionMessageParam[] = [...continuation.messages];
 	const budgetedResult = fitToolResultContent(approvedToolResult.content, continuation.totalToolResultChars);
 	const toolMessage: ChatCompletionToolMessageParam = {
@@ -1122,7 +1297,8 @@ export async function continueOpenAICompatibleAgent(
 				options,
 				messages,
 				budgetedResult.reason ?? createToolResultLimitReason(totalToolResultChars),
-				abortSignal
+				abortSignal,
+				aliasContext
 			)
 		};
 	}
@@ -1169,6 +1345,7 @@ export async function continueOpenAICompatibleAgentStreaming(
 	const tools = allowedToolNames !== undefined
 		? toolCatalog.getDefinitionsForNames(allowedToolNames)
 		: toolCatalog.getDefinitions();
+	const aliasContext: ToolNameAliasContext = createToolNameAliasContext(options, tools);
 	const messages: ChatCompletionMessageParam[] = [...continuation.messages];
 	const budgetedResult = fitToolResultContent(approvedToolResult.content, continuation.totalToolResultChars);
 	const toolMessage: ChatCompletionToolMessageParam = {
@@ -1187,7 +1364,8 @@ export async function continueOpenAICompatibleAgentStreaming(
 			options,
 			messages,
 			budgetedResult.reason ?? createToolResultLimitReason(totalToolResultChars),
-			abortSignal
+			abortSignal,
+			aliasContext
 		);
 		onEvent?.({ type: "ai.delta", text: finalText });
 

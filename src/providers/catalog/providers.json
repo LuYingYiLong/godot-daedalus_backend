@@ -124,5 +124,57 @@
     },
     "envBaseUrl": "MINIMAX_BASE_URL",
     "envModel": "MINIMAX_MODEL"
+  },
+  {
+    "id": "stepfun",
+    "displayName": "StepFun",
+    "authType": "api-key",
+    "defaultModel": "step-3.7-flash",
+    "modelListMode": "catalog-recommended",
+    "defaultEndpointType": "openai-chat-completions",
+    "endpointConfigs": {
+      "openai-chat-completions": {
+        "baseUrl": "https://api.stepfun.com/v1",
+        "adapterFamily": "openai-compatible",
+        "modelsPath": "/models"
+      }
+    },
+    "envBaseUrl": "STEPFUN_BASE_URL",
+    "envModel": "STEPFUN_MODEL"
+  },
+  {
+    "id": "iflytek",
+    "displayName": "iFlytek Spark",
+    "authType": "api-key",
+    "defaultModel": "4.0Ultra",
+    "modelListMode": "catalog-only",
+    "defaultEndpointType": "openai-chat-completions",
+    "endpointConfigs": {
+      "openai-chat-completions": {
+        "baseUrl": "https://spark-api-open.xf-yun.com/v1",
+        "adapterFamily": "openai-compatible",
+        "modelsPath": "/models",
+        "toolCallsSwitch": true
+      }
+    },
+    "envBaseUrl": "IFLYTEK_SPARK_BASE_URL",
+    "envModel": "IFLYTEK_SPARK_MODEL"
+  },
+  {
+    "id": "opencode",
+    "displayName": "OpenCode Zen",
+    "authType": "api-key",
+    "defaultModel": "kimi-k2.7-code",
+    "modelListMode": "catalog-recommended",
+    "defaultEndpointType": "openai-chat-completions",
+    "endpointConfigs": {
+      "openai-chat-completions": {
+        "baseUrl": "https://opencode.ai/zen/v1",
+        "adapterFamily": "openai-compatible",
+        "modelsPath": "/models"
+      }
+    },
+    "envBaseUrl": "OPENCODE_BASE_URL",
+    "envModel": "OPENCODE_MODEL"
   }
 ]

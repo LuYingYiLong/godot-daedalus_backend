@@ -4,7 +4,7 @@ export type EndpointType = "openai-chat-completions" | "openai-responses";
 
 export type AdapterFamily = "openai-compatible" | "openai-responses";
 
-export type ProviderModelListMode = "api-plus-catalog" | "catalog-recommended";
+export type ProviderModelListMode = "api-plus-catalog" | "catalog-recommended" | "catalog-only";
 
 export type ModelRef = {
 	providerId: ProviderId;
@@ -39,6 +39,7 @@ export type ProviderEndpointConfig = {
 	modelsPath: string;
 	tokenEstimatePath?: string | undefined;
 	requiredToolChoice?: "auto" | "omit" | undefined;
+	toolCallsSwitch?: boolean | undefined;
 	temperature?: {
 		min: number;
 		max: number;
