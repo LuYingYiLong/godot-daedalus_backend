@@ -34,6 +34,16 @@ test("provider catalog exposes valid built-in providers and model references", (
 	assert.equal(getProviderAdapterFamily("deepseek"), "openai-compatible");
 	assert.equal(getProviderDefaultEndpointType("openai"), "openai-responses");
 	assert.equal(getProviderAdapterFamily("openai"), "openai-responses");
+	assert.equal(getProviderDefaultModel("moonshot"), "kimi-k3");
+	assert.equal(getProviderDefaultEndpointType("moonshot"), "openai-chat-completions");
+	assert.equal(getProviderAdapterFamily("moonshot"), "openai-compatible");
+	const moonshotModels = getProviderFallbackModels("moonshot");
+	assert.equal(moonshotModels.find((model) => model.id === "kimi-k3")?.contextWindowTokens, 1_048_576);
+	assert.equal(moonshotModels.find((model) => model.id === "kimi-k3")?.maxOutputTokens, 131_072);
+	assert.equal(moonshotModels.find((model) => model.id === "kimi-k3")?.capabilities.imageInput, true);
+	assert.equal(moonshotModels.find((model) => model.id === "kimi-k3")?.capabilities.reasoning, true);
+	assert.equal(moonshotModels.find((model) => model.id === "kimi-k3")?.capabilities.tools, true);
+	assert.equal(moonshotModels.find((model) => model.id === "kimi-k3")?.capabilities.vision, true);
 	assert.equal(getProviderDefaultModel("zhipu"), "glm-5.2");
 	assert.equal(getProviderDefaultEndpointType("zhipu"), "openai-chat-completions");
 	assert.equal(getProviderAdapterFamily("zhipu"), "openai-compatible");
@@ -153,7 +163,11 @@ test("provider catalog exposes valid built-in providers and model references", (
 	assert.equal(getProviderEndpointTypeForModel("opencode_go", "minimax-m3"), "anthropic-messages");
 	const opencodeGoModels = getProviderFallbackModels("opencode_go");
 	assert.equal(opencodeGoModels.length, 16);
+	assert.equal(opencodeGoModels.find((model) => model.id === "kimi-k3")?.contextWindowTokens, 1_048_576);
+	assert.equal(opencodeGoModels.find((model) => model.id === "kimi-k3")?.maxOutputTokens, 131_072);
+	assert.equal(opencodeGoModels.find((model) => model.id === "kimi-k3")?.capabilities.imageInput, true);
 	assert.equal(opencodeGoModels.find((model) => model.id === "kimi-k3")?.capabilities.tools, true);
+	assert.equal(opencodeGoModels.find((model) => model.id === "kimi-k3")?.capabilities.vision, true);
 	assert.equal(opencodeGoModels.find((model) => model.id === "kimi-k2.6")?.capabilities.imageInput, true);
 	assert.equal(opencodeGoModels.find((model) => model.id === "deepseek-v4-pro")?.maxOutputTokens, 384_000);
 	assert.equal(opencodeGoModels.find((model) => model.id === "glm-5.2")?.contextWindowTokens, 1_000_000);

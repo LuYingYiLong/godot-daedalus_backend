@@ -19,7 +19,7 @@
     "id": "moonshot",
     "displayName": "Moonshot/Kimi",
     "authType": "api-key",
-    "defaultModel": "kimi-k2.7-code",
+    "defaultModel": "kimi-k3",
     "defaultEndpointType": "openai-chat-completions",
     "endpointConfigs": {
       "openai-chat-completions": {

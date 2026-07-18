@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { ProviderId } from "../protocol/types.js";
 import { resolveProviderBaseUrl } from "./provider-base-url.js";
 import { resolveWebSearchRuntimeConfig } from "../web-search-settings-store.js";
@@ -29,6 +30,12 @@ export type WebSearchResult = {
 
 const DEFAULT_MAX_RESULTS: number = 5;
 const MAX_RESULTS: number = 10;
+const WEB_SEARCH_TIMEOUT_MS: number = 45_000;
+
+type AbortSignalHandle = {
+	signal: AbortSignal;
+	dispose: () => void;
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -46,6 +53,31 @@ function clampInteger(value: number, min: number, max: number): number {
 	return Math.min(max, Math.max(min, Math.floor(value)));
 }
 
+function createAbortSignalHandle(parentSignal?: AbortSignal | undefined): AbortSignalHandle {
+	const controller = new AbortController();
+	const timer: ReturnType<typeof setTimeout> = setTimeout((): void => {
+		controller.abort(new Error("Web search request timed out."));
+	}, WEB_SEARCH_TIMEOUT_MS);
+
+	const abortFromParent = (): void => {
+		controller.abort(parentSignal?.reason);
+	};
+
+	if (parentSignal?.aborted === true) {
+		abortFromParent();
+	} else {
+		parentSignal?.addEventListener("abort", abortFromParent, { once: true });
+	}
+
+	return {
+		signal: controller.signal,
+		dispose: (): void => {
+			clearTimeout(timer);
+			parentSignal?.removeEventListener("abort", abortFromParent);
+		}
+	};
+}
+
 export function parseWebSearchToolArgs(args: Record<string, unknown>): WebSearchToolArgs {
 	const query: string | undefined = getString(args.query);
 	if (query === undefined) {
@@ -58,18 +90,6 @@ export function parseWebSearchToolArgs(args: Record<string, unknown>): WebSearch
 		reason: getString(args.reason),
 		maxResults: rawMaxResults === undefined ? undefined : clampInteger(rawMaxResults, 1, MAX_RESULTS)
 	};
-}
-
-function createSearchPrompt(input: WebSearchToolArgs): string {
-	const lines: string[] = [
-		"Use web search to answer the query with current, source-grounded information.",
-		"Return a concise answer. Prefer official or primary sources when they are available.",
-		`Query: ${input.query}`
-	];
-	if (input.reason !== undefined) {
-		lines.push(`Why search is needed: ${input.reason}`);
-	}
-	return lines.join("\n");
 }
 
 function getObjectArray(value: unknown): Record<string, unknown>[] {
@@ -90,6 +110,11 @@ function getNestedValue(record: Record<string, unknown>, path: readonly string[]
 }
 
 function collectZhipuSearchRecords(body: Record<string, unknown>): Record<string, unknown>[] {
+	const searchResults: Record<string, unknown>[] = getObjectArray(body.search_result);
+	if (searchResults.length > 0) {
+		return searchResults;
+	}
+
 	const topLevelResults: Record<string, unknown>[] = getObjectArray(body.web_search);
 	if (topLevelResults.length > 0) {
 		return topLevelResults;
@@ -138,7 +163,15 @@ function getZhipuAnswer(body: Record<string, unknown>): string {
 }
 
 function createEndpointUrl(config: WebSearchRuntimeConfig): string {
-	return `${resolveProviderBaseUrl(config.provider, config.baseUrl)}/chat/completions`;
+	return `${resolveProviderBaseUrl(config.provider, config.baseUrl)}/web_search`;
+}
+
+function createZhipuSearchQuery(input: WebSearchToolArgs): string {
+	const query: string = input.query.trim();
+	if ([...query].length <= 70) {
+		return query;
+	}
+	return [...query].slice(0, 70).join("");
 }
 
 async function parseErrorMessage(response: Response): Promise<string> {
@@ -156,65 +189,62 @@ async function parseErrorMessage(response: Response): Promise<string> {
 	return `HTTP ${response.status}`;
 }
 
-async function executeZhipuWebSearch(config: WebSearchRuntimeConfig, input: WebSearchToolArgs): Promise<WebSearchResult> {
-	const response: Response = await fetch(createEndpointUrl(config), {
-		method: "POST",
-		headers: {
-			"Authorization": `Bearer ${config.apiKey}`,
-			"Content-Type": "application/json"
-		},
-		body: JSON.stringify({
-			model: config.model,
-			messages: [
-				{
-					role: "user",
-					content: createSearchPrompt(input)
-				}
-			],
-			tools: [
-				{
-					type: "web_search",
-					web_search: {
-						enable: true,
-						search_result: true,
-						count: input.maxResults ?? DEFAULT_MAX_RESULTS
-					}
-				}
-			],
-			temperature: 0.2
-		})
-	});
+async function executeZhipuWebSearch(config: WebSearchRuntimeConfig, input: WebSearchToolArgs, abortSignal?: AbortSignal | undefined): Promise<WebSearchResult> {
+	const signalHandle: AbortSignalHandle = createAbortSignalHandle(abortSignal);
+	try {
+		const response: Response = await fetch(createEndpointUrl(config), {
+			method: "POST",
+			headers: {
+				"Authorization": `Bearer ${config.apiKey}`,
+				"Content-Type": "application/json"
+			},
+			body: JSON.stringify({
+				search_query: createZhipuSearchQuery(input),
+				search_engine: "search_std",
+				search_intent: false,
+				count: input.maxResults ?? DEFAULT_MAX_RESULTS,
+				search_recency_filter: "noLimit",
+				content_size: "medium",
+				request_id: randomUUID()
+			}),
+			signal: signalHandle.signal
+		});
 
-	if (!response.ok) {
-		throw new Error(`Web search request failed: ${await parseErrorMessage(response)}`);
-	}
+		if (!response.ok) {
+			throw new Error(`Web search request failed: ${await parseErrorMessage(response)}`);
+		}
 
-	const body: unknown = await response.json() as unknown;
-	if (!isRecord(body)) {
-		throw new Error("Web search response is not an object.");
-	}
-
-	return {
-		ok: true,
-		type: "web_search",
-		provider: config.provider,
-		model: config.model,
-		query: input.query,
-		answer: getZhipuAnswer(body),
-		results: collectZhipuSearchRecords(body)
+		const body: unknown = await response.json() as unknown;
+		if (!isRecord(body)) {
+			throw new Error("Web search response is not an object.");
+		}
+		const results: WebSearchResultItem[] = collectZhipuSearchRecords(body)
 			.map(parseSearchResultItem)
-			.filter((item: WebSearchResultItem | null): item is WebSearchResultItem => item !== null)
-	};
+			.filter((item: WebSearchResultItem | null): item is WebSearchResultItem => item !== null);
+		const answer: string = getZhipuAnswer(body) || `Web search returned ${results.length} result${results.length === 1 ? "" : "s"}.`;
+
+		return {
+			ok: true,
+			type: "web_search",
+			provider: config.provider,
+			model: config.model,
+			query: input.query,
+			answer,
+			results
+		};
+	} finally {
+		signalHandle.dispose();
+	}
 }
 
-export async function executeWebSearch(input: WebSearchToolArgs): Promise<WebSearchResult> {
+export async function executeWebSearch(input: WebSearchToolArgs, abortSignal?: AbortSignal | undefined): Promise<WebSearchResult> {
 	const config: WebSearchRuntimeConfig | null = await resolveWebSearchRuntimeConfig();
 	if (config === null) {
 		throw new Error("Web search is not enabled or the configured search provider is missing an API key.");
 	}
 
 	if (config.provider === "zhipu") {
-		return executeZhipuWebSearch(config, input);
+		return executeZhipuWebSearch(config, input, abortSignal);
 	}
 
 	throw new Error(`Provider does not support Daedalus web search: ${config.provider}`);

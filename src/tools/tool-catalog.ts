@@ -107,7 +107,6 @@ const DEFAULT_WORKFLOW_TOOL_NAMES: Record<WorkflowToolGroup, readonly string[]> 
 };
 
 const NO_WORKSPACE_TOOL_NAMES: ReadonlySet<string> = new Set([
-	"mcp_skills_load",
 	"mcp_image_generate",
 	"mcp_web_search"
 ]);

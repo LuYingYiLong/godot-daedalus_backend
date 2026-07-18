@@ -58,6 +58,23 @@ async function withZhipuMockServer(run: (baseUrl: string, requests: RecordedRequ
 			}));
 			return;
 		}
+		if (request.url === "/web_search") {
+			assert.equal(request.headers.authorization, "Bearer zhipu-test-key");
+			response.writeHead(200, { "Content-Type": "application/json" });
+			response.end(JSON.stringify({
+				id: "search-zhipu",
+				created: 1,
+				request_id: body.request_id,
+				search_result: [{
+					title: "Official source",
+					link: "https://example.com/current",
+					content: "Current source summary",
+					media: "Example",
+					publish_date: "2026-07-18"
+				}]
+			}));
+			return;
+		}
 		assert.equal(request.url, "/chat/completions");
 		assert.equal(request.headers.authorization, "Bearer zhipu-test-key");
 		if (body.stream === true) {
@@ -286,7 +303,6 @@ test("Zhipu web search tool uses provider-native web_search and returns sources"
 			});
 			const { updateWebSearchSettings } = await import("../src/web-search-settings-store.js");
 			await updateWebSearchSettings({
-				enabled: true,
 				provider: "zhipu",
 				model: "glm-5.2"
 			});
@@ -297,17 +313,15 @@ test("Zhipu web search tool uses provider-native web_search and returns sources"
 				"mcp_web_search",
 				{ query: "current Daedalus release", reason: "latest version", maxResults: 3 }
 			);
-			const searchRequest = requests.find((request: RecordedRequest): boolean => request.url === "/chat/completions");
+			const searchRequest = requests.find((request: RecordedRequest): boolean => request.url === "/web_search");
 			assert.equal(searchRequest?.authorization, "Bearer zhipu-test-key");
-			assert.equal(searchRequest?.body.model, "glm-5.2");
-			assert.deepEqual(searchRequest?.body.tools, [{
-				type: "web_search",
-				web_search: {
-					enable: true,
-					search_result: true,
-					count: 3
-				}
-			}]);
+			assert.equal(searchRequest?.body.search_query, "current Daedalus release");
+			assert.equal(searchRequest?.body.search_engine, "search_std");
+			assert.equal(searchRequest?.body.search_intent, false);
+			assert.equal(searchRequest?.body.count, 3);
+			assert.equal(searchRequest?.body.search_recency_filter, "noLimit");
+			assert.equal(searchRequest?.body.content_size, "medium");
+			assert.equal(typeof searchRequest?.body.request_id, "string");
 
 			const content = JSON.parse(toolResult.content) as {
 				ok: boolean;
@@ -321,7 +335,6 @@ test("Zhipu web search tool uses provider-native web_search and returns sources"
 			assert.equal(content.type, "web_search");
 			assert.equal(content.provider, "zhipu");
 			assert.equal(content.model, "glm-5.2");
-			assert.equal(content.answer, "Current answer from web search.");
 			assert.deepEqual(content.results, [{
 				title: "Official source",
 				url: "https://example.com/current",
@@ -330,6 +343,77 @@ test("Zhipu web search tool uses provider-native web_search and returns sources"
 				publishedAt: "2026-07-18"
 			}]);
 		});
+	});
+});
+
+test("Zhipu web search forwards abort signal to provider request", async (): Promise<void> => {
+	await withTempAppData(async (): Promise<void> => {
+		const requests: RecordedRequest[] = [];
+		let resolveRequestReceived: (() => void) | undefined;
+		const requestReceived = new Promise<void>((resolve: () => void): void => {
+			resolveRequestReceived = resolve;
+		});
+		const server: Server = createServer(async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
+			const body: Record<string, unknown> = await readRequestBody(request);
+			requests.push({
+				url: request.url ?? "",
+				authorization: request.headers.authorization,
+				body
+			});
+			resolveRequestReceived?.();
+			const timer: ReturnType<typeof setTimeout> = setTimeout((): void => {
+				if (!response.destroyed) {
+					response.writeHead(200, { "Content-Type": "application/json" });
+					response.end(JSON.stringify({ choices: [{ message: { content: "late" } }] }));
+				}
+			}, 10_000);
+			response.on("close", (): void => {
+				clearTimeout(timer);
+			});
+		});
+		server.listen(0, "127.0.0.1");
+		await once(server, "listening");
+		const address = server.address();
+		if (address === null || typeof address === "string") {
+			throw new Error("Mock server did not expose a TCP port");
+		}
+
+		try {
+			const baseUrl = `http://127.0.0.1:${address.port}`;
+			mock.method(keytar, "setPassword", async (): Promise<void> => undefined);
+			mock.method(keytar, "getPassword", async (_service: string, account: string): Promise<string | null> => {
+				return account === "provider:zhipu:api_key" ? "zhipu-test-key" : null;
+			});
+
+			await saveProviderConfig({
+				provider: "zhipu",
+				apiKey: "zhipu-test-key",
+				baseUrl,
+				model: "glm-5.2"
+			});
+			const { updateWebSearchSettings } = await import("../src/web-search-settings-store.js");
+			await updateWebSearchSettings({
+				provider: "zhipu",
+				model: "glm-5.2"
+			});
+
+			const { executeWebSearch } = await import("../src/providers/web-search.js");
+			const controller = new AbortController();
+			const searchPromise = executeWebSearch({ query: "slow current fact" }, controller.signal);
+			await requestReceived;
+			controller.abort(new Error("Request cancelled"));
+
+			await assert.rejects(
+				searchPromise,
+				(error: unknown): boolean => {
+					return error instanceof Error && /abort|cancel/i.test(`${error.name} ${error.message}`);
+				}
+			);
+			assert.equal(requests[0]?.url, "/web_search");
+		} finally {
+			server.close();
+			await once(server, "close");
+		}
 	});
 });
 

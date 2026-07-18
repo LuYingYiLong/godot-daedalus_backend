@@ -1116,7 +1116,7 @@ async function runAgentLoop(
 			if (abortSignal?.aborted) {
 				throw new Error("Request cancelled");
 			}
-			toolResults = await dispatchToolCalls(mcpHost, toolCalls, step, gateway, onEvent, toolResultEnricher, toolContext);
+			toolResults = await dispatchToolCalls(mcpHost, toolCalls, step, gateway, onEvent, toolResultEnricher, toolContext, abortSignal);
 		} catch (error: unknown) {
 			if (error instanceof ToolApprovalRequiredError) {
 				const pendingToolCall: ChatCompletionMessageToolCall | undefined = toolCalls.find(

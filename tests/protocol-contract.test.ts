@@ -125,7 +125,6 @@ test("web search settings get and update are accepted", (): void => {
 		id: "web-search-settings-update",
 		method: "webSearchSettings.update",
 		params: {
-			enabled: true,
 			provider: "zhipu",
 			model: "glm-5.2"
 		}

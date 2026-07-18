@@ -62,7 +62,7 @@ test("workspace runtime filter hides Godot tools without an active workspace", (
 		"mcp_image_generate",
 		"mcp_web_search"
 	], undefined).sort();
-	assert.deepEqual(names, ["mcp_image_generate", "mcp_skills_load", "mcp_web_search"]);
+	assert.deepEqual(names, ["mcp_image_generate", "mcp_web_search"]);
 	assert.deepEqual(filterToolNamesForWorkspace(getDefaultWorkflowToolNames("write"), undefined), ["mcp_image_generate"]);
 });
 

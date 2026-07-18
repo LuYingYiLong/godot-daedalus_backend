@@ -296,7 +296,7 @@ async function runResponsesAgentLoop(
 		appendResponseOutputItems(inputItems, assistantMessage.outputItems);
 
 		try {
-			const toolResults = await dispatchToolCalls(mcpHost, toolCalls, step, gateway, onEvent, toolResultEnricher, toolContext);
+			const toolResults = await dispatchToolCalls(mcpHost, toolCalls, step, gateway, onEvent, toolResultEnricher, toolContext, abortSignal);
 			const appendResult: AppendToolResultItemsResult = appendToolResultItems(inputItems, toolResults, totalToolResultChars);
 			totalToolResultChars += appendResult.addedChars;
 			if (appendResult.limitReached || totalToolResultChars >= MAX_TOTAL_TOOL_RESULT_CHARS) {

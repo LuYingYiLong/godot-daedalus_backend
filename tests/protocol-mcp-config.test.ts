@@ -174,7 +174,8 @@ test("session create and save schema accept frontend session metadata", (): void
 			title: "Session with UI state",
 			provider: "deepseek",
 			model: "deepseek-v4-pro",
-			chatMode: "agent"
+			chatMode: "agent",
+			webSearchEnabled: true
 		}
 	}).success, true);
 
@@ -196,7 +197,8 @@ test("session create and save schema accept frontend session metadata", (): void
 			provider: "moonshot",
 			model: "kimi-k2.7-code",
 			chatMode: "plan",
-			workflowTodoCollapsed: true
+			workflowTodoCollapsed: true,
+			webSearchEnabled: false
 		}
 	}).success, true);
 

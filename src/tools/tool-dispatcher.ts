@@ -53,8 +53,13 @@ async function executeSingleToolCall(
 	gateway: ApprovalGateway,
 	onEvent?: OnToolEvent,
 	enricher?: ToolResultEnricher | undefined,
-	toolContext?: ToolExecutionContext | undefined
+	toolContext?: ToolExecutionContext | undefined,
+	abortSignal?: AbortSignal | undefined
 ): Promise<ChatCompletionToolMessageParam> {
+	if (abortSignal?.aborted) {
+		throw new Error("Request cancelled");
+	}
+
 	if (toolCall.type !== "function") {
 		return {
 			role: "tool",
@@ -155,7 +160,10 @@ async function executeSingleToolCall(
 		args: argsParsed
 	});
 	try {
-		const rawResult = await executeLlmToolWithIdempotency(mcpHost, functionName, argsParsed, workspaceId, toolContext?.editorInstanceId, toolContext?.sessionId);
+		if (abortSignal?.aborted) {
+			throw new Error("Request cancelled");
+		}
+		const rawResult = await executeLlmToolWithIdempotency(mcpHost, functionName, argsParsed, workspaceId, toolContext?.editorInstanceId, toolContext?.sessionId, abortSignal);
 		const result: IdempotentToolExecutionResult = enricher === undefined
 			? rawResult
 			: await enricher({
@@ -211,6 +219,10 @@ async function executeSingleToolCall(
 			content: result.content
 		};
 	} catch (error: unknown) {
+		if (abortSignal?.aborted) {
+			throw error;
+		}
+
 		const message: string = error instanceof Error ? error.message : "MCP tool call failed";
 		logger.error("tool", "call_failed", error, {
 			toolCallId: toolCall.id,
@@ -239,12 +251,13 @@ export async function dispatchToolCalls(
 	gateway: ApprovalGateway,
 	onEvent?: OnToolEvent,
 	enricher?: ToolResultEnricher | undefined,
-	toolContext?: ToolExecutionContext | undefined
+	toolContext?: ToolExecutionContext | undefined,
+	abortSignal?: AbortSignal | undefined
 ): Promise<ChatCompletionToolMessageParam[]> {
 	const results: ChatCompletionToolMessageParam[] = [];
 
 	for (const toolCall of toolCalls) {
-		const result = await executeSingleToolCall(mcpHost, toolCall, step, gateway, onEvent, enricher, toolContext);
+		const result = await executeSingleToolCall(mcpHost, toolCall, step, gateway, onEvent, enricher, toolContext, abortSignal);
 		results.push(result);
 	}
 

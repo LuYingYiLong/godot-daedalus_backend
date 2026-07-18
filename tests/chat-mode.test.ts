@@ -16,6 +16,7 @@ test("ai.chat schema accepts ask and plan modes and rejects unknown modes", (): 
 	const askResult = aiChatParamsSchema.safeParse({
 		message: "这段 GDScript 为什么报错？",
 		mode: "ask",
+		webSearchEnabled: true,
 		options: {
 			stream: true,
 			workflow: "single",
@@ -23,6 +24,7 @@ test("ai.chat schema accepts ask and plan modes and rejects unknown modes", (): 
 		}
 	});
 	assert.equal(askResult.success, true);
+	assert.equal(askResult.data?.webSearchEnabled, true);
 
 	const planResult = aiChatParamsSchema.safeParse({
 		message: "帮我做一个 Godot AI 插件",

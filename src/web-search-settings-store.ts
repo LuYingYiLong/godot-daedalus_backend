@@ -13,14 +13,12 @@ import { loadProviderConfigWithSecret } from "./providers/provider-config-store.
 
 export type WebSearchSettings = {
 	schemaVersion: 1;
-	enabled: boolean;
 	provider: ProviderId;
 	model: string;
 	updatedAt: string;
 };
 
 export type WebSearchSettingsPatch = {
-	enabled?: boolean | undefined;
 	provider?: ProviderId | undefined;
 	model?: string | undefined;
 };
@@ -58,7 +56,6 @@ const FALLBACK_MODEL: string = "glm-5.2";
 
 export const DEFAULT_WEB_SEARCH_SETTINGS: WebSearchSettings = {
 	schemaVersion: 1,
-	enabled: false,
 	provider: FALLBACK_PROVIDER,
 	model: FALLBACK_MODEL,
 	updatedAt: ""
@@ -118,7 +115,6 @@ export function normalizeWebSearchSettings(value: unknown): WebSearchSettings {
 
 	return {
 		schemaVersion: 1,
-		enabled: typeof value.enabled === "boolean" ? value.enabled : DEFAULT_WEB_SEARCH_SETTINGS.enabled,
 		provider,
 		model,
 		updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : ""
@@ -153,7 +149,6 @@ export async function updateWebSearchSettings(patch: WebSearchSettingsPatch): Pr
 		: current.model);
 	const next: WebSearchSettings = {
 		schemaVersion: 1,
-		enabled: patch.enabled ?? current.enabled,
 		provider,
 		model,
 		updatedAt: new Date().toISOString()
@@ -198,7 +193,7 @@ export async function getWebSearchSettingsStatus(): Promise<WebSearchSettingsSta
 	const selectedSupported: boolean = isProviderNativeWebSearchModel(settings.provider, settings.model);
 	return {
 		...settings,
-		available: settings.enabled && configured && selectedSupported,
+		available: configured && selectedSupported,
 		configured,
 		selectedSupported,
 		apiKeyMasked,
@@ -208,7 +203,7 @@ export async function getWebSearchSettingsStatus(): Promise<WebSearchSettingsSta
 
 export async function resolveWebSearchRuntimeConfig(): Promise<WebSearchRuntimeConfig | null> {
 	const settings: WebSearchSettings = await getWebSearchSettings();
-	if (!settings.enabled || !isProviderNativeWebSearchModel(settings.provider, settings.model)) {
+	if (!isProviderNativeWebSearchModel(settings.provider, settings.model)) {
 		return null;
 	}
 

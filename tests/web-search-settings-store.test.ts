@@ -22,14 +22,13 @@ async function withTempAppData(run: () => Promise<void>): Promise<void> {
 	}
 }
 
-test("web search settings default disabled and expose supported catalog models", async (): Promise<void> => {
+test("web search settings expose supported catalog models", async (): Promise<void> => {
 	await withTempAppData(async (): Promise<void> => {
 		mock.method(keytar, "getPassword", async (): Promise<string | null> => null);
 		const store = await import(`../src/web-search-settings-store.js?case=${Date.now()}-${Math.random()}`);
 
 		const status = await store.getWebSearchSettingsStatus();
 
-		assert.equal(status.enabled, false);
 		assert.equal(status.provider, "zhipu");
 		assert.equal(status.model, "glm-5.2");
 		assert.equal(status.available, false);
@@ -40,7 +39,7 @@ test("web search settings default disabled and expose supported catalog models",
 	});
 });
 
-test("web search settings persist enabled search model and report configured availability", async (): Promise<void> => {
+test("web search settings persist search model and report configured availability", async (): Promise<void> => {
 	await withTempAppData(async (): Promise<void> => {
 		mock.method(keytar, "getPassword", async (_service: string, account: string): Promise<string | null> => {
 			return account === "provider:zhipu:api_key" ? "zhipu-test-key" : null;
@@ -49,17 +48,15 @@ test("web search settings persist enabled search model and report configured ava
 		const appPaths = await import(`../src/app-paths.js?case=${Date.now()}-${Math.random()}`);
 
 		const saved = await store.updateWebSearchSettings({
-			enabled: true,
 			provider: "zhipu",
 			model: "glm-5.2"
 		});
 
-		assert.equal(saved.enabled, true);
 		assert.equal(saved.available, true);
 		assert.equal(saved.configured, true);
 		assert.equal(saved.apiKeyMasked, "zhi...-key");
 		const rawConfig: string = await readFile(appPaths.getWebSearchSettingsConfigPath(), "utf8");
-		assert.match(rawConfig, /"enabled": true/u);
+		assert.doesNotMatch(rawConfig, /"enabled"/u);
 		assert.match(rawConfig, /"provider": "zhipu"/u);
 		assert.match(rawConfig, /"model": "glm-5\.2"/u);
 	});
@@ -72,14 +69,14 @@ test("web search settings reject unsupported providers and models", async (): Pr
 
 		await assert.rejects(
 			async (): Promise<void> => {
-				await store.updateWebSearchSettings({ enabled: true, provider: "openai", model: "gpt-5.5" });
+				await store.updateWebSearchSettings({ provider: "openai", model: "gpt-5.5" });
 			},
 			/Provider does not support Daedalus web search/u
 		);
 
 		await assert.rejects(
 			async (): Promise<void> => {
-				await store.updateWebSearchSettings({ enabled: true, provider: "zhipu", model: "glm-image" });
+				await store.updateWebSearchSettings({ provider: "zhipu", model: "glm-image" });
 			},
 			/Model does not support Daedalus web search/u
 		);

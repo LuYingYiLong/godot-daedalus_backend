@@ -26,6 +26,21 @@
     "ownedBy": "deepseek"
   },
   {
+    "id": "kimi-k3",
+    "displayName": "Kimi K3",
+    "provider": "moonshot",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 1048576,
+    "maxOutputTokens": 131072,
+    "capabilities": {
+      "imageInput": true,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
+    "ownedBy": "moonshot"
+  },
+  {
     "id": "kimi-k2.7-code",
     "displayName": "Kimi K2.7 Code",
     "provider": "moonshot",
@@ -972,11 +987,13 @@
     "displayName": "Kimi K3",
     "provider": "opencode_go",
     "endpointType": "openai-chat-completions",
-    "contextWindowTokens": 256000,
-    "maxOutputTokens": 32000,
+    "contextWindowTokens": 1048576,
+    "maxOutputTokens": 131072,
     "capabilities": {
+      "imageInput": true,
       "reasoning": true,
-      "tools": true
+      "tools": true,
+      "vision": true
     },
     "ownedBy": "opencode"
   },

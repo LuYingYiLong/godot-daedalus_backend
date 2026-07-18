@@ -93,7 +93,7 @@ import {
 	type ThinkingEventBuffer
 } from "./client-session.js";
 import { getToolPolicy } from "../tools/tool-policy.js";
-import { filterToolNamesForWorkspace, getNoWorkspaceToolNames } from "../tools/tool-catalog.js";
+import { createWorkspaceToolCatalog, filterToolNamesForWorkspace, getNoWorkspaceToolNames } from "../tools/tool-catalog.js";
 import { ApprovalGateway, ReadOnlyToolApprovalGateway, type PendingApproval } from "../tools/approval-gateway.js";
 import { getLlmToolExecutionIdentity } from "../tools/tool-idempotency.js";
 import { resolveToolMapping } from "../tools/tool-mapping.js";
@@ -115,7 +115,7 @@ import { clearWorkbenchComposer, emitWorkbenchUpdated, serializeWorkbench, setWo
 
 import { normalizeChatParamsForMode, resolveAllowedToolsForChatParams } from "./chat-mode.js";
 import { logPromptTrace, logProjectInstructionTrace } from "./prompt-trace.js";
-import { isCancellationError, sendAgentCancelled, sendAiCancelled, beginRequestExecution, finishRequestExecution, parseMessage } from "./request-lifecycle.js";
+import { isCancellationError, sendAiCancelled, beginRequestExecution, finishRequestExecution, parseMessage } from "./request-lifecycle.js";
 import { estimateTextTokens, estimateMessagesTokens, estimateTextTokensForProvider, estimateCurrentMessageTokensForProvider, computeHistoryBudget, appendChatTurnToSession, appendUserMessageToSession, appendFailedChatTurnToSession, selectHistoryForModel, createSummaryMessage, loadSessionCompressorPrompt, filterLlmContextMessages } from "./token-budget.js";
 import { getSessionProjectPath, toChatMessage, clampSessionOpenMessageLimit, createPreviewValue, createTimelinePageResult, startFullSessionLoad, waitForFullSessionLoad } from "./session-preview.js";
 import { createProviderChatOptions } from "./provider-chat-options.js";
@@ -171,7 +171,7 @@ import { createInitialPlan } from "./plan-mode.js";
 import { createPlanGetResult, type StoredPlan } from "./plan-store.js";
 import { getUserPrompt } from "../user-prompt-store.js";
 import { compressSessionHistory } from "./session-compression.js";
-import { isWebSearchToolAvailable } from "../web-search-settings-store.js";
+import { getWebSearchSettingsStatus, isWebSearchToolAvailable } from "../web-search-settings-store.js";
 
 const WEB_SEARCH_TOOL_NAME: string = "mcp_web_search";
 
@@ -179,11 +179,53 @@ function isImageGenerationOnlyToolRestriction(toolNames: readonly string[] | und
 	return toolNames !== undefined && toolNames.length === 1 && toolNames[0] === "mcp_image_generate";
 }
 
-async function resolveSearchAwareToolNames(allowedToolNames: readonly string[] | undefined): Promise<readonly string[] | undefined> {
+function removeWebSearchToolName(allowedToolNames: readonly string[] | undefined, session: ClientSession): readonly string[] {
+	const toolNames: readonly string[] = allowedToolNames ?? createWorkspaceToolCatalog({
+		workspaceId: session.activeWorkspace?.id,
+		editorInstanceId: session.editorInstanceId,
+		sessionId: session.sessionId
+	}).getEntries().map((entry): string => entry.id);
+	return toolNames.filter((toolName: string): boolean => toolName !== WEB_SEARCH_TOOL_NAME);
+}
+
+async function resolveSearchAwareToolNames(
+	allowedToolNames: readonly string[] | undefined,
+	session: ClientSession,
+	webSearchEnabled: boolean
+): Promise<readonly string[] | undefined> {
+	if (!webSearchEnabled) {
+		return removeWebSearchToolName(allowedToolNames, session);
+	}
 	if (await isWebSearchToolAvailable()) {
 		return allowedToolNames;
 	}
-	return allowedToolNames?.filter((toolName: string): boolean => toolName !== WEB_SEARCH_TOOL_NAME);
+	return removeWebSearchToolName(allowedToolNames, session);
+}
+
+async function createWebSearchUnavailableMessage(): Promise<string> {
+	const status = await getWebSearchSettingsStatus();
+	if (!status.selectedSupported) {
+		return "The selected web search model does not support provider-native search. Choose a Search-capable model in Search settings.";
+	}
+	if (!status.configured) {
+		return `Configure ${getProviderDisplayName(status.provider)} API key in Provider settings before using web search.`;
+	}
+	return "Web search is unavailable. Check Search settings and provider configuration.";
+}
+
+function filterWebSearchFromWorkflowPlan(plan: WorkflowPlan): WorkflowPlan {
+	return {
+		...plan,
+		phases: plan.phases.map((phase: WorkflowPhase): WorkflowPhase => {
+			if (!phase.allowedTools.includes(WEB_SEARCH_TOOL_NAME)) {
+				return phase;
+			}
+			return {
+				...phase,
+				allowedTools: phase.allowedTools.filter((toolName: string): boolean => toolName !== WEB_SEARCH_TOOL_NAME)
+			};
+		})
+	};
 }
 
 class ContextTooLargeError extends Error {
@@ -366,7 +408,6 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 					requestId: request.params.requestId
 				});
 				emitWorkbenchUpdated(socket, request.id, session);
-				sendAgentCancelled(socket, request.params.requestId, session, request.params.requestId, "cancelled");
 			}
 			sendJson(socket, {
 				type: "response",
@@ -403,6 +444,20 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				mode: rawParams.mode ?? session.workbenchComposer.chatMode,
 				additionalContext: rawParams.additionalContext ?? session.workbenchComposer.additionalContext
 			});
+			const webSearchEnabled: boolean = params.webSearchEnabled === true;
+			const webSearchAvailable: boolean = webSearchEnabled ? await isWebSearchToolAvailable() : false;
+			if (webSearchEnabled && !webSearchAvailable) {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: {
+						code: "web_search_unavailable",
+						message: await createWebSearchUnavailableMessage()
+					}
+				});
+				break;
+			}
 			const apiKey: string | undefined = await ensureProviderConfigured(session);
 
 			if (!apiKey) {
@@ -535,7 +590,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 						? filterToolNamesForWorkspace(allowedToolNames, undefined)
 						: getNoWorkspaceToolNames();
 				}
-				allowedToolNames = await resolveSearchAwareToolNames(allowedToolNames);
+				allowedToolNames = await resolveSearchAwareToolNames(allowedToolNames, session, webSearchEnabled);
 				const promptId = effectiveParams.promptId ?? explicitSkills.find((skill): boolean => skill.defaultPromptId !== undefined)?.defaultPromptId;
 				const systemPrompt: string = await composeSystemPrompt(
 					promptId,
@@ -638,6 +693,9 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				if (workflowPlan === null) {
 					workflowPlan = createSingleAnswerPlan(effectiveParams, allowedToolNames);
 				}
+				if (!webSearchEnabled) {
+					workflowPlan = filterWebSearchFromWorkflowPlan(workflowPlan);
+				}
 				logger.info("ai", "workflow_planned", {
 					requestId: request.id,
 					sessionId: session.sessionId,
@@ -689,7 +747,6 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 						workspaceId: session.activeWorkspace?.id,
 						durationMs: Date.now() - runStartedAtMs
 					});
-					sendAgentCancelled(socket, request.id, session);
 					sendJson(socket, {
 						type: "response",
 						id: request.id,

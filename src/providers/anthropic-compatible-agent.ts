@@ -217,7 +217,7 @@ async function runAgentLoop(
 
 		let toolResults: ChatCompletionToolMessageParam[];
 		try {
-			toolResults = await dispatchToolCalls(mcpHost, toolCalls, step, gateway, onEvent, toolResultEnricher, toolContext);
+			toolResults = await dispatchToolCalls(mcpHost, toolCalls, step, gateway, onEvent, toolResultEnricher, toolContext, abortSignal);
 		} catch (error: unknown) {
 			if (error instanceof ToolApprovalRequiredError) {
 				const pendingBlock: AnthropicToolUseBlock | undefined = assistant.toolUseBlocks.find(
