@@ -8,6 +8,7 @@ export type DaedalusPathKey =
 	| "config.mcpServers"
 	| "config.skillSettings"
 	| "config.userPrompt"
+	| "config.generalSettings"
 	| "config.approval"
 	| "skills.root"
 	| "sessions.activeRoot"
@@ -36,6 +37,7 @@ function buildDaedalusPathRegistry(): DaedalusPathRegistry {
 		"config.mcpServers": join(configRoot, "mcp-servers.json"),
 		"config.skillSettings": join(configRoot, "skill-settings.json"),
 		"config.userPrompt": join(configRoot, "user-prompt.json"),
+		"config.generalSettings": join(configRoot, "general-settings.json"),
 		"config.approval": join(configRoot, "approval.json"),
 		"skills.root": join(root, "skills"),
 		"sessions.activeRoot": join(root, "sessions"),
@@ -72,6 +74,10 @@ export function getSkillSettingsPath(): string {
 
 export function getUserPromptConfigPath(): string {
 	return getDaedalusPath("config.userPrompt");
+}
+
+export function getGeneralSettingsConfigPath(): string {
+	return getDaedalusPath("config.generalSettings");
 }
 
 export function getApprovalConfigPath(): string {

@@ -77,11 +77,16 @@ test("session store creates, opens, pages, rewinds, archives, restores, and dele
 			? invalidatedPage.timelineBlocks[0].bodyParts
 			: [];
 		assert.equal(bodyParts.some((part) => part.type === "status" && part.title === "Updated"), true);
+		await store.appendSessionEvent(metadata.id, "workflow-run-req-2", "agent.message.delta", {
+			runId: "workflow-run-req-2",
+			text: "stale assistant response"
+		});
 
 		const rewound = await store.rewindSessionFromRequest(metadata.id, "req-2");
 		assert.equal(rewound.length, 1);
 		assert.equal(rewound[0]?.requestId, "req-1");
 		assert.equal((await store.openSession(metadata.id)).events.length, 1);
+		assert.equal((await store.openSessionRecentTimeline(metadata.id, 10)).timelineBlocks.some((block) => block.requestId === "workflow-run-req-2"), false);
 		assert.equal((await store.readApprovalEvents(metadata.id)).length, 0);
 
 		const renamed = await store.renameSession(metadata.id, "Renamed");

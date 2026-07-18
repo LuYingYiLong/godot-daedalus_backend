@@ -97,11 +97,11 @@ function readPositiveInteger(record: Record<string, unknown>, key: string): numb
 }
 
 function isEndpointType(value: unknown): value is EndpointType {
-	return value === "openai-chat-completions" || value === "openai-responses";
+	return value === "openai-chat-completions" || value === "openai-responses" || value === "anthropic-messages";
 }
 
 function isAdapterFamily(value: unknown): value is AdapterFamily {
-	return value === "openai-compatible" || value === "openai-responses";
+	return value === "openai-compatible" || value === "openai-responses" || value === "anthropic-compatible";
 }
 
 function isProviderModelListMode(value: unknown): value is ProviderModelListMode {
@@ -370,6 +370,17 @@ export function getProviderEndpointConfig(provider: ProviderId, endpointType?: E
 
 export function getProviderAdapterFamily(provider: ProviderId, endpointType?: EndpointType | undefined): AdapterFamily {
 	return getProviderEndpointConfig(provider, endpointType).adapterFamily;
+}
+
+export function getProviderEndpointTypeForModel(provider: ProviderId, modelId?: string | undefined): EndpointType {
+	if (modelId !== undefined && modelId.trim().length > 0) {
+		return getCatalogModel(provider, modelId)?.endpointType ?? getProviderDefaultEndpointType(provider);
+	}
+	return getProviderDefaultEndpointType(provider);
+}
+
+export function getProviderAdapterFamilyForModel(provider: ProviderId, modelId?: string | undefined): AdapterFamily {
+	return getProviderAdapterFamily(provider, getProviderEndpointTypeForModel(provider, modelId));
 }
 
 export function getProviderDefaultBaseUrl(provider: ProviderId): string {

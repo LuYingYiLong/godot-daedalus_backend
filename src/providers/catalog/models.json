@@ -965,5 +965,311 @@
       "tools": true
     },
     "ownedBy": "opencode"
+  },
+  {
+    "id": "kimi-k3",
+    "displayName": "Kimi K3",
+    "provider": "opencode_go",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 256000,
+    "maxOutputTokens": 32000,
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
+    "ownedBy": "opencode"
+  },
+  {
+    "id": "kimi-k2.7-code",
+    "displayName": "Kimi K2.7 Code",
+    "provider": "opencode_go",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 256000,
+    "maxOutputTokens": 32000,
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
+    "ownedBy": "opencode"
+  },
+  {
+    "id": "kimi-k2.6",
+    "displayName": "Kimi K2.6",
+    "provider": "opencode_go",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 256000,
+    "maxOutputTokens": 32000,
+    "capabilities": {
+      "imageInput": true,
+      "videoInput": true,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
+    "ownedBy": "opencode"
+  },
+  {
+    "id": "deepseek-v4-pro",
+    "displayName": "DeepSeek V4 Pro",
+    "provider": "opencode_go",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 1000000,
+    "maxOutputTokens": 384000,
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
+    "ownedBy": "opencode"
+  },
+  {
+    "id": "deepseek-v4-flash",
+    "displayName": "DeepSeek V4 Flash",
+    "provider": "opencode_go",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 1000000,
+    "maxOutputTokens": 384000,
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
+    "ownedBy": "opencode"
+  },
+  {
+    "id": "glm-5.2",
+    "displayName": "GLM 5.2",
+    "provider": "opencode_go",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 1000000,
+    "maxOutputTokens": 128000,
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
+    "ownedBy": "opencode"
+  },
+  {
+    "id": "glm-5.1",
+    "displayName": "GLM 5.1",
+    "provider": "opencode_go",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 200000,
+    "maxOutputTokens": 128000,
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
+    "ownedBy": "opencode"
+  },
+  {
+    "id": "grok-4.5",
+    "displayName": "Grok 4.5",
+    "provider": "opencode_go",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 256000,
+    "maxOutputTokens": 32000,
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
+    "ownedBy": "opencode"
+  },
+  {
+    "id": "mimo-v2.5",
+    "displayName": "MiMo V2.5",
+    "provider": "opencode_go",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 128000,
+    "maxOutputTokens": 32000,
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
+    "ownedBy": "opencode"
+  },
+  {
+    "id": "mimo-v2.5-pro",
+    "displayName": "MiMo V2.5 Pro",
+    "provider": "opencode_go",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 128000,
+    "maxOutputTokens": 32000,
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
+    "ownedBy": "opencode"
+  },
+  {
+    "id": "minimax-m3",
+    "displayName": "MiniMax M3",
+    "provider": "opencode_go",
+    "endpointType": "anthropic-messages",
+    "contextWindowTokens": 1000000,
+    "maxOutputTokens": 131072,
+    "capabilities": {
+      "imageInput": true,
+      "videoInput": true,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
+    "ownedBy": "opencode"
+  },
+  {
+    "id": "minimax-m2.7",
+    "displayName": "MiniMax M2.7",
+    "provider": "opencode_go",
+    "endpointType": "anthropic-messages",
+    "contextWindowTokens": 204800,
+    "maxOutputTokens": 65536,
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
+    "ownedBy": "opencode"
+  },
+  {
+    "id": "minimax-m2.5",
+    "displayName": "MiniMax M2.5",
+    "provider": "opencode_go",
+    "endpointType": "anthropic-messages",
+    "contextWindowTokens": 204800,
+    "maxOutputTokens": 65536,
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
+    "ownedBy": "opencode"
+  },
+  {
+    "id": "qwen3.7-max",
+    "displayName": "Qwen3.7 Max",
+    "provider": "opencode_go",
+    "endpointType": "anthropic-messages",
+    "contextWindowTokens": 1000000,
+    "maxOutputTokens": 32000,
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
+    "ownedBy": "opencode"
+  },
+  {
+    "id": "qwen3.7-plus",
+    "displayName": "Qwen3.7 Plus",
+    "provider": "opencode_go",
+    "endpointType": "anthropic-messages",
+    "contextWindowTokens": 1000000,
+    "maxOutputTokens": 32000,
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
+    "ownedBy": "opencode"
+  },
+  {
+    "id": "qwen3.6-plus",
+    "displayName": "Qwen3.6 Plus",
+    "provider": "opencode_go",
+    "endpointType": "anthropic-messages",
+    "contextWindowTokens": 1000000,
+    "maxOutputTokens": 32000,
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
+    "ownedBy": "opencode"
+  },
+  {
+    "id": "ernie-5.1",
+    "displayName": "ERNIE 5.1",
+    "provider": "qianfan",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 131072,
+    "maxOutputTokens": 65536,
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
+    "ownedBy": "baidu"
+  },
+  {
+    "id": "ernie-5.0",
+    "displayName": "ERNIE 5.0",
+    "provider": "qianfan",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 131072,
+    "maxOutputTokens": 65536,
+    "capabilities": {
+      "imageInput": true,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
+    "ownedBy": "baidu"
+  },
+  {
+    "id": "ernie-5.0-thinking-latest",
+    "displayName": "ERNIE 5.0 Thinking Latest",
+    "provider": "qianfan",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 131072,
+    "maxOutputTokens": 65536,
+    "capabilities": {
+      "imageInput": true,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
+    "ownedBy": "baidu"
+  },
+  {
+    "id": "ernie-x1.1",
+    "displayName": "ERNIE X1.1",
+    "provider": "qianfan",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 65536,
+    "maxOutputTokens": 65536,
+    "capabilities": {
+      "reasoning": true,
+      "tools": true
+    },
+    "ownedBy": "baidu"
+  },
+  {
+    "id": "ernie-4.5-turbo-128k",
+    "displayName": "ERNIE 4.5 Turbo 128K",
+    "provider": "qianfan",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 131072,
+    "maxOutputTokens": 12288,
+    "capabilities": {},
+    "ownedBy": "baidu"
+  },
+  {
+    "id": "ernie-4.5-turbo-vl",
+    "displayName": "ERNIE 4.5 Turbo VL",
+    "provider": "qianfan",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 131072,
+    "maxOutputTokens": 16384,
+    "capabilities": {
+      "imageInput": true,
+      "vision": true
+    },
+    "ownedBy": "baidu"
+  },
+  {
+    "id": "ernie-4.5-turbo-vl-32k",
+    "displayName": "ERNIE 4.5 Turbo VL 32K",
+    "provider": "qianfan",
+    "endpointType": "openai-chat-completions",
+    "contextWindowTokens": 32768,
+    "maxOutputTokens": 12288,
+    "capabilities": {
+      "imageInput": true,
+      "vision": true
+    },
+    "ownedBy": "baidu"
   }
 ]

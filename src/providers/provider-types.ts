@@ -1,8 +1,8 @@
 import type { ModelProfile, ProviderId } from "../protocol/types.js";
 
-export type EndpointType = "openai-chat-completions" | "openai-responses";
+export type EndpointType = "openai-chat-completions" | "openai-responses" | "anthropic-messages";
 
-export type AdapterFamily = "openai-compatible" | "openai-responses";
+export type AdapterFamily = "openai-compatible" | "openai-responses" | "anthropic-compatible";
 
 export type ProviderModelListMode = "api-plus-catalog" | "catalog-recommended" | "catalog-only";
 

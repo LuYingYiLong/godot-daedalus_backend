@@ -138,6 +138,33 @@ test("core prompt fixes instruction priority and untrusted execution boundaries"
 	assert.match(corePrompt, /明确防御目的的安全分析、修复建议和低风险示例/);
 });
 
+test("cross-workspace access requires a user-scoped explicit authorization", async (): Promise<void> => {
+	const corePrompt: string = await loadCorePrompt();
+	const agentPrompt: string = await composeSystemPrompt(
+		"godot.assistant",
+		undefined,
+		"",
+		"agent"
+	);
+	const askPrompt: string = await composeSystemPrompt(
+		"godot.assistant",
+		undefined,
+		"",
+		"ask"
+	);
+
+	assert.match(corePrompt, /当前工作区是默认文件边界，但不是绝对边界/);
+	assert.match(corePrompt, /当前用户消息中的明确绝对路径/);
+	assert.match(corePrompt, /用户对助手已明确目标和范围的跨工作区请求作出的肯定答复/);
+	assert.match(corePrompt, /不自动包含父目录、相邻项目或未来任务/);
+	assert.match(corePrompt, /进入目标项目后先读取其项目级指令/);
+	assert.match(corePrompt, /不能用提示词授权绕过后端校验/);
+	assert.match(agentPrompt, /多项目任务可以在以下任一条件成立时跨工作区/);
+	assert.match(agentPrompt, /工具不支持时如实说明限制并请求用户添加、选择或切换对应工作区/);
+	assert.match(agentPrompt, /跨工作区操作还必须有用户明确路径/);
+	assert.match(askPrompt, /跨工作区读取同样需要用户给出明确路径/);
+});
+
 test("composed ask prompt includes mode and fragment boundaries before custom instructions", async (): Promise<void> => {
 	const prompt: string = await composeSystemPrompt(
 		"godot.assistant",

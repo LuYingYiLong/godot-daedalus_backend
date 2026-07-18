@@ -35,5 +35,8 @@ function asChatCompletionsContinuation(continuation: AgentContinuation): ChatCom
 	if (continuation.kind === "responses") {
 		throw new Error("Responses continuation cannot be handled by the OpenAI-compatible adapter.");
 	}
+	if (continuation.kind === "anthropic_messages") {
+		throw new Error("Anthropic Messages continuation cannot be handled by the OpenAI-compatible adapter.");
+	}
 	return continuation;
 }

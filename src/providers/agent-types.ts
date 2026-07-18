@@ -1,5 +1,6 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import type { ResponseInputItem } from "openai/resources/responses/responses";
+import type { AnthropicMessageParam } from "./anthropic-compatible-client.js";
 
 export type ChatCompletionsAgentContinuation = {
 	kind?: "chat_completions";
@@ -16,7 +17,15 @@ export type ResponsesAgentContinuation = {
 	totalToolResultChars: number;
 };
 
-export type AgentContinuation = ChatCompletionsAgentContinuation | ResponsesAgentContinuation;
+export type AnthropicMessagesAgentContinuation = {
+	kind: "anthropic_messages";
+	systemPrompt: string;
+	messages: AnthropicMessageParam[];
+	nextStep: number;
+	totalToolResultChars: number;
+};
+
+export type AgentContinuation = ChatCompletionsAgentContinuation | ResponsesAgentContinuation | AnthropicMessagesAgentContinuation;
 
 export type ProviderAgentResult =
 	| { status: "completed"; text: string }

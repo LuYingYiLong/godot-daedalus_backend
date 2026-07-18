@@ -10,11 +10,15 @@ import "./provider-adapters.js";
 
 function assertContinuationMatchesAdapter(options: ProviderChatOptions, continuation: AgentContinuation): void {
 	const adapter = resolveProviderAdapter(options);
-	if (continuation.kind === "responses" && adapter.adapterFamily !== "openai-responses") {
+	const continuationKind: string = continuation.kind ?? "chat_completions";
+	if (continuationKind === "responses" && adapter.adapterFamily !== "openai-responses") {
 		throw new Error("Responses continuation cannot resume on a non-Responses provider adapter.");
 	}
-	if (continuation.kind !== "responses" && adapter.adapterFamily === "openai-responses") {
-		throw new Error("Chat Completions continuation cannot resume on the Responses provider adapter.");
+	if (continuationKind === "chat_completions" && adapter.adapterFamily !== "openai-compatible") {
+		throw new Error("Chat Completions continuation cannot resume on a non-Chat-Completions provider adapter.");
+	}
+	if (continuationKind === "anthropic_messages" && adapter.adapterFamily !== "anthropic-compatible") {
+		throw new Error("Anthropic Messages continuation cannot resume on a non-Anthropic provider adapter.");
 	}
 }
 

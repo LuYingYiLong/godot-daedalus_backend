@@ -101,3 +101,14 @@ test("session.workflow.todo.dismiss accepts optional workflow identity", (): voi
 		method: "session.workflow.todo.dismiss"
 	}).success, true);
 });
+
+test("general settings update accepts auto expand todo preference", (): void => {
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "general-settings-update",
+		method: "generalSettings.update",
+		params: {
+			autoExpandTodoList: false
+		}
+	}).success, true);
+});

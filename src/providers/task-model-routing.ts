@@ -8,7 +8,7 @@ import {
 	type ProviderTaskModelRef
 } from "./provider-config-store.js";
 import { getProviderDefaultModel } from "./provider-registry.js";
-import { getProviderAdapterFamily, getProviderDefaultEndpointType } from "./provider-registry.js";
+import { getProviderAdapterFamily, getProviderEndpointTypeForModel } from "./provider-registry.js";
 import { normalizeConfiguredProviderBaseUrl } from "./provider-base-url.js";
 import type { ProviderId } from "../protocol/types.js";
 import { resolveModelProfile } from "../tokens/model-profiles.js";
@@ -66,12 +66,13 @@ export async function resolveProviderTaskModelOptions(
 		);
 	}
 
+	const endpointType = getProviderEndpointTypeForModel(configuredRef.provider, configuredRef.model);
 	const options: ProviderChatOptions = {
 		provider: configuredRef.provider,
 		apiKey: config.apiKey,
 		model: configuredRef.model,
-		endpointType: getProviderDefaultEndpointType(configuredRef.provider),
-		adapterFamily: getProviderAdapterFamily(configuredRef.provider),
+		endpointType,
+		adapterFamily: getProviderAdapterFamily(configuredRef.provider, endpointType),
 		modelProfile: resolveModelProfile(configuredRef.provider, configuredRef.model)
 	};
 	const normalizedBaseUrl: string | undefined = normalizeConfiguredProviderBaseUrl(config.baseUrl);
@@ -106,12 +107,13 @@ export async function resolveConfiguredProviderTaskModelOptions(kind: ProviderTa
 		);
 	}
 
+	const endpointType = getProviderEndpointTypeForModel(configuredRef.provider, configuredRef.model);
 	const options: ProviderChatOptions = {
 		provider: configuredRef.provider,
 		apiKey: config.apiKey,
 		model: configuredRef.model,
-		endpointType: getProviderDefaultEndpointType(configuredRef.provider),
-		adapterFamily: getProviderAdapterFamily(configuredRef.provider),
+		endpointType,
+		adapterFamily: getProviderAdapterFamily(configuredRef.provider, endpointType),
 		modelProfile: resolveModelProfile(configuredRef.provider, configuredRef.model)
 	};
 	const normalizedBaseUrl: string | undefined = normalizeConfiguredProviderBaseUrl(config.baseUrl);

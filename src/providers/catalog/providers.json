@@ -176,5 +176,44 @@
     },
     "envBaseUrl": "OPENCODE_BASE_URL",
     "envModel": "OPENCODE_MODEL"
+  },
+  {
+    "id": "opencode_go",
+    "displayName": "OpenCode Go",
+    "authType": "api-key",
+    "defaultModel": "kimi-k3",
+    "modelListMode": "catalog-recommended",
+    "defaultEndpointType": "openai-chat-completions",
+    "endpointConfigs": {
+      "openai-chat-completions": {
+        "baseUrl": "https://opencode.ai/zen/go/v1",
+        "adapterFamily": "openai-compatible",
+        "modelsPath": "/models"
+      },
+      "anthropic-messages": {
+        "baseUrl": "https://opencode.ai/zen/go/v1",
+        "adapterFamily": "anthropic-compatible",
+        "modelsPath": "/models"
+      }
+    },
+    "envBaseUrl": "OPENCODE_GO_BASE_URL",
+    "envModel": "OPENCODE_GO_MODEL"
+  },
+  {
+    "id": "qianfan",
+    "displayName": "Baidu Qianfan",
+    "authType": "api-key",
+    "defaultModel": "ernie-5.1",
+    "modelListMode": "catalog-recommended",
+    "defaultEndpointType": "openai-chat-completions",
+    "endpointConfigs": {
+      "openai-chat-completions": {
+        "baseUrl": "https://qianfan.baidubce.com/v2",
+        "adapterFamily": "openai-compatible",
+        "modelsPath": "/models"
+      }
+    },
+    "envBaseUrl": "QIANFAN_BASE_URL",
+    "envModel": "QIANFAN_MODEL"
   }
 ]

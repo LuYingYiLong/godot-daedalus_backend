@@ -61,7 +61,7 @@ import {
 	modelSupportsImageInput,
 	ProviderImageInputError
 } from "../providers/provider-image-content.js";
-import { getProviderAdapterFamily, getProviderDefaultBaseUrl, getProviderDefaultEndpointType, getProviderDefaultModel, getProviderDisplayName, isProviderId } from "../providers/provider-registry.js";
+import { getProviderAdapterFamily, getProviderDefaultBaseUrl, getProviderDefaultModel, getProviderDisplayName, getProviderEndpointTypeForModel, isProviderId } from "../providers/provider-registry.js";
 import { classifyProviderError, createProviderStatusEvent } from "../providers/provider-error.js";
 import { generateSessionTitle, shouldApplyGeneratedSessionTitle } from "./session-title.js";
 import { createSingleAnswerPlan, planWorkflow, READ_TOOLS, VERIFY_TOOLS, WRITE_TOOLS } from "../workflow/planner.js";
@@ -261,7 +261,7 @@ async function createContextEstimateProviderOptions(session: ClientSession, prov
 		return null;
 	}
 
-	const endpointType = getProviderDefaultEndpointType(provider);
+	const endpointType = getProviderEndpointTypeForModel(provider, model);
 	return {
 		provider,
 		apiKey,

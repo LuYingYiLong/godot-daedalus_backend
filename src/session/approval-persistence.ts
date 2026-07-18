@@ -1,7 +1,7 @@
 import type { AiChatParams, ProviderId } from "../protocol/types.js";
 import type { AgentContinuation } from "../providers/agent-types.js";
 import type { ProviderChatOptions } from "../providers/deepseek-client.js";
-import { getProviderAdapterFamily, getProviderDefaultEndpointType, getProviderDefaultModel } from "../providers/provider-registry.js";
+import { getProviderAdapterFamily, getProviderDefaultModel, getProviderEndpointTypeForModel } from "../providers/provider-registry.js";
 import { resolveModelProfile } from "../tokens/model-profiles.js";
 import type { PendingAiContinuation } from "./pending-continuation.js";
 import type { PendingApproval } from "../tools/approval-gateway.js";
@@ -73,7 +73,7 @@ export function createRuntimePendingContinuation(
 ): PendingAiContinuation {
 	const provider = persisted.options.provider ?? "deepseek";
 	const model: string = persisted.options.model ?? getProviderDefaultModel(provider);
-	const endpointType = getProviderDefaultEndpointType(provider);
+	const endpointType = getProviderEndpointTypeForModel(provider, model);
 	const options: ProviderChatOptions = {
 		provider,
 		apiKey,

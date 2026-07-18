@@ -6,6 +6,7 @@ import {
 	getProviderDefinition,
 	getProviderDefaultEndpointType,
 	getProviderDefaultModel,
+	getProviderEndpointTypeForModel,
 	getProviderFallbackModels,
 	getProviderIds,
 	isProviderId
@@ -14,7 +15,7 @@ import { listProviderModels } from "../src/providers/provider-models.js";
 
 test("provider catalog exposes valid built-in providers and model references", (): void => {
 	const providerIds: string[] = getProviderIds();
-	assert.deepEqual(providerIds, ["deepseek", "moonshot", "openai", "zhipu", "dashscope", "volcengine", "minimax", "stepfun", "iflytek", "opencode"]);
+	assert.deepEqual(providerIds, ["deepseek", "moonshot", "openai", "zhipu", "dashscope", "volcengine", "minimax", "stepfun", "iflytek", "opencode", "opencode_go", "qianfan"]);
 	assert.equal(isProviderId("deepseek"), true);
 	assert.equal(isProviderId("unknown"), false);
 
@@ -140,6 +141,45 @@ test("provider catalog exposes valid built-in providers and model references", (
 	assert.equal(opencodeModels.find((model) => model.id === "glm-5.2")?.maxOutputTokens, 128_000);
 	assert.equal(opencodeModels.find((model) => model.id === "minimax-m3")?.maxOutputTokens, 131_072);
 	assert.equal(opencodeModels.find((model) => model.id === "grok-4.5")?.contextWindowTokens, 256_000);
+	assert.equal(getProviderDefaultModel("opencode_go"), "kimi-k3");
+	assert.equal(getProviderDefinition("opencode_go").modelListMode, "catalog-recommended");
+	assert.equal(getProviderDefaultEndpointType("opencode_go"), "openai-chat-completions");
+	assert.equal(getProviderAdapterFamily("opencode_go"), "openai-compatible");
+	assert.equal(getProviderAdapterFamily("opencode_go", "anthropic-messages"), "anthropic-compatible");
+	assert.equal(getProviderDefinition("opencode_go").defaultBaseUrl, "https://opencode.ai/zen/go/v1");
+	assert.equal(getProviderDefinition("opencode_go").modelsPath, "/models");
+	assert.equal(getProviderEndpointTypeForModel("opencode_go", "kimi-k3"), "openai-chat-completions");
+	assert.equal(getProviderEndpointTypeForModel("opencode_go", "minimax-m3"), "anthropic-messages");
+	const opencodeGoModels = getProviderFallbackModels("opencode_go");
+	assert.equal(opencodeGoModels.length, 16);
+	assert.equal(opencodeGoModels.find((model) => model.id === "kimi-k3")?.capabilities.tools, true);
+	assert.equal(opencodeGoModels.find((model) => model.id === "kimi-k2.6")?.capabilities.imageInput, true);
+	assert.equal(opencodeGoModels.find((model) => model.id === "deepseek-v4-pro")?.maxOutputTokens, 384_000);
+	assert.equal(opencodeGoModels.find((model) => model.id === "glm-5.2")?.contextWindowTokens, 1_000_000);
+	assert.equal(opencodeGoModels.find((model) => model.id === "grok-4.5")?.contextWindowTokens, 256_000);
+	assert.equal(opencodeGoModels.find((model) => model.id === "mimo-v2.5-pro")?.capabilities.reasoning, true);
+	assert.equal(opencodeGoModels.find((model) => model.id === "minimax-m3")?.endpointType, "anthropic-messages");
+	assert.equal(opencodeGoModels.find((model) => model.id === "minimax-m3")?.capabilities.vision, true);
+	assert.equal(opencodeGoModels.find((model) => model.id === "qwen3.7-plus")?.endpointType, "anthropic-messages");
+	assert.equal(getProviderDefaultModel("qianfan"), "ernie-5.1");
+	assert.equal(getProviderDefinition("qianfan").modelListMode, "catalog-recommended");
+	assert.equal(getProviderDefaultEndpointType("qianfan"), "openai-chat-completions");
+	assert.equal(getProviderAdapterFamily("qianfan"), "openai-compatible");
+	assert.equal(getProviderDefinition("qianfan").defaultBaseUrl, "https://qianfan.baidubce.com/v2");
+	assert.equal(getProviderDefinition("qianfan").modelsPath, "/models");
+	const qianfanModels = getProviderFallbackModels("qianfan");
+	assert.equal(qianfanModels.length, 7);
+	assert.equal(qianfanModels.find((model) => model.id === "ernie-5.1")?.contextWindowTokens, 131_072);
+	assert.equal(qianfanModels.find((model) => model.id === "ernie-5.1")?.maxOutputTokens, 65_536);
+	assert.equal(qianfanModels.find((model) => model.id === "ernie-5.1")?.capabilities.reasoning, true);
+	assert.equal(qianfanModels.find((model) => model.id === "ernie-5.1")?.capabilities.tools, true);
+	assert.equal(qianfanModels.find((model) => model.id === "ernie-5.0")?.capabilities.imageInput, true);
+	assert.equal(qianfanModels.find((model) => model.id === "ernie-5.0")?.capabilities.vision, true);
+	assert.equal(qianfanModels.find((model) => model.id === "ernie-5.0-thinking-latest")?.capabilities.reasoning, true);
+	assert.equal(qianfanModels.find((model) => model.id === "ernie-x1.1")?.contextWindowTokens, 65_536);
+	assert.equal(qianfanModels.find((model) => model.id === "ernie-4.5-turbo-128k")?.maxOutputTokens, 12_288);
+	assert.equal(qianfanModels.find((model) => model.id === "ernie-4.5-turbo-vl")?.capabilities.imageInput, true);
+	assert.equal(qianfanModels.find((model) => model.id === "ernie-4.5-turbo-vl-32k")?.contextWindowTokens, 32_768);
 	const openaiModels = getProviderFallbackModels("openai");
 	assert.equal(openaiModels.find((model) => model.id === "gpt-5.5")?.capabilities.webSearch, true);
 	assert.equal(openaiModels.find((model) => model.id === "gpt-5.5")?.capabilities.vision, true);
@@ -156,6 +196,8 @@ test("provider model list fallback returns normalized capabilities", async (): P
 	const stepfunResult = await listProviderModels("stepfun", undefined, undefined);
 	const iflytekResult = await listProviderModels("iflytek", undefined, undefined);
 	const opencodeResult = await listProviderModels("opencode", undefined, undefined);
+	const opencodeGoResult = await listProviderModels("opencode_go", undefined, undefined);
+	const qianfanResult = await listProviderModels("qianfan", undefined, undefined);
 
 	assert.equal(result.source, "fallback");
 	assert.equal(model?.capabilities.reasoning, true);
@@ -187,4 +229,11 @@ test("provider model list fallback returns normalized capabilities", async (): P
 	assert.equal(opencodeResult.models.find((item) => item.id === "kimi-k2.7-code")?.capabilities.tools, true);
 	assert.equal(opencodeResult.models.find((item) => item.id === "deepseek-v4-pro")?.capabilities.reasoning, true);
 	assert.equal(opencodeResult.models.find((item) => item.id === "minimax-m3")?.contextWindowTokens, 1_000_000);
+	assert.equal(opencodeGoResult.models.find((item) => item.id === "kimi-k3")?.endpointType, "openai-chat-completions");
+	assert.equal(opencodeGoResult.models.find((item) => item.id === "minimax-m3")?.endpointType, "anthropic-messages");
+	assert.equal(opencodeGoResult.models.find((item) => item.id === "minimax-m3")?.capabilities.vision, true);
+	assert.equal(opencodeGoResult.models.find((item) => item.id === "qwen3.6-plus")?.endpointType, "anthropic-messages");
+	assert.equal(qianfanResult.models.find((item) => item.id === "ernie-5.1")?.capabilities.tools, true);
+	assert.equal(qianfanResult.models.find((item) => item.id === "ernie-5.0")?.capabilities.vision, true);
+	assert.equal(qianfanResult.models.find((item) => item.id === "ernie-x1.1")?.contextWindowTokens, 65_536);
 });

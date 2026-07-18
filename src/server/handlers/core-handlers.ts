@@ -11,6 +11,7 @@ import { getSkillContent, installSkillFromPath, removePersonalSkill, setWorkspac
 import type { SkillWorkspace } from "../../skills/types.js";
 import { sendGlobalEvent } from "../session-events.js";
 import { getUserPromptConfig, setUserPrompt } from "../../user-prompt-store.js";
+import { getGeneralSettings, updateGeneralSettings } from "../../general-settings-store.js";
 import { getDaedalusDir } from "../../app-paths.js";
 
 function getActiveSkillWorkspace(session: ClientSession): SkillWorkspace | undefined {
@@ -94,6 +95,24 @@ export async function handleCoreRequest(socket: WebSocket, request: ClientReques
 			id: request.id,
 			ok: true,
 			result: await setUserPrompt(request.params.prompt)
+		});
+		break;
+
+	case "generalSettings.get":
+		sendJson(socket, {
+			type: "response",
+			id: request.id,
+			ok: true,
+			result: await getGeneralSettings()
+		});
+		break;
+
+	case "generalSettings.update":
+		sendJson(socket, {
+			type: "response",
+			id: request.id,
+			ok: true,
+			result: await updateGeneralSettings(request.params)
 		});
 		break;
 

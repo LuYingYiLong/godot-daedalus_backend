@@ -102,6 +102,11 @@ type TimelineCacheEntry = {
 
 const timelineCacheBySessionId: Map<string, TimelineCacheEntry> = new Map();
 
+type RewindableEvent = {
+	requestId: string;
+	createdAt: string;
+};
+
 export type SessionSummary = {
 	content: string;
 	messageCount: number;
@@ -459,7 +464,10 @@ export async function rewindSessionFromRequest(sessionId: string, requestId: str
 			.map((message: StoredMessage): string | undefined => message.requestId)
 			.filter((value: string | undefined): value is string => value !== undefined && value.length > 0)
 	);
-	const keptEvents: StoredSessionEvent[] = stored.events.filter((event: StoredSessionEvent): boolean => !removedRequestIds.has(event.requestId));
+	const rewindBoundaryCreatedAt: string = findRewindBoundaryCreatedAt(stored.events, removedRequestIds)
+		?? stored.messages[startIndex]?.createdAt
+		?? "";
+	const keptEvents: StoredSessionEvent[] = stored.events.filter((event: StoredSessionEvent): boolean => shouldKeepEventAfterRewind(event, removedRequestIds, rewindBoundaryCreatedAt));
 	const updatedMetadata: SessionMetadata = {
 		...stored.metadata,
 		updatedAt: new Date().toISOString()
@@ -479,7 +487,7 @@ export async function rewindSessionFromRequest(sessionId: string, requestId: str
 	try {
 		const rawApprovalEvents: string = await readFile(approvalEventsPath(sessionId), "utf8");
 		const keptApprovalEvents: StoredApprovalEvent[] = parseJsonLines<StoredApprovalEvent>(rawApprovalEvents)
-			.filter((event: StoredApprovalEvent): boolean => !removedRequestIds.has(event.requestId));
+			.filter((event: StoredApprovalEvent): boolean => shouldKeepEventAfterRewind(event, removedRequestIds, rewindBoundaryCreatedAt));
 		await writeFile(
 			approvalEventsPath(sessionId),
 			keptApprovalEvents.map((event: StoredApprovalEvent): string => JSON.stringify(event) + "\n").join(""),
@@ -491,7 +499,7 @@ export async function rewindSessionFromRequest(sessionId: string, requestId: str
 	try {
 		const rawWorkflowEvents: string = await readFile(workflowEventsPath(sessionId), "utf8");
 		const keptWorkflowEvents: StoredWorkflowEvent[] = parseJsonLines<StoredWorkflowEvent>(rawWorkflowEvents)
-			.filter((event: StoredWorkflowEvent): boolean => !removedRequestIds.has(event.requestId));
+			.filter((event: StoredWorkflowEvent): boolean => shouldKeepEventAfterRewind(event, removedRequestIds, rewindBoundaryCreatedAt));
 		await writeFile(
 			workflowEventsPath(sessionId),
 			keptWorkflowEvents.map((event: StoredWorkflowEvent): string => JSON.stringify(event) + "\n").join(""),
@@ -503,7 +511,7 @@ export async function rewindSessionFromRequest(sessionId: string, requestId: str
 	try {
 		const rawAgentEvents: string = await readFile(agentEventsPath(sessionId), "utf8");
 		const keptAgentEvents: StoredAgentEvent[] = parseJsonLines<StoredAgentEvent>(rawAgentEvents)
-			.filter((event: StoredAgentEvent): boolean => !removedRequestIds.has(event.requestId));
+			.filter((event: StoredAgentEvent): boolean => shouldKeepEventAfterRewind(event, removedRequestIds, rewindBoundaryCreatedAt));
 		await writeFile(
 			agentEventsPath(sessionId),
 			keptAgentEvents.map((event: StoredAgentEvent): string => JSON.stringify(event) + "\n").join(""),
@@ -514,6 +522,31 @@ export async function rewindSessionFromRequest(sessionId: string, requestId: str
 	}
 
 	return keptMessages;
+}
+
+function findRewindBoundaryCreatedAt(events: RewindableEvent[], removedRequestIds: Set<string>): string | null {
+	let boundaryCreatedAt: string | null = null;
+	for (const event of events) {
+		if (!removedRequestIds.has(event.requestId)) {
+			continue;
+		}
+		if (boundaryCreatedAt === null || event.createdAt < boundaryCreatedAt) {
+			boundaryCreatedAt = event.createdAt;
+		}
+	}
+
+	return boundaryCreatedAt;
+}
+
+function shouldKeepEventAfterRewind(event: RewindableEvent, removedRequestIds: Set<string>, rewindBoundaryCreatedAt: string): boolean {
+	if (removedRequestIds.has(event.requestId)) {
+		return false;
+	}
+	if (rewindBoundaryCreatedAt.length === 0 || event.createdAt.length === 0) {
+		return true;
+	}
+
+	return event.createdAt < rewindBoundaryCreatedAt;
 }
 
 export async function appendMessage(sessionId: string, message: ChatMessage): Promise<void> {
