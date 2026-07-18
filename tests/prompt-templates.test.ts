@@ -138,6 +138,15 @@ test("core prompt fixes instruction priority and untrusted execution boundaries"
 	assert.match(corePrompt, /明确防御目的的安全分析、修复建议和低风险示例/);
 });
 
+test("core prompt includes web search decision rules for stable and volatile facts", async (): Promise<void> => {
+	const corePrompt: string = await loadCorePrompt();
+
+	assert.match(corePrompt, /联网搜索判断/);
+	assert.match(corePrompt, /历史事实、数学概念、稳定定义/);
+	assert.match(corePrompt, /现任政府或公司职务、当前政策法规、价格、版本、模型能力、新闻、近期事件/);
+	assert.match(corePrompt, /Search only takes a few seconds, but fabricated answers lose user trust/);
+});
+
 test("cross-workspace access requires a user-scoped explicit authorization", async (): Promise<void> => {
 	const corePrompt: string = await loadCorePrompt();
 	const agentPrompt: string = await composeSystemPrompt(

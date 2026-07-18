@@ -112,3 +112,22 @@ test("general settings update accepts auto expand todo preference", (): void => 
 		}
 	}).success, true);
 });
+
+test("web search settings get and update are accepted", (): void => {
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "web-search-settings-get",
+		method: "webSearchSettings.get"
+	}).success, true);
+
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "web-search-settings-update",
+		method: "webSearchSettings.update",
+		params: {
+			enabled: true,
+			provider: "zhipu",
+			model: "glm-5.2"
+		}
+	}).success, true);
+});

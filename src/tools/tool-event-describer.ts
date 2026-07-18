@@ -81,6 +81,13 @@ export function describeToolEvent(toolName: string, args: Record<string, unknown
 			label: "generated image"
 		});
 	}
+	if (toolName === "mcp_web_search") {
+		const query: string = getStringArg(args, "query") ?? "search";
+		return createDisplay("web_search", "Web Search", "read", "联网搜索", `搜索：${query.slice(0, 100)}`, {
+			kind: "unknown",
+			label: query
+		});
+	}
 	if (isDynamicMcpToolName(toolName)) {
 		const metadata = getDynamicMcpToolMetadata(toolName, workspaceId);
 		const serverId: string = metadata?.serverId ?? "custom";

@@ -12,6 +12,7 @@ import { parseToolResultSummary } from "../../tools/tool-result-parser.js";
 import { parseExternalMcpMode, isToolAllowedForExternalMcpMode, type ExternalMcpMode } from "../../tools/external-mcp-mode.js";
 import { getApprovalMode } from "../../approval-settings-store.js";
 import { logger } from "../../logger.js";
+import { isWebSearchToolAvailable } from "../../web-search-settings-store.js";
 
 function getToolDefinitionName(definition: ChatCompletionTool): string {
 	return definition.type === "function" ? definition.function.name : "";
@@ -33,16 +34,21 @@ function createCatalogToolResult(entry: ToolCatalogEntry, mode: ExternalMcpMode)
 	};
 }
 
-function getAllowedCatalogEntries(session: ClientSession, mode: ExternalMcpMode): ToolCatalogEntry[] {
+async function getAllowedCatalogEntries(session: ClientSession, mode: ExternalMcpMode): Promise<ToolCatalogEntry[]> {
 	const catalog = createWorkspaceToolCatalog({
 		workspaceId: session.activeWorkspace?.id,
 		editorInstanceId: session.editorInstanceId
 	});
+	const webSearchAvailable: boolean = await isWebSearchToolAvailable();
 	return catalog.getEntries()
+		.filter((entry: ToolCatalogEntry): boolean => entry.id !== "mcp_web_search" || webSearchAvailable)
 		.filter((entry: ToolCatalogEntry): boolean => isToolAllowedForExternalMcpMode(mode, entry.id, entry.policy));
 }
 
-function findCatalogEntry(session: ClientSession, toolName: string): ToolCatalogEntry | undefined {
+async function findCatalogEntry(session: ClientSession, toolName: string): Promise<ToolCatalogEntry | undefined> {
+	if (toolName === "mcp_web_search" && !(await isWebSearchToolAvailable())) {
+		return undefined;
+	}
 	const catalog = createWorkspaceToolCatalog({
 		workspaceId: session.activeWorkspace?.id,
 		editorInstanceId: session.editorInstanceId
@@ -63,7 +69,7 @@ export async function handleToolRequest(socket: WebSocket, request: ClientReques
 	switch (request.method) {
 	case "tool.catalog.list": {
 		const mode: ExternalMcpMode = parseExternalMcpMode(request.params?.mode);
-		const entries: ToolCatalogEntry[] = getAllowedCatalogEntries(session, mode);
+		const entries: ToolCatalogEntry[] = await getAllowedCatalogEntries(session, mode);
 		sendJson(socket, {
 			type: "response",
 			id: request.id,
@@ -81,7 +87,7 @@ export async function handleToolRequest(socket: WebSocket, request: ClientReques
 		const mode: ExternalMcpMode = parseExternalMcpMode(request.params.mode);
 		const toolName: string = request.params.toolName;
 		const args: Record<string, unknown> = request.params.args ?? {};
-		const entry: ToolCatalogEntry | undefined = findCatalogEntry(session, toolName);
+		const entry: ToolCatalogEntry | undefined = await findCatalogEntry(session, toolName);
 		if (entry === undefined) {
 			sendToolError(socket, request, "unknown_tool", `Unknown tool: ${toolName}`);
 			break;

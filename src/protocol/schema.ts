@@ -375,6 +375,22 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 	z.object({
 		type: z.literal("request"),
 		id: z.string(),
+		method: z.literal("webSearchSettings.get"),
+		params: z.object({}).optional(),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("webSearchSettings.update"),
+		params: z.object({
+			enabled: z.boolean().optional(),
+			provider: providerIdSchema.optional(),
+			model: z.string().min(1).optional(),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
 		method: z.literal("skill.list"),
 		params: z.object({}).optional(),
 	}),

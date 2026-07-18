@@ -66,6 +66,29 @@ async function withZhipuMockServer(run: (baseUrl: string, requests: RecordedRequ
 			response.end("data: [DONE]\n\n");
 			return;
 		}
+		const tools = Array.isArray(body.tools) ? body.tools as Array<Record<string, unknown>> : [];
+		if (tools.some((tool: Record<string, unknown>): boolean => tool.type === "web_search")) {
+			response.writeHead(200, { "Content-Type": "application/json" });
+			response.end(JSON.stringify({
+				id: "chatcmpl-zhipu-search",
+				object: "chat.completion",
+				created: 1,
+				model: "glm-5.2",
+				choices: [{
+					index: 0,
+					message: { role: "assistant", content: "Current answer from web search." },
+					finish_reason: "stop"
+				}],
+				web_search: [{
+					title: "Official source",
+					link: "https://example.com/current",
+					content: "Current source summary",
+					media: "Example",
+					publish_date: "2026-07-18"
+				}]
+			}));
+			return;
+		}
 
 		response.writeHead(200, { "Content-Type": "application/json" });
 		response.end(JSON.stringify({
@@ -243,6 +266,69 @@ test("Zhipu image generation uses the configured image model and saves a session
 			};
 			assert.match(toolContent.artifacts[0]?.localPath ?? "", /attachments[\\/]images[\\/]generated-image-/);
 			assert.match(toolContent.artifacts[0]?.storagePath ?? "", /^attachments\/images\/generated-image-/);
+		});
+	});
+});
+
+test("Zhipu web search tool uses provider-native web_search and returns sources", async (): Promise<void> => {
+	await withTempAppData(async (): Promise<void> => {
+		await withZhipuMockServer(async (baseUrl: string, requests: RecordedRequest[]): Promise<void> => {
+			mock.method(keytar, "setPassword", async (): Promise<void> => undefined);
+			mock.method(keytar, "getPassword", async (_service: string, account: string): Promise<string | null> => {
+				return account === "provider:zhipu:api_key" ? "zhipu-test-key" : null;
+			});
+
+			await saveProviderConfig({
+				provider: "zhipu",
+				apiKey: "zhipu-test-key",
+				baseUrl,
+				model: "glm-5.2"
+			});
+			const { updateWebSearchSettings } = await import("../src/web-search-settings-store.js");
+			await updateWebSearchSettings({
+				enabled: true,
+				provider: "zhipu",
+				model: "glm-5.2"
+			});
+
+			const { executeLlmToolWithIdempotency } = await import("../src/tools/tool-idempotency.js");
+			const toolResult = await executeLlmToolWithIdempotency(
+				{} as never,
+				"mcp_web_search",
+				{ query: "current Daedalus release", reason: "latest version", maxResults: 3 }
+			);
+			const searchRequest = requests.find((request: RecordedRequest): boolean => request.url === "/chat/completions");
+			assert.equal(searchRequest?.authorization, "Bearer zhipu-test-key");
+			assert.equal(searchRequest?.body.model, "glm-5.2");
+			assert.deepEqual(searchRequest?.body.tools, [{
+				type: "web_search",
+				web_search: {
+					enable: true,
+					search_result: true,
+					count: 3
+				}
+			}]);
+
+			const content = JSON.parse(toolResult.content) as {
+				ok: boolean;
+				type: string;
+				provider: string;
+				model: string;
+				answer: string;
+				results: Array<{ title: string; url: string; summary?: string; source?: string; publishedAt?: string }>;
+			};
+			assert.equal(content.ok, true);
+			assert.equal(content.type, "web_search");
+			assert.equal(content.provider, "zhipu");
+			assert.equal(content.model, "glm-5.2");
+			assert.equal(content.answer, "Current answer from web search.");
+			assert.deepEqual(content.results, [{
+				title: "Official source",
+				url: "https://example.com/current",
+				summary: "Current source summary",
+				source: "Example",
+				publishedAt: "2026-07-18"
+			}]);
 		});
 	});
 });

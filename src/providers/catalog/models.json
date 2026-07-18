@@ -192,7 +192,8 @@
     "maxOutputTokens": 128000,
     "capabilities": {
       "reasoning": true,
-      "tools": true
+      "tools": true,
+      "webSearch": true
     },
     "ownedBy": "zhipu"
   },

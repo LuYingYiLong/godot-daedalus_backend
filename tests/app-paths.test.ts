@@ -15,7 +15,8 @@ import {
 	getSkillSettingsPath,
 	getTerminalJobsDir,
 	getToolExecutionLedgerPath,
-	getUserPromptConfigPath
+	getUserPromptConfigPath,
+	getWebSearchSettingsConfigPath
 } from "../src/app-paths.js";
 
 test("Daedalus state uses USERPROFILE without legacy appdata or v2 paths", (): void => {
@@ -32,6 +33,7 @@ test("Daedalus state uses USERPROFILE without legacy appdata or v2 paths", (): v
 		assert.equal(getSkillSettingsPath(), "D:\\Users\\TestUser\\.daedalus\\config\\skill-settings.json");
 		assert.equal(getUserPromptConfigPath(), "D:\\Users\\TestUser\\.daedalus\\config\\user-prompt.json");
 		assert.equal(getGeneralSettingsConfigPath(), "D:\\Users\\TestUser\\.daedalus\\config\\general-settings.json");
+		assert.equal(getWebSearchSettingsConfigPath(), "D:\\Users\\TestUser\\.daedalus\\config\\web-search-settings.json");
 		assert.equal(getApprovalConfigPath(), "D:\\Users\\TestUser\\.daedalus\\config\\approval.json");
 		assert.equal(getPersonalSkillsDir(), "D:\\Users\\TestUser\\.daedalus\\skills");
 		assert.equal(getDefaultSessionsDir(), "D:\\Users\\TestUser\\.daedalus\\sessions");
@@ -46,6 +48,7 @@ test("Daedalus state uses USERPROFILE without legacy appdata or v2 paths", (): v
 		assert.equal(getDaedalusPath("config.skillSettings"), getSkillSettingsPath());
 		assert.equal(getDaedalusPath("config.userPrompt"), getUserPromptConfigPath());
 		assert.equal(getDaedalusPath("config.generalSettings"), getGeneralSettingsConfigPath());
+		assert.equal(getDaedalusPath("config.webSearchSettings"), getWebSearchSettingsConfigPath());
 		assert.equal(getDaedalusPath("config.approval"), getApprovalConfigPath());
 		assert.equal(getDaedalusPath("skills.root"), getPersonalSkillsDir());
 		assert.equal(getDaedalusPath("sessions.activeRoot"), getDefaultSessionsDir());

@@ -42,6 +42,7 @@ test("provider catalog exposes valid built-in providers and model references", (
 	assert.equal(zhipuModels.find((model) => model.id === "glm-5v-turbo")?.capabilities.vision, true);
 	assert.equal(zhipuModels.find((model) => model.id === "glm-5.2")?.capabilities.reasoning, true);
 	assert.equal(zhipuModels.find((model) => model.id === "glm-5.2")?.capabilities.tools, true);
+	assert.equal(zhipuModels.find((model) => model.id === "glm-5.2")?.capabilities.webSearch, true);
 	assert.equal(zhipuModels.find((model) => model.id === "glm-5.2")?.contextWindowTokens, 1_000_000);
 	assert.equal(getProviderDefaultModel("dashscope"), "qwen3.7-plus");
 	assert.equal(getProviderDefinition("dashscope").modelListMode, "catalog-recommended");
@@ -205,6 +206,7 @@ test("provider model list fallback returns normalized capabilities", async (): P
 	assert.equal(model?.capabilities.webSearch, true);
 	assert.equal(model?.capabilities.vision, true);
 	assert.equal(zhipuResult.models.find((item) => item.id === "glm-image")?.capabilities.imageGeneration, true);
+	assert.equal(zhipuResult.models.find((item) => item.id === "glm-5.2")?.capabilities.webSearch, true);
 	assert.equal(zhipuResult.models.find((item) => item.id === "glm-image")?.capabilities.imageEdit, undefined);
 	assert.equal(zhipuResult.models.find((item) => item.id === "cogview-4")?.capabilities.imageGeneration, true);
 	assert.equal(zhipuResult.models.find((item) => item.id === "cogview-4")?.capabilities.imageEdit, undefined);

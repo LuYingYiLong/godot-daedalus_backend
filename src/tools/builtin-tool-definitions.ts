@@ -80,6 +80,19 @@ const IMAGE_GENERATION_TOOL_DEFINITIONS: ChatCompletionTool[] = [
 	)
 ];
 
+const WEB_SEARCH_TOOL_DEFINITIONS: ChatCompletionTool[] = [
+	createSceneToolDefinition(
+		"mcp_web_search",
+		"使用 Daedalus Search 设置中配置的供应商原生联网搜索能力查询当前、易变或模型不确定的信息。稳定事实、数学概念、已知历史事实不要调用。搜索结果必须用于纠正或支撑最终回答，并优先引用来源链接。",
+		{
+			query: { type: "string", description: "面向搜索引擎的简洁查询，包含关键实体、地区、时间或版本。" },
+			reason: { type: "string", description: "为什么需要联网搜索，例如 current policy、latest model capability、unknown entity。" },
+			maxResults: { type: "integer", minimum: 1, maximum: 10, description: "最多返回的搜索结果数，默认 5，最大 10。" }
+		},
+		["query"]
+	)
+];
+
 const GODOT_RUNTIME_TOOL_DEFINITIONS: ChatCompletionTool[] = [
 	createSceneToolDefinition(
 		"mcp_godot_get_runtime_status",
@@ -295,6 +308,7 @@ const SCENE_TOOL_DEFINITIONS: ChatCompletionTool[] = [
 export const BUILTIN_TOOL_DEFINITIONS: ChatCompletionTool[] = [
 	...SKILL_TOOL_DEFINITIONS,
 	...IMAGE_GENERATION_TOOL_DEFINITIONS,
+	...WEB_SEARCH_TOOL_DEFINITIONS,
 	...GODOT_RUNTIME_TOOL_DEFINITIONS,
 	...GODOT_HEADLESS_OPERATION_TOOL_DEFINITIONS,
 	...SCENE_TOOL_DEFINITIONS,

@@ -26,6 +26,7 @@ export type WorkflowToolGroup = "read" | "verify" | "write";
 const DEFAULT_WORKFLOW_TOOL_NAMES: Record<WorkflowToolGroup, readonly string[]> = {
 	read: [
 		"mcp_skills_load",
+		"mcp_web_search",
 		"mcp_godot_get_runtime_status",
 		"mcp_godot_get_godot_version",
 		"mcp_godot_get_debug_output",
@@ -107,7 +108,8 @@ const DEFAULT_WORKFLOW_TOOL_NAMES: Record<WorkflowToolGroup, readonly string[]> 
 
 const NO_WORKSPACE_TOOL_NAMES: ReadonlySet<string> = new Set([
 	"mcp_skills_load",
-	"mcp_image_generate"
+	"mcp_image_generate",
+	"mcp_web_search"
 ]);
 
 export function isToolAvailableWithoutWorkspace(toolName: string): boolean {

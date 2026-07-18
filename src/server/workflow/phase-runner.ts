@@ -21,9 +21,11 @@ import type { WorkflowPhaseRunResult, WorkflowPhaseToolStats } from "./shared-ty
 import { isEmptyProviderResponseError } from "./provider-errors.js";
 import { createSceneViewToolResultEnricher } from "./scene-view-enricher.js";
 import { filterToolNamesForWorkspace } from "../../tools/tool-catalog.js";
+import { isWebSearchToolAvailable } from "../../web-search-settings-store.js";
 
 const SCENE_VIEW_CAPTURE_TOOL: string = "mcp_godot_editor_capture_scene_view";
 const SKILL_LOAD_TOOL: string = "mcp_skills_load";
+const WEB_SEARCH_TOOL: string = "mcp_web_search";
 
 export function createRuntimeWorkflowPhase(phase: WorkflowPhase, mcpHost: McpHost, session?: ClientSession | undefined): WorkflowPhase {
 	const workspaceId: string | undefined = session?.activeWorkspace?.id;
@@ -43,6 +45,17 @@ export function createRuntimeWorkflowPhase(phase: WorkflowPhase, mcpHost: McpHos
 	};
 }
 
+async function createSearchAwareRuntimeWorkflowPhase(phase: WorkflowPhase, mcpHost: McpHost, session?: ClientSession | undefined): Promise<WorkflowPhase> {
+	const runtimePhase: WorkflowPhase = createRuntimeWorkflowPhase(phase, mcpHost, session);
+	if (await isWebSearchToolAvailable()) {
+		return runtimePhase;
+	}
+	return {
+		...runtimePhase,
+		allowedTools: runtimePhase.allowedTools.filter((toolName: string): boolean => toolName !== WEB_SEARCH_TOOL)
+	};
+}
+
 export async function runWorkflowPhase(
 	socket: WebSocket,
 	params: AiChatParams,
@@ -59,7 +72,7 @@ export async function runWorkflowPhase(
 	streamPhase: boolean,
 	abortSignal?: AbortSignal | undefined
 ): Promise<WorkflowPhaseRunResult> {
-	const runtimePhase: WorkflowPhase = createRuntimeWorkflowPhase(phase, mcpHost, session);
+	const runtimePhase: WorkflowPhase = await createSearchAwareRuntimeWorkflowPhase(phase, mcpHost, session);
 	const sceneViewEnricher = createSceneViewToolResultEnricher({
 		session,
 		options,
@@ -106,7 +119,7 @@ export async function createWorkflowPhasePrompt(
 	guidePromptSection: string = ""
 ): Promise<string> {
 	const systemPrompt: string = await composeSystemPrompt(phase.promptId ?? params.promptId, params.systemPrompt, createProviderRuntimeContext(session), params.mode);
-	const runtimePhase: WorkflowPhase = createRuntimeWorkflowPhase(phase, mcpHost, session);
+	const runtimePhase: WorkflowPhase = await createSearchAwareRuntimeWorkflowPhase(phase, mcpHost, session);
 	const phaseSkillPrompt: string = await composeSkillPrompt(phase.skillId);
 	const skillWorkspace: SkillWorkspace | undefined = session.activeWorkspace !== undefined
 		? { id: session.activeWorkspace.id, rootPath: session.activeWorkspace.rootPath }

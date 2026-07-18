@@ -12,6 +12,7 @@ import type { SkillWorkspace } from "../../skills/types.js";
 import { sendGlobalEvent } from "../session-events.js";
 import { getUserPromptConfig, setUserPrompt } from "../../user-prompt-store.js";
 import { getGeneralSettings, updateGeneralSettings } from "../../general-settings-store.js";
+import { getWebSearchSettingsStatus, updateWebSearchSettings } from "../../web-search-settings-store.js";
 import { getDaedalusDir } from "../../app-paths.js";
 
 function getActiveSkillWorkspace(session: ClientSession): SkillWorkspace | undefined {
@@ -113,6 +114,24 @@ export async function handleCoreRequest(socket: WebSocket, request: ClientReques
 			id: request.id,
 			ok: true,
 			result: await updateGeneralSettings(request.params)
+		});
+		break;
+
+	case "webSearchSettings.get":
+		sendJson(socket, {
+			type: "response",
+			id: request.id,
+			ok: true,
+			result: await getWebSearchSettingsStatus()
+		});
+		break;
+
+	case "webSearchSettings.update":
+		sendJson(socket, {
+			type: "response",
+			id: request.id,
+			ok: true,
+			result: await updateWebSearchSettings(request.params)
 		});
 		break;
 

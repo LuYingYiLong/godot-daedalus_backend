@@ -45,6 +45,7 @@ test("builtin tool definitions expose representative Godot tools", (): void => {
 	assert.ok(names.includes("mcp_godot_apply_scene_patch"));
 	assert.ok(names.includes("mcp_terminal_get_job_status"));
 	assert.ok(names.includes("mcp_terminal_cancel_job"));
+	assert.ok(names.includes("mcp_web_search"));
 });
 
 test("dynamic MCP tools are included only through the custom sentinel", (): void => {
@@ -85,6 +86,10 @@ test("tool mapping resolves builtin and dynamic tools", (): void => {
 	assert.deepEqual(resolveToolMapping("mcp_terminal_get_job_status"), {
 		serverId: "terminal",
 		toolName: "get_terminal_job_status"
+	});
+	assert.deepEqual(resolveToolMapping("mcp_web_search"), {
+		serverId: "web_search",
+		toolName: "search"
 	});
 
 	replaceDynamicMcpToolsForWorkspace(WORKSPACE_ID, [

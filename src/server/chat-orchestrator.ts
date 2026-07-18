@@ -171,9 +171,19 @@ import { createInitialPlan } from "./plan-mode.js";
 import { createPlanGetResult, type StoredPlan } from "./plan-store.js";
 import { getUserPrompt } from "../user-prompt-store.js";
 import { compressSessionHistory } from "./session-compression.js";
+import { isWebSearchToolAvailable } from "../web-search-settings-store.js";
+
+const WEB_SEARCH_TOOL_NAME: string = "mcp_web_search";
 
 function isImageGenerationOnlyToolRestriction(toolNames: readonly string[] | undefined): boolean {
 	return toolNames !== undefined && toolNames.length === 1 && toolNames[0] === "mcp_image_generate";
+}
+
+async function resolveSearchAwareToolNames(allowedToolNames: readonly string[] | undefined): Promise<readonly string[] | undefined> {
+	if (await isWebSearchToolAvailable()) {
+		return allowedToolNames;
+	}
+	return allowedToolNames?.filter((toolName: string): boolean => toolName !== WEB_SEARCH_TOOL_NAME);
 }
 
 class ContextTooLargeError extends Error {
@@ -525,6 +535,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 						? filterToolNamesForWorkspace(allowedToolNames, undefined)
 						: getNoWorkspaceToolNames();
 				}
+				allowedToolNames = await resolveSearchAwareToolNames(allowedToolNames);
 				const promptId = effectiveParams.promptId ?? explicitSkills.find((skill): boolean => skill.defaultPromptId !== undefined)?.defaultPromptId;
 				const systemPrompt: string = await composeSystemPrompt(
 					promptId,

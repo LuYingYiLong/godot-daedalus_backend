@@ -351,6 +351,21 @@ async function executeImageGenerationTool(args: Record<string, unknown>, session
 	};
 }
 
+async function executeWebSearchTool(args: Record<string, unknown>): Promise<IdempotentToolExecutionResult> {
+	const { executeWebSearch, parseWebSearchToolArgs } = await import("../providers/web-search.js");
+	const webSearch = await executeWebSearch(parseWebSearchToolArgs(args));
+	const content: string = JSON.stringify({
+		...webSearch,
+		summary: `${webSearch.query}: ${webSearch.results.length} result${webSearch.results.length === 1 ? "" : "s"}`
+	});
+	return {
+		content: trimToolResult(content),
+		rawContentLength: content.length,
+		truncated: content.length > MAX_TOOL_RESULT_CHARS,
+		reused: false
+	};
+}
+
 export async function executeLlmToolWithIdempotency(
 	mcpHost: McpHost,
 	llmToolName: string,
@@ -361,6 +376,9 @@ export async function executeLlmToolWithIdempotency(
 ): Promise<IdempotentToolExecutionResult> {
 	if (llmToolName === "mcp_image_generate") {
 		return executeImageGenerationTool(args, sessionId);
+	}
+	if (llmToolName === "mcp_web_search") {
+		return executeWebSearchTool(args);
 	}
 
 	const identity: ToolExecutionIdentity | undefined = getLlmToolExecutionIdentity(llmToolName, args, getMcpExecutionScope(mcpHost, workspaceId), workspaceId);
