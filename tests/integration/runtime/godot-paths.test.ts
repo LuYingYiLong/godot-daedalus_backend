@@ -9,7 +9,7 @@ import {
 	resolveGodotPath,
 	resolveProjectPath,
 	type GodotPathContext
-} from "../src/mcp/godot/tools/paths.js";
+} from "../../../src/mcp/godot/tools/paths.js";
 
 function makeContext(): GodotPathContext {
 	return {

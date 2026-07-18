@@ -3,7 +3,7 @@ import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { writeJsonFileAtomic, writeJsonFileAtomicSync } from "../src/json-file-store.js";
+import { writeJsonFileAtomic, writeJsonFileAtomicSync } from "../../../src/json-file-store.js";
 
 test("writeJsonFileAtomic creates parent directory and writes utf8 json with trailing newline", async (): Promise<void> => {
 	const root: string = await mkdtemp(join(tmpdir(), "daedalus-json-store-"));

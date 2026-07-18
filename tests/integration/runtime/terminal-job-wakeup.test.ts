@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import WebSocket from "ws";
-import type { McpHost } from "../src/mcp/mcp-host.js";
-import { createClientSession } from "../src/server/client-session.js";
-import { scheduleTerminalJobWakeup } from "../src/server/terminal-job-wakeup.js";
+import type { McpHost } from "../../../src/mcp/mcp-host.js";
+import { createClientSession } from "../../../src/server/client-session.js";
+import { scheduleTerminalJobWakeup } from "../../../src/server/terminal-job-wakeup.js";
 
 function sleep(ms: number): Promise<void> {
 	return new Promise((resolve): void => {

@@ -3,15 +3,15 @@ import * as fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import type { WorkspaceConfig } from "../src/workspace/types.js";
+import type { WorkspaceConfig } from "../../../src/workspace/types.js";
 
-async function withTempAppData<T>(fn: (registry: typeof import("../src/workspace/registry.js"), appDataDir: string) => Promise<T>): Promise<T> {
+async function withTempAppData<T>(fn: (registry: typeof import("../../../src/workspace/registry.js"), appDataDir: string) => Promise<T>): Promise<T> {
 	const previousUserProfile: string | undefined = process.env.USERPROFILE;
 	const appDataDir: string = await fs.mkdtemp(path.join(os.tmpdir(), "godot-daedalus-workspace-appdata-"));
 	process.env.USERPROFILE = appDataDir;
 
 	try {
-		const registry = await import(`../src/workspace/registry.js?case=${Date.now()}-${Math.random()}`);
+		const registry = await import(`../../../src/workspace/registry.js?case=${Date.now()}-${Math.random()}`);
 		return await fn(registry, appDataDir);
 	} finally {
 		if (previousUserProfile === undefined) {
@@ -40,7 +40,7 @@ test("workspace registry persists runtime workspaces", async (): Promise<void> =
 		assert.equal(persisted[0]?.rootPath, workspace.rootPath);
 		assert.equal(persisted[0]?.godotExecutablePath, "D:/Godot/Godot.exe");
 
-		const reloadedRegistry = await import(`../src/workspace/registry.js?case=reload-${Date.now()}-${Math.random()}`);
+		const reloadedRegistry = await import(`../../../src/workspace/registry.js?case=reload-${Date.now()}-${Math.random()}`);
 		const loaded: WorkspaceConfig[] = reloadedRegistry.loadWorkspaces();
 		assert.equal(loaded.some((item: WorkspaceConfig): boolean => item.id === workspace.id && item.rootPath === workspace.rootPath), true);
 

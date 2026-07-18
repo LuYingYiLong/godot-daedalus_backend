@@ -64,7 +64,7 @@ test("Godot domain modules preserve file, log, and editor config behavior", asyn
 		""
 	].join("\n"), "utf8");
 
-	const { registerGodotToolsAndResources } = await import("../src/mcp/godot/registration.js");
+	const { registerGodotToolsAndResources } = await import("../../../src/mcp/godot/registration.js");
 	const server: FakeMcpServer = createFakeServer();
 	registerGodotToolsAndResources(server as never);
 

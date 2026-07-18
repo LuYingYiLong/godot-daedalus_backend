@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ReadOnlyToolApprovalGateway } from "../src/tools/approval-gateway.js";
-import { clearDynamicMcpToolsForWorkspace, getDynamicMcpToolNames, replaceDynamicMcpToolsForWorkspace } from "../src/tools/dynamic-mcp-tools.js";
-import { evaluateToolCall, getEffectiveToolPolicy, getToolPolicy } from "../src/tools/tool-policy.js";
+import { ReadOnlyToolApprovalGateway } from "../../../src/tools/approval-gateway.js";
+import { clearDynamicMcpToolsForWorkspace, getDynamicMcpToolNames, replaceDynamicMcpToolsForWorkspace } from "../../../src/tools/dynamic-mcp-tools.js";
+import { evaluateToolCall, getEffectiveToolPolicy, getToolPolicy } from "../../../src/tools/tool-policy.js";
 
 const readTool: string = "mcp_godot_read_text_file";
 const verifyTool: string = "mcp_terminal_run_safe_preset";

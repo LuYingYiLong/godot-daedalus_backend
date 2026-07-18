@@ -10,8 +10,8 @@ test("user prompt store persists one backend prompt with atomic json formatting"
 	process.env.USERPROFILE = appDataDir;
 
 	try {
-		const store = await import(`../src/user-prompt-store.js?case=${Date.now()}-${Math.random()}`);
-		const appPaths = await import(`../src/app-paths.js?case=${Date.now()}-${Math.random()}`);
+		const store = await import(`../../../src/user-prompt-store.js?case=${Date.now()}-${Math.random()}`);
+		const appPaths = await import(`../../../src/app-paths.js?case=${Date.now()}-${Math.random()}`);
 
 		assert.equal(await store.getUserPrompt(), "");
 

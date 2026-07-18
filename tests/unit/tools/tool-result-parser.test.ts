@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseToolResultSummary } from "../src/tools/tool-result-parser.js";
+import { parseToolResultSummary } from "../../../src/tools/tool-result-parser.js";
 
 test("terminal preset failed result becomes structured failed validation", (): void => {
 	const summary = parseToolResultSummary(

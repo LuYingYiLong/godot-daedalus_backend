@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import WebSocket from "ws";
-import type { AdditionalContextItem, ClientRequest } from "../src/protocol/types.js";
-import type { StoredSessionEvent } from "../src/session/session-store.js";
-import { createClientSession } from "../src/server/client-session.js";
-import type { ClientSession } from "../src/server/client-session.js";
-import { createAdditionalContextPromptSection } from "../src/server/additional-context.js";
-import { normalizeNextStepHints, parseJsonObjectLoose } from "../src/server/next-step-hints.js";
-import { beginRequestExecution, finishRequestExecution } from "../src/server/request-lifecycle.js";
-import { hydratePendingGuides } from "../src/server/pending-guides.js";
+import type { AdditionalContextItem, ClientRequest } from "../../../src/protocol/types.js";
+import type { StoredSessionEvent } from "../../../src/session/session-store.js";
+import { createClientSession } from "../../../src/server/client-session.js";
+import type { ClientSession } from "../../../src/server/client-session.js";
+import { createAdditionalContextPromptSection } from "../../../src/server/additional-context.js";
+import { normalizeNextStepHints, parseJsonObjectLoose } from "../../../src/server/next-step-hints.js";
+import { beginRequestExecution, finishRequestExecution } from "../../../src/server/request-lifecycle.js";
+import { hydratePendingGuides } from "../../../src/server/pending-guides.js";
 
 function createSocketMock(): WebSocket & { sent: unknown[] } {
 	const sent: unknown[] = [];

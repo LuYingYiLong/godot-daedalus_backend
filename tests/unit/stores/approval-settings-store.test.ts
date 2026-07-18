@@ -10,8 +10,8 @@ test("approval settings persist one global approval mode", async (): Promise<voi
 	process.env.USERPROFILE = appDataDir;
 
 	try {
-		const settings = await import(`../src/approval-settings-store.js?case=${Date.now()}-${Math.random()}`);
-		const appPaths = await import(`../src/app-paths.js?case=${Date.now()}-${Math.random()}`);
+		const settings = await import(`../../../src/approval-settings-store.js?case=${Date.now()}-${Math.random()}`);
+		const appPaths = await import(`../../../src/app-paths.js?case=${Date.now()}-${Math.random()}`);
 
 		assert.equal(await settings.getApprovalMode(), "manual");
 

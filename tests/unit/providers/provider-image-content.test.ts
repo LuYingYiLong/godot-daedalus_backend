@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { ChatCompletionUserMessageParam } from "openai/resources/chat/completions";
-import { aiChatParamsSchema } from "../src/protocol/schema.js";
-import { createCurrentUserMessage, getImageAttachments, ProviderImageInputError } from "../src/providers/provider-image-content.js";
-import { preprocessImageAttachmentsForTextModel } from "../src/providers/image-recognition.js";
+import { aiChatParamsSchema } from "../../../src/protocol/schema.js";
+import { createCurrentUserMessage, getImageAttachments, ProviderImageInputError } from "../../../src/providers/provider-image-content.js";
+import { preprocessImageAttachmentsForTextModel } from "../../../src/providers/image-recognition.js";
 
 async function withTempAppData(run: () => Promise<void>): Promise<void> {
 	const previousUserProfile: string | undefined = process.env.USERPROFILE;

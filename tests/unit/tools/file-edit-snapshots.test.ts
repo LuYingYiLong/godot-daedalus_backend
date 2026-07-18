@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import type { McpHost } from "../src/mcp/mcp-host.js";
+import type { McpHost } from "../../../src/mcp/mcp-host.js";
 
 async function withTempWorkspace<T>(fn: (root: string) => Promise<T>): Promise<T> {
 	const previousUserProfile: string | undefined = process.env.USERPROFILE;
@@ -34,8 +34,8 @@ async function withTempWorkspace<T>(fn: (root: string) => Promise<T>): Promise<T
 
 test("captures text file before and after snapshots for successful Godot writes", async (): Promise<void> => {
 	await withTempWorkspace(async (root: string): Promise<void> => {
-		const { createRuntimeWorkspace } = await import(`../src/workspace/registry.js?case=${Date.now()}-${Math.random()}`);
-		const { captureFileEditBatchDraft } = await import(`../src/tools/file-edit-snapshots.js?case=${Date.now()}-${Math.random()}`);
+		const { createRuntimeWorkspace } = await import(`../../../src/workspace/registry.js?case=${Date.now()}-${Math.random()}`);
+		const { captureFileEditBatchDraft } = await import(`../../../src/tools/file-edit-snapshots.js?case=${Date.now()}-${Math.random()}`);
 		const workspace = createRuntimeWorkspace(root);
 		const filePath: string = path.join(root, "scripts", "player.gd");
 		await fs.mkdir(path.dirname(filePath), { recursive: true });
@@ -72,8 +72,8 @@ test("captures text file before and after snapshots for successful Godot writes"
 
 test("does not create file edit drafts for reused tool executions", async (): Promise<void> => {
 	await withTempWorkspace(async (root: string): Promise<void> => {
-		const { createRuntimeWorkspace } = await import(`../src/workspace/registry.js?case=${Date.now()}-${Math.random()}`);
-		const { captureFileEditBatchDraft } = await import(`../src/tools/file-edit-snapshots.js?case=${Date.now()}-${Math.random()}`);
+		const { createRuntimeWorkspace } = await import(`../../../src/workspace/registry.js?case=${Date.now()}-${Math.random()}`);
+		const { captureFileEditBatchDraft } = await import(`../../../src/tools/file-edit-snapshots.js?case=${Date.now()}-${Math.random()}`);
 		const workspace = createRuntimeWorkspace(root);
 		const filePath: string = path.join(root, "scripts", "player.gd");
 		await fs.mkdir(path.dirname(filePath), { recursive: true });

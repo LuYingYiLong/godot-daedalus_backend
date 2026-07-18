@@ -1,17 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import WebSocket from "ws";
-import { GODOT_DIAGNOSTICS_SERVER_ID } from "../src/mcp/godot/bridges/diagnostics-bridge.js";
-import { GodotEditorBridge } from "../src/mcp/godot/bridges/editor-bridge.js";
-import { McpHost } from "../src/mcp/mcp-host.js";
-import { withMcpRequestContext } from "../src/mcp/request-context.js";
-import { createClientSession } from "../src/server/client-session.js";
-import { beginSessionRun, bindConnectionToSessionRuntime, finishSessionRun, getClientConnection, getConnectionSession, registerClientConnection, subscribeSocketToSession, unregisterClientConnection, updateClientConnection } from "../src/server/client-connections.js";
-import { handleClientRequest } from "../src/server/handlers/client-handlers.js";
-import { createGodotRuntimeStatus } from "../src/server/godot-runtime-status.js";
-import { sendSessionEvent } from "../src/server/session-events.js";
-import { clearDynamicMcpToolsForWorkspace, getDynamicMcpToolMapping, getDynamicMcpToolNames, replaceDynamicMcpToolsForWorkspace } from "../src/tools/dynamic-mcp-tools.js";
-import { createRuntimeWorkspace, upsertRuntimeWorkspace } from "../src/workspace/registry.js";
+import { GODOT_DIAGNOSTICS_SERVER_ID } from "../../../src/mcp/godot/bridges/diagnostics-bridge.js";
+import { GodotEditorBridge } from "../../../src/mcp/godot/bridges/editor-bridge.js";
+import { McpHost } from "../../../src/mcp/mcp-host.js";
+import { withMcpRequestContext } from "../../../src/mcp/request-context.js";
+import { createClientSession } from "../../../src/server/client-session.js";
+import { beginSessionRun, bindConnectionToSessionRuntime, finishSessionRun, getClientConnection, getConnectionSession, registerClientConnection, subscribeSocketToSession, unregisterClientConnection, updateClientConnection } from "../../../src/server/client-connections.js";
+import { handleClientRequest } from "../../../src/server/handlers/client-handlers.js";
+import { createGodotRuntimeStatus } from "../../../src/server/godot-runtime-status.js";
+import { sendSessionEvent } from "../../../src/server/session-events.js";
+import { clearDynamicMcpToolsForWorkspace, getDynamicMcpToolMapping, getDynamicMcpToolNames, replaceDynamicMcpToolsForWorkspace } from "../../../src/tools/dynamic-mcp-tools.js";
+import { createRuntimeWorkspace, upsertRuntimeWorkspace } from "../../../src/workspace/registry.js";
 
 type SocketMock = WebSocket & { sent: Array<Record<string, unknown>> };
 

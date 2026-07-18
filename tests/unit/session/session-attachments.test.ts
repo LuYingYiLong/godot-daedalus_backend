@@ -3,7 +3,7 @@ import { mkdtemp, readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { aiChatParamsSchema } from "../src/protocol/schema.js";
+import { aiChatParamsSchema } from "../../../src/protocol/schema.js";
 
 async function withTempAppData(run: () => Promise<void>): Promise<void> {
 	const previousUserProfile: string | undefined = process.env.USERPROFILE;
@@ -42,8 +42,8 @@ test("schema accepts session-backed image additional context", (): void => {
 
 test("image attachments are saved under the session and hydrate to dataUrl", async (): Promise<void> => {
 	await withTempAppData(async (): Promise<void> => {
-		const sessionStore = await import("../src/session/session-store.js");
-		const attachments = await import("../src/session/session-attachments.js");
+		const sessionStore = await import("../../../src/session/session-store.js");
+		const attachments = await import("../../../src/session/session-attachments.js");
 		const metadata = await sessionStore.createSession("Attachment test");
 		const dataUrl: string = "data:image/png;base64,aGVsbG8=";
 
@@ -77,9 +77,9 @@ test("image attachments are saved under the session and hydrate to dataUrl", asy
 
 test("timeline result hydrates session-backed image thumbnails without persisting base64", async (): Promise<void> => {
 	await withTempAppData(async (): Promise<void> => {
-		const sessionStore = await import("../src/session/session-store.js");
-		const attachments = await import("../src/session/session-attachments.js");
-		const sessionPreview = await import("../src/server/session-preview.js");
+		const sessionStore = await import("../../../src/session/session-store.js");
+		const attachments = await import("../../../src/session/session-attachments.js");
+		const sessionPreview = await import("../../../src/server/session-preview.js");
 		const metadata = await sessionStore.createSession("Timeline attachment test");
 		const context = await attachments.saveImageAttachment({
 			sessionId: metadata.id,
@@ -125,8 +125,8 @@ test("timeline result hydrates session-backed image thumbnails without persistin
 
 test("generated image artifacts are saved under the session and read through dataUrl", async (): Promise<void> => {
 	await withTempAppData(async (): Promise<void> => {
-		const sessionStore = await import("../src/session/session-store.js");
-		const attachments = await import("../src/session/session-attachments.js");
+		const sessionStore = await import("../../../src/session/session-store.js");
+		const attachments = await import("../../../src/session/session-attachments.js");
 		const metadata = await sessionStore.createSession("Generated image test");
 		const bytes: Buffer = Buffer.from("generated-image-bytes", "utf8");
 
@@ -167,9 +167,9 @@ test("generated image artifacts are saved under the session and read through dat
 
 test("image generation source refs resolve session attachments and generated images", async (): Promise<void> => {
 	await withTempAppData(async (): Promise<void> => {
-		const sessionStore = await import("../src/session/session-store.js");
-		const attachments = await import("../src/session/session-attachments.js");
-		const imageGeneration = await import("../src/providers/image-generation.js");
+		const sessionStore = await import("../../../src/session/session-store.js");
+		const attachments = await import("../../../src/session/session-attachments.js");
+		const imageGeneration = await import("../../../src/providers/image-generation.js");
 		const metadata = await sessionStore.createSession("Image source refs test");
 		const attachmentDataUrl: string = "data:image/png;base64,c291cmNlLWF0dGFjaG1lbnQ=";
 		const attachmentContext = await attachments.saveImageAttachment({
@@ -213,7 +213,7 @@ test("image generation source refs resolve session attachments and generated ima
 
 test("storage clone strips transient image data for session-backed attachments", async (): Promise<void> => {
 	await withTempAppData(async (): Promise<void> => {
-		const { cloneAdditionalContextItems } = await import("../src/server/additional-context.js");
+		const { cloneAdditionalContextItems } = await import("../../../src/server/additional-context.js");
 		const cloned = cloneAdditionalContextItems([{
 			id: "image-test",
 			kind: "image",

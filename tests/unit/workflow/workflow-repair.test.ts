@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { insertWorkflowAutoRepairPhases } from "../src/workflow/repair.js";
-import type { WorkflowFailedCheck, WorkflowPhase, WorkflowPlan, WorkflowTodoItem } from "../src/workflow/types.js";
+import { insertWorkflowAutoRepairPhases } from "../../../src/workflow/repair.js";
+import type { WorkflowFailedCheck, WorkflowPhase, WorkflowPlan, WorkflowTodoItem } from "../../../src/workflow/types.js";
 
 function createPhase(id: string, title: string, toolGroup: WorkflowPhase["toolGroup"]): WorkflowPhase {
 	return {

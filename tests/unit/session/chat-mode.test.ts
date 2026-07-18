@@ -1,16 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { aiChatParamsSchema } from "../src/protocol/schema.js";
-import type { AiChatParams } from "../src/protocol/types.js";
-import { composeSystemPrompt } from "../src/prompts/registry.js";
-import { clearDynamicMcpToolsForWorkspace, getPlanSafeDynamicMcpToolNames, replaceDynamicMcpToolsForWorkspace } from "../src/tools/dynamic-mcp-tools.js";
-import { CUSTOM_MCP_TOOLS_SENTINEL } from "../src/tools/tool-sentinels.js";
-import { READ_TOOLS, VERIFY_TOOLS, WRITE_TOOLS } from "../src/workflow/planner.js";
-import { createPhasePrompt } from "../src/workflow/runner.js";
-import type { WorkflowPhase } from "../src/workflow/types.js";
-import { normalizeChatParamsForMode, resolveAllowedToolsForChatParams } from "../src/server/chat-mode.js";
-import { filterLlmContextMessages, isRuntimeModeSelfDiagnosisMessage } from "../src/server/transcript-history.js";
-import type { ChatMessage } from "../src/protocol/types.js";
+import { aiChatParamsSchema } from "../../../src/protocol/schema.js";
+import type { AiChatParams } from "../../../src/protocol/types.js";
+import { composeSystemPrompt } from "../../../src/prompts/registry.js";
+import { clearDynamicMcpToolsForWorkspace, getPlanSafeDynamicMcpToolNames, replaceDynamicMcpToolsForWorkspace } from "../../../src/tools/dynamic-mcp-tools.js";
+import { CUSTOM_MCP_TOOLS_SENTINEL } from "../../../src/tools/tool-sentinels.js";
+import { READ_TOOLS, VERIFY_TOOLS, WRITE_TOOLS } from "../../../src/workflow/planner.js";
+import { createPhasePrompt } from "../../../src/workflow/runner.js";
+import type { WorkflowPhase } from "../../../src/workflow/types.js";
+import { normalizeChatParamsForMode, resolveAllowedToolsForChatParams } from "../../../src/server/chat-mode.js";
+import { filterLlmContextMessages, isRuntimeModeSelfDiagnosisMessage } from "../../../src/server/transcript-history.js";
+import type { ChatMessage } from "../../../src/protocol/types.js";
 
 test("ai.chat schema accepts ask and plan modes and rejects unknown modes", (): void => {
 	const askResult = aiChatParamsSchema.safeParse({

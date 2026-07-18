@@ -3,17 +3,17 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import type { FileEditBatchDraft } from "../src/tools/file-edit-snapshots.js";
+import type { FileEditBatchDraft } from "../../../src/tools/file-edit-snapshots.js";
 
-async function withTempAppData<T>(fn: (store: typeof import("../src/session/session-store.js"), batches: typeof import("../src/server/file-edit-batches.js")) => Promise<T>): Promise<T> {
+async function withTempAppData<T>(fn: (store: typeof import("../../../src/session/session-store.js"), batches: typeof import("../../../src/server/file-edit-batches.js")) => Promise<T>): Promise<T> {
 	const previousUserProfile: string | undefined = process.env.USERPROFILE;
 	const appDataDir: string = await fs.mkdtemp(path.join(os.tmpdir(), "daedalus-file-edit-batches-"));
 	process.env.USERPROFILE = appDataDir;
 
 	try {
 		const suffix: string = `${Date.now()}-${Math.random()}`;
-		const store = await import(`../src/session/session-store.js?case=${suffix}`);
-		const batches = await import(`../src/server/file-edit-batches.js?case=${suffix}`);
+		const store = await import(`../../../src/session/session-store.js?case=${suffix}`);
+		const batches = await import(`../../../src/server/file-edit-batches.js?case=${suffix}`);
 		return await fn(store, batches);
 	} finally {
 		if (previousUserProfile === undefined) {

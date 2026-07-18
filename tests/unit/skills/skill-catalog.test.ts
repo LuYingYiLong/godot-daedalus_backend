@@ -4,11 +4,11 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
-import { parseSkillDocument } from "../src/skills/frontmatter.js";
-import { listSkillSummaries, resolveCatalogSkill } from "../src/skills/catalog.js";
-import { createSkill, installSkillFromPath, removePersonalSkill, setWorkspaceSkillEnabled, updateSkillContent } from "../src/skills/management.js";
-import { clientRequestSchema } from "../src/protocol/schema.js";
-import { REQUEST_HANDLERS } from "../src/server/request-dispatcher.js";
+import { parseSkillDocument } from "../../../src/skills/frontmatter.js";
+import { listSkillSummaries, resolveCatalogSkill } from "../../../src/skills/catalog.js";
+import { createSkill, installSkillFromPath, removePersonalSkill, setWorkspaceSkillEnabled, updateSkillContent } from "../../../src/skills/management.js";
+import { clientRequestSchema } from "../../../src/protocol/schema.js";
+import { REQUEST_HANDLERS } from "../../../src/server/request-dispatcher.js";
 
 const userProfileRoot: string = await mkdtemp(join(tmpdir(), "daedalus-skills-userprofile-"));
 process.env.USERPROFILE = userProfileRoot;

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildCanonicalTimelineBlocks, type TimelineAssistantBlock, type TimelineBlock } from "../src/session/timeline-blocks.js";
-import type { StoredMessage, StoredSession, StoredSessionEvent, SessionMetadata } from "../src/session/session-store.js";
+import { buildCanonicalTimelineBlocks, type TimelineAssistantBlock, type TimelineBlock } from "../../../src/session/timeline-blocks.js";
+import type { StoredMessage, StoredSession, StoredSessionEvent, SessionMetadata } from "../../../src/session/session-store.js";
 
 function metadata(): SessionMetadata {
 	return {

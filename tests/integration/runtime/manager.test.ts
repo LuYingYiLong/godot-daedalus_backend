@@ -3,22 +3,22 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { ManagerError } from "../src/manager/manager-error.js";
-import { assertInside } from "../src/manager/paths.js";
-import { isVersionNewer, parseSemver } from "../src/manager/semver.js";
+import { ManagerError } from "../../../src/manager/manager-error.js";
+import { assertInside } from "../../../src/manager/paths.js";
+import { isVersionNewer, parseSemver } from "../../../src/manager/semver.js";
 import {
 	getVersionFromGithubRelease,
 	normalizeFrontendVersion,
 	selectFrontendZipAsset,
 	validateFrontendManifest,
 	type GithubRelease
-} from "../src/manager/frontend.js";
-import { readJsonFile, writeJsonFile } from "../src/manager/json-file.js";
-import type { BackendCurrentFile, PendingFrontendUpdate } from "../src/manager/types.js";
-import { installBackend, rollbackBackend } from "../src/manager/backend.js";
-import { applyFrontendUpdateWait } from "../src/manager/frontend.js";
-import { getCachedOrFetchLatestVersion } from "../src/manager/latest-cache.js";
-import { readStatus } from "../src/manager/status.js";
+} from "../../../src/manager/frontend.js";
+import { readJsonFile, writeJsonFile } from "../../../src/manager/json-file.js";
+import type { BackendCurrentFile, PendingFrontendUpdate } from "../../../src/manager/types.js";
+import { installBackend, rollbackBackend } from "../../../src/manager/backend.js";
+import { applyFrontendUpdateWait } from "../../../src/manager/frontend.js";
+import { getCachedOrFetchLatestVersion } from "../../../src/manager/latest-cache.js";
+import { readStatus } from "../../../src/manager/status.js";
 
 test("manager semver parser compares stable versions", (): void => {
 	assert.deepEqual(parseSemver("v1.2.3"), [1, 2, 3]);

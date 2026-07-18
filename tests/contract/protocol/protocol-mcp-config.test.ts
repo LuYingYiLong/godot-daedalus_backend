@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { clientRequestSchema } from "../src/protocol/schema.js";
+import { clientRequestSchema } from "../../../src/protocol/schema.js";
 
 test("mcp.config.update schema accepts stdio and http updates", (): void => {
 	assert.equal(clientRequestSchema.safeParse({

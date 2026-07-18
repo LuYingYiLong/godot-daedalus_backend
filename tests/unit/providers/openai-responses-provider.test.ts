@@ -2,17 +2,17 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
 import type { ResponseFunctionToolCall } from "openai/resources/responses/responses";
-import { aiChatParamsSchema, providerIdSchema } from "../src/protocol/schema.js";
-import type { AiChatParams, ChatMessage } from "../src/protocol/types.js";
+import { aiChatParamsSchema, providerIdSchema } from "../../../src/protocol/schema.js";
+import type { AiChatParams, ChatMessage } from "../../../src/protocol/types.js";
 import {
 	createOpenAIResponseInput,
 	createOpenAIResponsesRequestBody
-} from "../src/providers/openai-responses-client.js";
+} from "../../../src/providers/openai-responses-client.js";
 import {
 	convertResponsesToolCalls,
 	convertToolDefinitions
-} from "../src/providers/openai-responses-agent.js";
-import { getProviderDefaultBaseUrl, getProviderDefaultModel, getProviderIds } from "../src/providers/provider-registry.js";
+} from "../../../src/providers/openai-responses-agent.js";
+import { getProviderDefaultBaseUrl, getProviderDefaultModel, getProviderIds } from "../../../src/providers/provider-registry.js";
 
 test("provider schema and registry include official OpenAI provider", (): void => {
 	assert.equal(providerIdSchema.safeParse("openai").success, true);

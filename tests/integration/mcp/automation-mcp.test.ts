@@ -3,18 +3,18 @@ import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
 import { WebSocketServer, WebSocket } from "ws";
-import { AUTOMATION_MCP_TOOL_NAMES, createAutomationConfig } from "../src/mcp/automation/config.js";
-import { AutomationRpcClient } from "../src/mcp/automation/rpc-client.js";
+import { AUTOMATION_MCP_TOOL_NAMES, createAutomationConfig } from "../../../src/mcp/automation/config.js";
+import { AutomationRpcClient } from "../../../src/mcp/automation/rpc-client.js";
 import {
 	extractApprovalPaths,
 	isApprovalAllowed,
 	redactAutomationResult,
 	selectMatchingApproval,
 	type ApprovalCandidate
-} from "../src/mcp/automation/security.js";
-import { buildMcpServerConfigs } from "../src/mcp/mcp-config.js";
-import { getToolDefinitions } from "../src/tools/builtin-tool-definitions.js";
-import { resolveToolMapping } from "../src/tools/tool-mapping.js";
+} from "../../../src/mcp/automation/security.js";
+import { buildMcpServerConfigs } from "../../../src/mcp/mcp-config.js";
+import { getToolDefinitions } from "../../../src/tools/builtin-tool-definitions.js";
+import { resolveToolMapping } from "../../../src/tools/tool-mapping.js";
 
 const EXPECTED_AUTOMATION_TOOLS = [
 	"daedalus_backend_health",

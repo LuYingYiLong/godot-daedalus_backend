@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import WebSocket from "ws";
-import { createClientSession } from "../src/server/client-session.js";
-import { createAgentToolEventForwarder } from "../src/server/workflow/tool-events.js";
-import { describeToolEvent } from "../src/tools/tool-event-describer.js";
+import { createClientSession } from "../../../src/server/client-session.js";
+import { createAgentToolEventForwarder } from "../../../src/server/workflow/tool-events.js";
+import { describeToolEvent } from "../../../src/tools/tool-event-describer.js";
 
 type SocketMock = WebSocket & { sent: Array<Record<string, unknown>> };
 

@@ -6,20 +6,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { WebSocketServer, WebSocket } from "ws";
-import type { ClientRequest } from "../src/protocol/types.js";
-import { clientRequestSchema } from "../src/protocol/schema.js";
-import type { McpHost } from "../src/mcp/mcp-host.js";
+import type { ClientRequest } from "../../../src/protocol/types.js";
+import { clientRequestSchema } from "../../../src/protocol/schema.js";
+import type { McpHost } from "../../../src/mcp/mcp-host.js";
 import {
 	createExternalMcpConfig,
 	getExternalMcpToolNames,
 	EXTERNAL_MCP_MINIMAL_TOOL_NAMES,
 	EXTERNAL_MCP_LITE_TOOL_NAMES,
 	EXTERNAL_MCP_FULL_TOOL_NAMES
-} from "../src/mcp/external/config.js";
-import { ExternalMcpRpcClient } from "../src/mcp/external/rpc-client.js";
-import { createClientSession } from "../src/server/client-session.js";
-import { handleToolRequest } from "../src/server/handlers/tool-handlers.js";
-import { setApprovalMode } from "../src/approval-settings-store.js";
+} from "../../../src/mcp/external/config.js";
+import { ExternalMcpRpcClient } from "../../../src/mcp/external/rpc-client.js";
+import { createClientSession } from "../../../src/server/client-session.js";
+import { handleToolRequest } from "../../../src/server/handlers/tool-handlers.js";
+import { setApprovalMode } from "../../../src/approval-settings-store.js";
 
 function createCaptureSocket(): { socket: WebSocket; messages: Record<string, unknown>[] } {
 	const messages: Record<string, unknown>[] = [];

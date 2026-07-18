@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { WebSocket } from "ws";
-import { clientRequestSchema } from "../src/protocol/schema.js";
-import type { ChatMessage, ClientRequest } from "../src/protocol/types.js";
-import type { McpHost } from "../src/mcp/mcp-host.js";
-import { createClientSession, type ClientSession } from "../src/server/client-session.js";
-import { resolveModelProfile } from "../src/tokens/model-profiles.js";
+import { clientRequestSchema } from "../../../src/protocol/schema.js";
+import type { ChatMessage, ClientRequest } from "../../../src/protocol/types.js";
+import type { McpHost } from "../../../src/mcp/mcp-host.js";
+import { createClientSession, type ClientSession } from "../../../src/server/client-session.js";
+import { resolveModelProfile } from "../../../src/tokens/model-profiles.js";
 
 process.env.DISABLE_DEEPSEEK_TOKENIZER = "1";
 
@@ -30,7 +30,7 @@ function createCaptureSocket(): { socket: WebSocket; responses: CapturedResponse
 }
 
 async function requestContextEstimate(session: ClientSession, params?: Record<string, unknown>): Promise<Record<string, unknown>> {
-	const { handleSessionRequest } = await import("../src/server/session-rpc-handlers.js");
+	const { handleSessionRequest } = await import("../../../src/server/session-rpc-handlers.js");
 	const { socket, responses } = createCaptureSocket();
 	const request: ClientRequest = {
 		type: "request",

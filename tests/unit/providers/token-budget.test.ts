@@ -3,16 +3,16 @@ import * as fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import type { ChatMessage } from "../src/protocol/types.js";
-import { createClientSession } from "../src/server/client-session.js";
-import type { ClientSession } from "../src/server/client-session.js";
-import { selectMessagesWithinBudget, summarizeMessagesAsSummary } from "../src/session/session-compressor.js";
-import type { TokenCounter } from "../src/tokens/token-counter.js";
+import type { ChatMessage } from "../../../src/protocol/types.js";
+import { createClientSession } from "../../../src/server/client-session.js";
+import type { ClientSession } from "../../../src/server/client-session.js";
+import { selectMessagesWithinBudget, summarizeMessagesAsSummary } from "../../../src/session/session-compressor.js";
+import type { TokenCounter } from "../../../src/tokens/token-counter.js";
 
 async function withTempAppData<T>(
 	fn: (
-		store: typeof import("../src/session/session-store.js"),
-		transcriptHistory: typeof import("../src/server/transcript-history.js")
+		store: typeof import("../../../src/session/session-store.js"),
+		transcriptHistory: typeof import("../../../src/server/transcript-history.js")
 	) => Promise<T>
 ): Promise<T> {
 	const previousUserProfile: string | undefined = process.env.USERPROFILE;
@@ -21,8 +21,8 @@ async function withTempAppData<T>(
 
 	try {
 		const suffix: string = `${Date.now()}-${Math.random()}`;
-		const store = await import(`../src/session/session-store.js?case=${suffix}`);
-		const transcriptHistory = await import(`../src/server/transcript-history.js?case=${suffix}`);
+		const store = await import(`../../../src/session/session-store.js?case=${suffix}`);
+		const transcriptHistory = await import(`../../../src/server/transcript-history.js?case=${suffix}`);
 		return await fn(store, transcriptHistory);
 	} finally {
 		if (previousUserProfile === undefined) {
@@ -96,8 +96,8 @@ test("chat turn persistence reuses pre-saved user message", async (): Promise<vo
 	process.env.USERPROFILE = appDataDir;
 	process.env.DISABLE_DEEPSEEK_TOKENIZER = "1";
 	try {
-		const store = await import("../src/session/session-store.js");
-		const tokenBudget = await import("../src/server/token-budget.js");
+		const store = await import("../../../src/session/session-store.js");
+		const tokenBudget = await import("../../../src/server/token-budget.js");
 		const metadata = await store.createSession("Streaming turn", undefined);
 		const session: ClientSession = createClientSession(undefined);
 		session.sessionId = metadata.id;

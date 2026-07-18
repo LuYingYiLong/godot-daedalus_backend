@@ -6,8 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { mock } from "node:test";
 import keytar from "keytar";
-import { listProviderModels } from "../src/providers/provider-models.js";
-import { saveProviderConfig } from "../src/providers/provider-config-store.js";
+import { listProviderModels } from "../../../src/providers/provider-models.js";
+import { saveProviderConfig } from "../../../src/providers/provider-config-store.js";
 
 type RecordedRequest = {
 	url: string;
@@ -137,9 +137,9 @@ test("DashScope image edit sends source images and saves a session artifact", as
 				}
 			});
 
-			const sessionStore = await import("../src/session/session-store.js");
-			const attachments = await import("../src/session/session-attachments.js");
-			const { generateImage } = await import("../src/providers/image-generation.js");
+			const sessionStore = await import("../../../src/session/session-store.js");
+			const attachments = await import("../../../src/session/session-attachments.js");
+			const { generateImage } = await import("../../../src/providers/image-generation.js");
 			const session = await sessionStore.createSession("DashScope image edit");
 			const dataUrl: string = "data:image/png;base64,c291cmNlLWltYWdl";
 			const context = await attachments.saveImageAttachment({
@@ -207,9 +207,9 @@ test("DashScope edit-only model requires a source image and omits unsupported op
 				}
 			});
 
-			const sessionStore = await import("../src/session/session-store.js");
-			const attachments = await import("../src/session/session-attachments.js");
-			const { generateImage } = await import("../src/providers/image-generation.js");
+			const sessionStore = await import("../../../src/session/session-store.js");
+			const attachments = await import("../../../src/session/session-attachments.js");
+			const { generateImage } = await import("../../../src/providers/image-generation.js");
 			const session = await sessionStore.createSession("DashScope edit-only");
 			await assert.rejects(
 				async (): Promise<void> => {
@@ -266,8 +266,8 @@ test("DashScope image-only models cap output count at one", async (): Promise<vo
 				}
 			});
 
-			const sessionStore = await import("../src/session/session-store.js");
-			const { generateImage } = await import("../src/providers/image-generation.js");
+			const sessionStore = await import("../../../src/session/session-store.js");
+			const { generateImage } = await import("../../../src/providers/image-generation.js");
 			const session = await sessionStore.createSession("DashScope image max");
 			await generateImage({
 				sessionId: session.id,

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { clientRequestSchema } from "../src/protocol/schema.js";
-import { createSlashHelpText, listSlashCommands } from "../src/server/slash-commands.js";
+import { clientRequestSchema } from "../../../src/protocol/schema.js";
+import { createSlashHelpText, listSlashCommands } from "../../../src/server/slash-commands.js";
 
 test("slash command list exposes the existing backend chat commands", (): void => {
 	const commands = listSlashCommands();

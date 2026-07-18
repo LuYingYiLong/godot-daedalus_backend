@@ -46,8 +46,8 @@ test("Godot runtime and headless operation tools keep commands scoped and shell-
 	process.env.USERPROFILE = appDataRoot;
 
 	try {
-		const runtimeTools = await import("../src/mcp/godot/tools/runtime-tools.js");
-		const headlessTools = await import("../src/mcp/godot/tools/headless-operations.js");
+		const runtimeTools = await import("../../../src/mcp/godot/tools/runtime-tools.js");
+		const headlessTools = await import("../../../src/mcp/godot/tools/headless-operations.js");
 
 		assert.deepEqual(runtimeTools.buildLaunchEditorCommand(), ["fake-godot", "--path", projectRoot, "--editor"]);
 		assert.deepEqual(runtimeTools.buildRunProjectCommand("scenes/main.tscn", true), ["fake-godot", "--path", projectRoot, "--debug", "res://scenes/main.tscn"]);

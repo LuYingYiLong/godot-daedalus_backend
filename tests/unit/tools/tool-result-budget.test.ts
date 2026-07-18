@@ -4,7 +4,7 @@ import {
 	createToolResultLimitFallback,
 	createToolResultLimitReason,
 	fitToolResultContent
-} from "../src/providers/tool-result-budget.js";
+} from "../../../src/providers/tool-result-budget.js";
 
 test("tool result budget keeps small content unchanged", (): void => {
 	const result = fitToolResultContent("short result", 100, 5000);

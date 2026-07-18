@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test, { mock } from "node:test";
 import keytar from "keytar";
-import { getProviderConfigStatus, getProviderModelSelectionStatus, loadProviderConfigWithSecret, saveProviderConfig, saveProviderModelsCache } from "../src/providers/provider-config-store.js";
-import { resolveProviderTaskModelOptions } from "../src/providers/task-model-routing.js";
+import { getProviderConfigStatus, getProviderModelSelectionStatus, loadProviderConfigWithSecret, saveProviderConfig, saveProviderModelsCache } from "../../../src/providers/provider-config-store.js";
+import { resolveProviderTaskModelOptions } from "../../../src/providers/task-model-routing.js";
 
 async function withTempAppData(run: () => Promise<void>): Promise<void> {
 	const previousUserProfile: string | undefined = process.env.USERPROFILE;
@@ -233,7 +233,7 @@ test("provider config persists cross-provider task model routing", async (): Pro
 
 test("image generation model routing is explicit and rejects unsupported models", async (): Promise<void> => {
 	await withTempAppData(async (): Promise<void> => {
-		const { generateImage, ImageGenerationError } = await import("../src/providers/image-generation.js");
+		const { generateImage, ImageGenerationError } = await import("../../../src/providers/image-generation.js");
 		mock.method(keytar, "setPassword", async (): Promise<void> => undefined);
 		mock.method(keytar, "getPassword", async (): Promise<string | null> => "deepseek-key");
 

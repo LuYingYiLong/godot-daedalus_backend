@@ -10,7 +10,7 @@ import {
 	parseTscn,
 	validateSceneScriptReferences,
 	validateTscnContent
-} from "../src/mcp/godot/tools/tscn-tools.js";
+} from "../../../src/mcp/godot/tools/tscn-tools.js";
 
 const baseScene: string = [
 	"[gd_scene format=3]",

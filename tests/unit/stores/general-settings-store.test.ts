@@ -10,8 +10,8 @@ test("general settings default auto expand todo list to false and persist update
 	process.env.USERPROFILE = appDataDir;
 
 	try {
-		const store = await import(`../src/general-settings-store.js?case=${Date.now()}-${Math.random()}`);
-		const appPaths = await import(`../src/app-paths.js?case=${Date.now()}-${Math.random()}`);
+		const store = await import(`../../../src/general-settings-store.js?case=${Date.now()}-${Math.random()}`);
+		const appPaths = await import(`../../../src/app-paths.js?case=${Date.now()}-${Math.random()}`);
 
 		assert.equal((await store.getGeneralSettings()).autoExpandTodoList, false);
 
@@ -40,8 +40,8 @@ test("general settings fallback to defaults for invalid config without compatibi
 	process.env.USERPROFILE = appDataDir;
 
 	try {
-		const store = await import(`../src/general-settings-store.js?case=${Date.now()}-${Math.random()}`);
-		const appPaths = await import(`../src/app-paths.js?case=${Date.now()}-${Math.random()}`);
+		const store = await import(`../../../src/general-settings-store.js?case=${Date.now()}-${Math.random()}`);
+		const appPaths = await import(`../../../src/app-paths.js?case=${Date.now()}-${Math.random()}`);
 
 		const configPath: string = appPaths.getGeneralSettingsConfigPath();
 		await mkdir(dirname(configPath), { recursive: true });

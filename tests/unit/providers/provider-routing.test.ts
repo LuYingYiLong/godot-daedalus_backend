@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ChatCompletionCreateParamsBase } from "openai/resources/chat/completions";
-import { applyChatOptions } from "../src/providers/deepseek-client.js";
-import { estimateProviderMessagesTokens, estimateProviderTextTokens } from "../src/providers/provider-token-estimator.js";
-import { resolveModelProfile } from "../src/tokens/model-profiles.js";
+import { applyChatOptions } from "../../../src/providers/deepseek-client.js";
+import { estimateProviderMessagesTokens, estimateProviderTextTokens } from "../../../src/providers/provider-token-estimator.js";
+import { resolveModelProfile } from "../../../src/tokens/model-profiles.js";
 
 test("moonshot token estimator reads data.total_tokens", async (): Promise<void> => {
 	const originalFetch: typeof fetch = globalThis.fetch;

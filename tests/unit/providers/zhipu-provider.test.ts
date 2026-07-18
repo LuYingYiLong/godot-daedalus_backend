@@ -6,13 +6,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { mock } from "node:test";
 import keytar from "keytar";
-import { runOpenAICompatibleAgent } from "../src/providers/openai-compatible-agent.js";
-import { chatWithOpenAICompatible, streamChatWithOpenAICompatible } from "../src/providers/provider-chat-completions-client.js";
-import { fetchOpenAICompatibleModels, listProviderModels } from "../src/providers/provider-models.js";
-import { saveProviderConfig } from "../src/providers/provider-config-store.js";
-import type { McpHost } from "../src/mcp/mcp-host.js";
-import type { AiChatParams } from "../src/protocol/types.js";
-import { ApprovalGateway } from "../src/tools/approval-gateway.js";
+import { runOpenAICompatibleAgent } from "../../../src/providers/openai-compatible-agent.js";
+import { chatWithOpenAICompatible, streamChatWithOpenAICompatible } from "../../../src/providers/provider-chat-completions-client.js";
+import { fetchOpenAICompatibleModels, listProviderModels } from "../../../src/providers/provider-models.js";
+import { saveProviderConfig } from "../../../src/providers/provider-config-store.js";
+import type { McpHost } from "../../../src/mcp/mcp-host.js";
+import type { AiChatParams } from "../../../src/protocol/types.js";
+import { ApprovalGateway } from "../../../src/tools/approval-gateway.js";
 
 type RecordedRequest = {
 	url: string;
@@ -236,8 +236,8 @@ test("Zhipu image generation uses the configured image model and saves a session
 				}
 			});
 
-			const sessionStore = await import("../src/session/session-store.js");
-			const { generateImage } = await import("../src/providers/image-generation.js");
+			const sessionStore = await import("../../../src/session/session-store.js");
+			const { generateImage } = await import("../../../src/providers/image-generation.js");
 			const session = await sessionStore.createSession("Zhipu image generation");
 			const result = await generateImage({
 				sessionId: session.id,
@@ -269,7 +269,7 @@ test("Zhipu image generation uses the configured image model and saves a session
 				/Zhipu's official image API does not currently expose/u
 			);
 
-			const { executeLlmToolWithIdempotency } = await import("../src/tools/tool-idempotency.js");
+			const { executeLlmToolWithIdempotency } = await import("../../../src/tools/tool-idempotency.js");
 			const toolResult = await executeLlmToolWithIdempotency(
 				{} as never,
 				"mcp_image_generate",
@@ -301,13 +301,13 @@ test("Zhipu web search tool uses provider-native web_search and returns sources"
 				baseUrl,
 				model: "glm-5.2"
 			});
-			const { updateWebSearchSettings } = await import("../src/web-search-settings-store.js");
+			const { updateWebSearchSettings } = await import("../../../src/web-search-settings-store.js");
 			await updateWebSearchSettings({
 				provider: "zhipu",
 				model: "glm-5.2"
 			});
 
-			const { executeLlmToolWithIdempotency } = await import("../src/tools/tool-idempotency.js");
+			const { executeLlmToolWithIdempotency } = await import("../../../src/tools/tool-idempotency.js");
 			const toolResult = await executeLlmToolWithIdempotency(
 				{} as never,
 				"mcp_web_search",
@@ -391,13 +391,13 @@ test("Zhipu web search forwards abort signal to provider request", async (): Pro
 				baseUrl,
 				model: "glm-5.2"
 			});
-			const { updateWebSearchSettings } = await import("../src/web-search-settings-store.js");
+			const { updateWebSearchSettings } = await import("../../../src/web-search-settings-store.js");
 			await updateWebSearchSettings({
 				provider: "zhipu",
 				model: "glm-5.2"
 			});
 
-			const { executeWebSearch } = await import("../src/providers/web-search.js");
+			const { executeWebSearch } = await import("../../../src/providers/web-search.js");
 			const controller = new AbortController();
 			const searchPromise = executeWebSearch({ query: "slow current fact" }, controller.signal);
 			await requestReceived;

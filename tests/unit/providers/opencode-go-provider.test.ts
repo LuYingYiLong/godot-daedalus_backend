@@ -5,15 +5,15 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { mock } from "node:test";
-import type { McpHost } from "../src/mcp/mcp-host.js";
-import { chatWithProvider } from "../src/providers/deepseek-client.js";
-import { runAnthropicCompatibleAgent, runAnthropicCompatibleAgentStreaming } from "../src/providers/anthropic-compatible-agent.js";
-import { listProviderModels } from "../src/providers/provider-models.js";
-import { modelSupportsImageInput } from "../src/providers/provider-image-content.js";
-import { createProviderChatOptions } from "../src/server/provider-chat-options.js";
-import type { ClientSession } from "../src/server/client-session.js";
-import { resolveModelProfile } from "../src/tokens/model-profiles.js";
-import { ApprovalGateway } from "../src/tools/approval-gateway.js";
+import type { McpHost } from "../../../src/mcp/mcp-host.js";
+import { chatWithProvider } from "../../../src/providers/deepseek-client.js";
+import { runAnthropicCompatibleAgent, runAnthropicCompatibleAgentStreaming } from "../../../src/providers/anthropic-compatible-agent.js";
+import { listProviderModels } from "../../../src/providers/provider-models.js";
+import { modelSupportsImageInput } from "../../../src/providers/provider-image-content.js";
+import { createProviderChatOptions } from "../../../src/server/provider-chat-options.js";
+import type { ClientSession } from "../../../src/server/client-session.js";
+import { resolveModelProfile } from "../../../src/tokens/model-profiles.js";
+import { ApprovalGateway } from "../../../src/tools/approval-gateway.js";
 
 type RecordedRequest = {
 	url: string;

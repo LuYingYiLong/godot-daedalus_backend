@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { redactForLog } from "../src/logger.js";
+import { redactForLog } from "../../../src/logger.js";
 
 test("logger redacts secrets and clips large values", (): void => {
 	const redacted = redactForLog({

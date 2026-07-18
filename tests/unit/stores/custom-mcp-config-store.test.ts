@@ -4,15 +4,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { mock } from "node:test";
 import keytar from "keytar";
-import { getMcpServersConfigPath } from "../src/app-paths.js";
+import { getMcpServersConfigPath } from "../../../src/app-paths.js";
 import {
 	addCustomMcpServerConfig,
 	buildCustomMcpServerConfigs,
 	listStoredCustomMcpServerConfigs,
 	updateCustomMcpServerConfig
-} from "../src/mcp/custom-mcp-config-store.js";
-import type { McpServerConfig } from "../src/mcp/types.js";
-import type { WorkspaceConfig } from "../src/workspace/types.js";
+} from "../../../src/mcp/custom-mcp-config-store.js";
+import type { McpServerConfig } from "../../../src/mcp/types.js";
+import type { WorkspaceConfig } from "../../../src/workspace/types.js";
 
 async function withTempAppData(run: (secrets: Map<string, string>) => Promise<void>): Promise<void> {
 	const previousUserProfile: string | undefined = process.env.USERPROFILE;

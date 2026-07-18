@@ -17,7 +17,7 @@ import {
 	getToolExecutionLedgerPath,
 	getUserPromptConfigPath,
 	getWebSearchSettingsConfigPath
-} from "../src/app-paths.js";
+} from "../../../src/app-paths.js";
 
 test("Daedalus state uses USERPROFILE without legacy appdata or v2 paths", (): void => {
 	const previousUserProfile: string | undefined = process.env.USERPROFILE;

@@ -28,7 +28,7 @@
     "terminal:mcp": "tsx src/mcp/terminal/server.ts",
     "automation:mcp": "tsx src/mcp/automation/server.ts",
     "typecheck": "tsc --noEmit",
-    "test": "npm run typecheck && node --import tsx --test \"tests/*.test.ts\"",
+    "test": "npm run typecheck && node --import tsx --test \"tests/**/*.test.ts\"",
     "check": "npm test && npm run pack:check",
     "pack:check": "npm pack --dry-run",
     "smoke:beta": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/beta-smoke.ps1",

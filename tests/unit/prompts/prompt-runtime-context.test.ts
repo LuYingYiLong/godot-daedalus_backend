@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { composeSystemPrompt } from "../src/prompts/registry.js";
+import { composeSystemPrompt } from "../../../src/prompts/registry.js";
 
 test("system prompt includes runtime provider and model context", async (): Promise<void> => {
 	const prompt: string = await composeSystemPrompt(

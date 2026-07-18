@@ -5,9 +5,9 @@ import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { ContentLengthMessageParser, encodeContentLengthMessage } from "../src/mcp/content-length-protocol.js";
-import { GodotDiagnosticsBridge } from "../src/mcp/godot/bridges/diagnostics-bridge.js";
-import type { WorkspaceConfig } from "../src/workspace/types.js";
+import { ContentLengthMessageParser, encodeContentLengthMessage } from "../../../src/mcp/content-length-protocol.js";
+import { GodotDiagnosticsBridge } from "../../../src/mcp/godot/bridges/diagnostics-bridge.js";
+import type { WorkspaceConfig } from "../../../src/workspace/types.js";
 
 type FakeLspServer = {
 	server: net.Server;

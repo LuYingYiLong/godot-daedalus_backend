@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createApprovedPlanExecutionParams, createPlanDecision, createPlannerSystemPrompt, createPlanVisibleDeltaFilter } from "../src/server/plan-mode.js";
-import { createPlanMetadata } from "../src/server/plan-store.js";
-import type { StoredPlan } from "../src/server/plan-store.js";
-import type { ProviderChatOptions } from "../src/providers/deepseek-client.js";
-import { shouldPersistSessionEvent } from "../src/server/session-events.js";
+import { createApprovedPlanExecutionParams, createPlanDecision, createPlannerSystemPrompt, createPlanVisibleDeltaFilter } from "../../../src/server/plan-mode.js";
+import { createPlanMetadata } from "../../../src/server/plan-store.js";
+import type { StoredPlan } from "../../../src/server/plan-store.js";
+import type { ProviderChatOptions } from "../../../src/providers/deepseek-client.js";
+import { shouldPersistSessionEvent } from "../../../src/server/session-events.js";
 
 const DUMMY_PROVIDER: ProviderChatOptions = {
 	provider: "deepseek",

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseJsonObjectFromLlm } from "../src/providers/llm-json.js";
+import { parseJsonObjectFromLlm } from "../../../src/providers/llm-json.js";
 
 test("LLM JSON parser accepts fenced JSON objects", (): void => {
 	const parsed = parseJsonObjectFromLlm("```json\n{\"ok\":true}\n```", "bad json");

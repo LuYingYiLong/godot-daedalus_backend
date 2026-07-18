@@ -25,7 +25,7 @@ async function withTempAppData(run: () => Promise<void>): Promise<void> {
 test("web search settings expose supported catalog models", async (): Promise<void> => {
 	await withTempAppData(async (): Promise<void> => {
 		mock.method(keytar, "getPassword", async (): Promise<string | null> => null);
-		const store = await import(`../src/web-search-settings-store.js?case=${Date.now()}-${Math.random()}`);
+		const store = await import(`../../../src/web-search-settings-store.js?case=${Date.now()}-${Math.random()}`);
 
 		const status = await store.getWebSearchSettingsStatus();
 
@@ -44,8 +44,8 @@ test("web search settings persist search model and report configured availabilit
 		mock.method(keytar, "getPassword", async (_service: string, account: string): Promise<string | null> => {
 			return account === "provider:zhipu:api_key" ? "zhipu-test-key" : null;
 		});
-		const store = await import(`../src/web-search-settings-store.js?case=${Date.now()}-${Math.random()}`);
-		const appPaths = await import(`../src/app-paths.js?case=${Date.now()}-${Math.random()}`);
+		const store = await import(`../../../src/web-search-settings-store.js?case=${Date.now()}-${Math.random()}`);
+		const appPaths = await import(`../../../src/app-paths.js?case=${Date.now()}-${Math.random()}`);
 
 		const saved = await store.updateWebSearchSettings({
 			provider: "zhipu",
@@ -65,7 +65,7 @@ test("web search settings persist search model and report configured availabilit
 test("web search settings reject unsupported providers and models", async (): Promise<void> => {
 	await withTempAppData(async (): Promise<void> => {
 		mock.method(keytar, "getPassword", async (): Promise<string | null> => null);
-		const store = await import(`../src/web-search-settings-store.js?case=${Date.now()}-${Math.random()}`);
+		const store = await import(`../../../src/web-search-settings-store.js?case=${Date.now()}-${Math.random()}`);
 
 		await assert.rejects(
 			async (): Promise<void> => {

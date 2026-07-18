@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { classifyProviderError, createProviderStatusEvent } from "../src/providers/provider-error.js";
+import { classifyProviderError, createProviderStatusEvent } from "../../../src/providers/provider-error.js";
 
 test("provider quota errors are classified by status and message", (): void => {
 	assert.equal(classifyProviderError({ status: 402, message: "Payment Required" }).code, "provider_quota_exhausted");

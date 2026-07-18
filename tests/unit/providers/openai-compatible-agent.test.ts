@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import test from "node:test";
-import { createToolProtocolCorrectionMessage, resolveRequiredToolChoice, runOpenAICompatibleAgent, runOpenAICompatibleAgentStreaming, shouldDisableThinkingForToolCalls, shouldSkipRequiredToolChoice } from "../src/providers/openai-compatible-agent.js";
+import { createToolProtocolCorrectionMessage, resolveRequiredToolChoice, runOpenAICompatibleAgent, runOpenAICompatibleAgentStreaming, shouldDisableThinkingForToolCalls, shouldSkipRequiredToolChoice } from "../../../src/providers/openai-compatible-agent.js";
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
-import type { McpHost } from "../src/mcp/mcp-host.js";
-import type { AiChatParams } from "../src/protocol/types.js";
-import { ApprovalGateway } from "../src/tools/approval-gateway.js";
+import type { McpHost } from "../../../src/mcp/mcp-host.js";
+import type { AiChatParams } from "../../../src/protocol/types.js";
+import { ApprovalGateway } from "../../../src/tools/approval-gateway.js";
 
 type RecordedRequest = {
 	url: string;

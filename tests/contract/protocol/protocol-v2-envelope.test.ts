@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { clientRequestEnvelopeSchema, clientRequestSchema } from "../src/protocol/schema.js";
-import { isUnsupportedProtocolEnvelope } from "../src/server/websocket-server.js";
+import { clientRequestEnvelopeSchema, clientRequestSchema } from "../../../src/protocol/schema.js";
+import { isUnsupportedProtocolEnvelope } from "../../../src/server/websocket-server.js";
 
 test("v2 envelope is required at the WebSocket boundary", (): void => {
 	assert.equal(isUnsupportedProtocolEnvelope({ type: "request", id: "legacy", method: "ping", params: {} }), true);

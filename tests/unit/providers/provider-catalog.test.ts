@@ -10,8 +10,8 @@ import {
 	getProviderFallbackModels,
 	getProviderIds,
 	isProviderId
-} from "../src/providers/provider-registry.js";
-import { listProviderModels } from "../src/providers/provider-models.js";
+} from "../../../src/providers/provider-registry.js";
+import { listProviderModels } from "../../../src/providers/provider-models.js";
 
 test("provider catalog exposes valid built-in providers and model references", (): void => {
 	const providerIds: string[] = getProviderIds();

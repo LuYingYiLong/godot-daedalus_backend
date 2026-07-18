@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { clientRequestSchema } from "../src/protocol/schema.js";
+import { clientRequestSchema } from "../../../src/protocol/schema.js";
 
 function createApprovalModeRequest(mode: string): Record<string, unknown> {
 	return {

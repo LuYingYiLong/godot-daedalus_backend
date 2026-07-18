@@ -9,11 +9,11 @@ import {
 	createRuntimePendingContinuation,
 	foldPendingApprovalStates,
 	mergeHydratedPendingApprovalStates
-} from "../src/session/approval-persistence.js";
-import type { StoredApprovalEvent } from "../src/session/session-store.js";
-import type { PendingAiContinuation } from "../src/server/client-session.js";
-import { createClientSession } from "../src/server/client-session.js";
-import type { PendingApproval } from "../src/tools/approval-gateway.js";
+} from "../../../src/session/approval-persistence.js";
+import type { StoredApprovalEvent } from "../../../src/session/session-store.js";
+import type { PendingAiContinuation } from "../../../src/server/client-session.js";
+import { createClientSession } from "../../../src/server/client-session.js";
+import type { PendingApproval } from "../../../src/tools/approval-gateway.js";
 
 function createPendingApproval(): PendingApproval {
 	return {
@@ -165,8 +165,8 @@ test("cancelling a request clears pending approval continuation and persistence"
 	process.env.DISABLE_DEEPSEEK_TOKENIZER = "1";
 	try {
 		const suffix: string = `${Date.now()}-${Math.random()}`;
-		const store = await import(`../src/session/session-store.js?case=${suffix}`);
-		const continuationModule = await import(`../src/server/approval-continuation.js?case=${suffix}`);
+		const store = await import(`../../../src/session/session-store.js?case=${suffix}`);
+		const continuationModule = await import(`../../../src/server/approval-continuation.js?case=${suffix}`);
 		const metadata = await store.createSession("Approval cancel", "workspace-a");
 		const session = createClientSession(undefined);
 		session.sessionId = metadata.id;

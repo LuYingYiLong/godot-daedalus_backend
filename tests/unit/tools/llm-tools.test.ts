@@ -3,16 +3,16 @@ import { afterEach, test } from "node:test";
 import {
 	getToolDefinitions,
 	getToolDefinitionsForNames
-} from "../src/tools/builtin-tool-definitions.js";
+} from "../../../src/tools/builtin-tool-definitions.js";
 import {
 	getDynamicMcpToolMetadata,
 	getPlanSafeDynamicMcpToolNames,
 	isPlanSafeDynamicMcpToolName,
 	clearDynamicMcpToolsForWorkspace,
 	replaceDynamicMcpToolsForWorkspace
-} from "../src/tools/dynamic-mcp-tools.js";
-import { CUSTOM_MCP_TOOLS_SENTINEL } from "../src/tools/tool-sentinels.js";
-import { resolveToolMapping } from "../src/tools/tool-mapping.js";
+} from "../../../src/tools/dynamic-mcp-tools.js";
+import { CUSTOM_MCP_TOOLS_SENTINEL } from "../../../src/tools/tool-sentinels.js";
+import { resolveToolMapping } from "../../../src/tools/tool-mapping.js";
 
 type FunctionTool = ReturnType<typeof getToolDefinitions>[number] & {
 	type: "function";

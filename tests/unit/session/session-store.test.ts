@@ -3,15 +3,15 @@ import * as fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import type { ChatMessage } from "../src/protocol/types.js";
+import type { ChatMessage } from "../../../src/protocol/types.js";
 
-async function withTempAppData<T>(fn: (store: typeof import("../src/session/session-store.js")) => Promise<T>): Promise<T> {
+async function withTempAppData<T>(fn: (store: typeof import("../../../src/session/session-store.js")) => Promise<T>): Promise<T> {
 	const previousUserProfile: string | undefined = process.env.USERPROFILE;
 	const appDataDir: string = await fs.mkdtemp(path.join(os.tmpdir(), "godot-daedalus-session-appdata-"));
 	process.env.USERPROFILE = appDataDir;
 
 	try {
-		const store = await import(`../src/session/session-store.js?case=${Date.now()}-${Math.random()}`);
+		const store = await import(`../../../src/session/session-store.js?case=${Date.now()}-${Math.random()}`);
 		return await fn(store);
 	} finally {
 		if (previousUserProfile === undefined) {

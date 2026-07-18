@@ -5,11 +5,11 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { mock } from "node:test";
-import type { McpHost } from "../src/mcp/mcp-host.js";
-import { chatWithOpenAICompatible, streamChatWithOpenAICompatible } from "../src/providers/provider-chat-completions-client.js";
-import { runOpenAICompatibleAgent } from "../src/providers/openai-compatible-agent.js";
-import { listProviderModels } from "../src/providers/provider-models.js";
-import { ApprovalGateway } from "../src/tools/approval-gateway.js";
+import type { McpHost } from "../../../src/mcp/mcp-host.js";
+import { chatWithOpenAICompatible, streamChatWithOpenAICompatible } from "../../../src/providers/provider-chat-completions-client.js";
+import { runOpenAICompatibleAgent } from "../../../src/providers/openai-compatible-agent.js";
+import { listProviderModels } from "../../../src/providers/provider-models.js";
+import { ApprovalGateway } from "../../../src/tools/approval-gateway.js";
 
 type RecordedRequest = {
 	url: string;

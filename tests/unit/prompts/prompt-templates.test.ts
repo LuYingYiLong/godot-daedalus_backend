@@ -9,7 +9,7 @@ import {
 	loadCorePrompt,
 	promptFragmentPaths,
 	promptTemplatePaths
-} from "../src/prompts/registry.js";
+} from "../../../src/prompts/registry.js";
 
 const templatesRoot: string = path.resolve(process.cwd(), "src/prompts/templates");
 

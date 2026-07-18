@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { clearDynamicMcpToolsForWorkspace, replaceDynamicMcpToolsForWorkspace } from "../src/tools/dynamic-mcp-tools.js";
-import { createWorkspaceToolCatalog } from "../src/tools/tool-catalog.js";
-import { filterToolNamesForWorkspace, getDefaultWorkflowToolNames } from "../src/tools/tool-catalog.js";
-import { CUSTOM_MCP_TOOLS_SENTINEL } from "../src/tools/tool-sentinels.js";
+import { clearDynamicMcpToolsForWorkspace, replaceDynamicMcpToolsForWorkspace } from "../../../src/tools/dynamic-mcp-tools.js";
+import { createWorkspaceToolCatalog } from "../../../src/tools/tool-catalog.js";
+import { filterToolNamesForWorkspace, getDefaultWorkflowToolNames } from "../../../src/tools/tool-catalog.js";
+import { CUSTOM_MCP_TOOLS_SENTINEL } from "../../../src/tools/tool-sentinels.js";
 
 function getFunctionToolName(tool: { type: string; function?: { name: string } | undefined }): string {
 	assert.equal(tool.type, "function");

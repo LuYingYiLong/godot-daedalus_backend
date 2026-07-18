@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { ToolEvent } from "../src/tools/tool-dispatcher.js";
+import type { ToolEvent } from "../../../src/tools/tool-dispatcher.js";
 import {
 	applyDeterministicVerificationGate,
 	applyToolEventToWorkflowObservations,
 	createWorkflowPhaseOutcome,
 	findBlockingOutcomeBeforeSummarize
-} from "../src/workflow/outcome.js";
-import type { WorkflowPhase, WorkflowPhaseOutput, WorkflowToolObservation } from "../src/workflow/types.js";
+} from "../../../src/workflow/outcome.js";
+import type { WorkflowPhase, WorkflowPhaseOutput, WorkflowToolObservation } from "../../../src/workflow/types.js";
 
 function createPhase(id: string, toolGroup: WorkflowPhase["toolGroup"]): WorkflowPhase {
 	return {

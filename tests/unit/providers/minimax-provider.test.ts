@@ -6,10 +6,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { mock } from "node:test";
 import keytar from "keytar";
-import { chatWithOpenAICompatible } from "../src/providers/provider-chat-completions-client.js";
-import { listProviderModels } from "../src/providers/provider-models.js";
-import { modelSupportsImageInput } from "../src/providers/provider-image-content.js";
-import { saveProviderConfig } from "../src/providers/provider-config-store.js";
+import { chatWithOpenAICompatible } from "../../../src/providers/provider-chat-completions-client.js";
+import { listProviderModels } from "../../../src/providers/provider-models.js";
+import { modelSupportsImageInput } from "../../../src/providers/provider-image-content.js";
+import { saveProviderConfig } from "../../../src/providers/provider-config-store.js";
 
 type RecordedRequest = {
 	url: string;
@@ -190,8 +190,8 @@ test("MiniMax image generation uses image_generation API and saves base64 artifa
 				}
 			});
 
-			const sessionStore = await import("../src/session/session-store.js");
-			const { generateImage } = await import("../src/providers/image-generation.js");
+			const sessionStore = await import("../../../src/session/session-store.js");
+			const { generateImage } = await import("../../../src/providers/image-generation.js");
 			const session = await sessionStore.createSession("MiniMax image generation");
 			const result = await generateImage({
 				sessionId: session.id,
@@ -238,8 +238,8 @@ test("MiniMax image generation downloads image_urls when returned by the API", a
 				}
 			});
 
-			const sessionStore = await import("../src/session/session-store.js");
-			const { generateImage } = await import("../src/providers/image-generation.js");
+			const sessionStore = await import("../../../src/session/session-store.js");
+			const { generateImage } = await import("../../../src/providers/image-generation.js");
 			const session = await sessionStore.createSession("MiniMax image URL generation");
 			const result = await generateImage({
 				sessionId: session.id,

@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { clientRequestSchema } from "../src/protocol/schema.js";
-import { REQUEST_HANDLER_METHODS, REQUEST_HANDLERS } from "../src/server/request-dispatcher.js";
+import { clientRequestSchema } from "../../../src/protocol/schema.js";
+import { REQUEST_HANDLER_METHODS, REQUEST_HANDLERS } from "../../../src/server/request-dispatcher.js";
 
 const pluginDir: string = process.env.GODOT_DAEDALUS_PLUGIN_DIR ?? "D:/GodotProjects/example/addons/godot_daedalus";
 

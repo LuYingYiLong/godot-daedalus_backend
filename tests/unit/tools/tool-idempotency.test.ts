@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { collectGodotRefreshPaths, getLlmToolExecutionIdentity, shouldDedupeLlmToolExecution } from "../src/tools/tool-idempotency.js";
+import { collectGodotRefreshPaths, getLlmToolExecutionIdentity, shouldDedupeLlmToolExecution } from "../../../src/tools/tool-idempotency.js";
 
 test("only write and destructive tools are deduplicated", (): void => {
 	assert.equal(shouldDedupeLlmToolExecution("mcp_godot_read_text_file"), false);

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { applyProviderConfigToRuntime, type ProviderSessionRuntime } from "../src/application/provider-session-service.js";
-import { getDefaultModelProfile } from "../src/tokens/model-profiles.js";
+import { applyProviderConfigToRuntime, type ProviderSessionRuntime } from "../../../src/application/provider-session-service.js";
+import { getDefaultModelProfile } from "../../../src/tokens/model-profiles.js";
 
 function createRuntime(): ProviderSessionRuntime {
 	return {

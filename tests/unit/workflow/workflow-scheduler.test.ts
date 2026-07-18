@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { scheduleWorkflowApproval, scheduleWorkflowPhaseOutcome, scheduleWorkflowPhaseStart } from "../src/workflow/scheduler.js";
-import type { WorkflowPhase, WorkflowPhaseOutput, WorkflowRunState } from "../src/workflow/types.js";
+import { scheduleWorkflowApproval, scheduleWorkflowPhaseOutcome, scheduleWorkflowPhaseStart } from "../../../src/workflow/scheduler.js";
+import type { WorkflowPhase, WorkflowPhaseOutput, WorkflowRunState } from "../../../src/workflow/types.js";
 
 function createPhase(id: string, toolGroup: WorkflowPhase["toolGroup"] = "read"): WorkflowPhase {
 	return {

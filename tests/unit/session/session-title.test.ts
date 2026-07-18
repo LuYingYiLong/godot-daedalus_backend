@@ -4,7 +4,7 @@ import {
 	createFallbackSessionTitle,
 	normalizeGeneratedSessionTitle,
 	shouldApplyGeneratedSessionTitle
-} from "../src/server/session-title.js";
+} from "../../../src/server/session-title.js";
 
 test("fallback session title is language-neutral and based on user message", (): void => {
 	assert.equal(createFallbackSessionTitle("/skill   修复 Godot 启动流程"), "修复 Godot 启动流程");

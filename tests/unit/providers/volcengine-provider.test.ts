@@ -6,10 +6,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { mock } from "node:test";
 import keytar from "keytar";
-import { chatWithOpenAICompatible } from "../src/providers/provider-chat-completions-client.js";
-import { listProviderModels } from "../src/providers/provider-models.js";
-import { modelSupportsImageInput } from "../src/providers/provider-image-content.js";
-import { saveProviderConfig } from "../src/providers/provider-config-store.js";
+import { chatWithOpenAICompatible } from "../../../src/providers/provider-chat-completions-client.js";
+import { listProviderModels } from "../../../src/providers/provider-models.js";
+import { modelSupportsImageInput } from "../../../src/providers/provider-image-content.js";
+import { saveProviderConfig } from "../../../src/providers/provider-config-store.js";
 
 type RecordedRequest = {
 	url: string;
@@ -178,8 +178,8 @@ test("Volcengine Ark image generation uses Seedream and saves a session artifact
 				}
 			});
 
-			const sessionStore = await import("../src/session/session-store.js");
-			const { generateImage } = await import("../src/providers/image-generation.js");
+			const sessionStore = await import("../../../src/session/session-store.js");
+			const { generateImage } = await import("../../../src/providers/image-generation.js");
 			const session = await sessionStore.createSession("Volcengine image generation");
 			const result = await generateImage({
 				sessionId: session.id,

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizeConfiguredProviderBaseUrl, resolveDashScopeApiBaseUrl, resolveProviderBaseUrl } from "../src/providers/provider-base-url.js";
+import { normalizeConfiguredProviderBaseUrl, resolveDashScopeApiBaseUrl, resolveProviderBaseUrl } from "../../../src/providers/provider-base-url.js";
 
 test("provider base url resolves empty values to provider defaults", (): void => {
 	assert.equal(resolveProviderBaseUrl("deepseek", undefined), "https://api.deepseek.com");

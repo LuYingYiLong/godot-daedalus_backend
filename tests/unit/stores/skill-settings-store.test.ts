@@ -3,7 +3,7 @@ import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { getSkillSettingsPath } from "../src/app-paths.js";
+import { getSkillSettingsPath } from "../../../src/app-paths.js";
 
 async function withTempAppData<T>(fn: () => Promise<T>): Promise<T> {
 	const previousUserProfile: string | undefined = process.env.USERPROFILE;
@@ -24,7 +24,7 @@ async function withTempAppData<T>(fn: () => Promise<T>): Promise<T> {
 
 test("skill settings persist enablement with atomic json formatting", async (): Promise<void> => {
 	await withTempAppData(async (): Promise<void> => {
-		const settings = await import(`../src/skills/settings-store.js?case=${Date.now()}-${Math.random()}`);
+		const settings = await import(`../../../src/skills/settings-store.js?case=${Date.now()}-${Math.random()}`);
 		assert.equal(await settings.isSkillEnabled("workspace-a", "personal:demo", "personal"), false);
 
 		await settings.setSkillEnabled("workspace-a", "personal:demo", true);

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { createBackendHealthResult, getBackendPackageVersion } from "../src/server/backend-health.js";
-import { DEVELOPMENT_BACKEND_PORT, getDefaultBackendPort, PUBLISHED_BACKEND_PORT } from "../src/server/backend-runtime.js";
+import { createBackendHealthResult, getBackendPackageVersion } from "../../../src/server/backend-health.js";
+import { DEVELOPMENT_BACKEND_PORT, getDefaultBackendPort, PUBLISHED_BACKEND_PORT } from "../../../src/server/backend-runtime.js";
 
 type PackageManifest = {
 	version?: unknown;

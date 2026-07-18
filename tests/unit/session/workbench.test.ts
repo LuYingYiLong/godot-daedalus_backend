@@ -1,11 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import WebSocket from "ws";
-import type { AdditionalContextItem, ClientRequest } from "../src/protocol/types.js";
-import { createClientSession } from "../src/server/client-session.js";
-import { handleMessageQueueRequest } from "../src/server/handlers/message-queue-handlers.js";
-import { handleWorkbenchRequest } from "../src/server/handlers/workbench-handlers.js";
-import { applyWorkbenchPatch, serializeWorkbench } from "../src/server/workbench.js";
+import type { AdditionalContextItem, ClientRequest } from "../../../src/protocol/types.js";
+import { createClientSession } from "../../../src/server/client-session.js";
+import { handleMessageQueueRequest } from "../../../src/server/handlers/message-queue-handlers.js";
+import { handleWorkbenchRequest } from "../../../src/server/handlers/workbench-handlers.js";
+import { applyWorkbenchPatch, serializeWorkbench } from "../../../src/server/workbench.js";
 
 function makeContext(id: string, resourcePath: string, pinned: boolean = false): AdditionalContextItem {
 	return {

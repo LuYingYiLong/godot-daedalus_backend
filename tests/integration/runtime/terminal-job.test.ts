@@ -3,12 +3,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { registerTerminalTools } from "../src/mcp/terminal/registration.js";
-import { COMMAND_PRESETS } from "../src/mcp/terminal/presets.js";
-import { startCommandJob, runCommandWait } from "../src/mcp/terminal/process-runner.js";
-import { terminalJobStore } from "../src/mcp/terminal/job-store.js";
-import type { CommandPreset, TerminalJobRecord } from "../src/mcp/terminal/types.js";
-import { parseToolResultSummary } from "../src/tools/tool-result-parser.js";
+import { registerTerminalTools } from "../../../src/mcp/terminal/registration.js";
+import { COMMAND_PRESETS } from "../../../src/mcp/terminal/presets.js";
+import { startCommandJob, runCommandWait } from "../../../src/mcp/terminal/process-runner.js";
+import { terminalJobStore } from "../../../src/mcp/terminal/job-store.js";
+import type { CommandPreset, TerminalJobRecord } from "../../../src/mcp/terminal/types.js";
+import { parseToolResultSummary } from "../../../src/tools/tool-result-parser.js";
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<{ content: Array<{ text: string }> }>;
 

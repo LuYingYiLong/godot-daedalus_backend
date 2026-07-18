@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { ToolEvent } from "../src/tools/tool-dispatcher.js";
-import type { WorkflowPhase } from "../src/workflow/types.js";
-import { createReadOnlyFactWorkflowPlan, isCurrentProjectFactRequest, planWorkflow, planWorkflowAfterLlmPlannerFailure } from "../src/workflow/planner.js";
+import type { ToolEvent } from "../../../src/tools/tool-dispatcher.js";
+import type { WorkflowPhase } from "../../../src/workflow/types.js";
+import { createReadOnlyFactWorkflowPlan, isCurrentProjectFactRequest, planWorkflow, planWorkflowAfterLlmPlannerFailure } from "../../../src/workflow/planner.js";
 import {
 	classifyGodotTask,
 	createGodotTemplateWorkflowPlan,
 	getAllowedToolsForLlmPlannedStep,
 	narrowLlmPlannedWriteTools
-} from "../src/workflow/godot-template-planner.js";
+} from "../../../src/workflow/godot-template-planner.js";
 import {
 	createEmptyWorkflowPhaseToolStats,
 	createWorkflowWriteGuardRetryMessage,
@@ -16,12 +16,12 @@ import {
 	getWorkflowWriteGuardRetryAllowedTools,
 	isWorkflowProposalPhase,
 	updateWorkflowPhaseToolStats
-} from "../src/server/workflow/tool-events.js";
+} from "../../../src/server/workflow/tool-events.js";
 import {
 	convertWorkflowSnapshotToAgentSnapshot,
 	mapWorkflowEventToAgentEvent
-} from "../src/server/workflow/events.js";
-import { isEmptyProviderResponseError } from "../src/server/workflow/provider-errors.js";
+} from "../../../src/server/workflow/events.js";
+import { isEmptyProviderResponseError } from "../../../src/server/workflow/provider-errors.js";
 
 test("workflow tool stats track propose, write and approval events", (): void => {
 	const stats = createEmptyWorkflowPhaseToolStats();
