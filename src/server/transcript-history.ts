@@ -1,5 +1,5 @@
 import type { AdditionalContextItem, ChatMessage } from "../protocol/types.js";
-import { createWorkspaceMetadataSnapshot, saveSession } from "../session/session-store.js";
+import { createWorkspaceMetadataSnapshot, openSession, saveSession, type StoredMessage } from "../session/session-store.js";
 import type { ClientSession } from "./client-session.js";
 import { cloneAdditionalContextItems } from "./additional-context.js";
 
@@ -57,7 +57,9 @@ export async function appendFailedChatTurnToSession(
 			message: error.message
 		}
 	};
-	const nextMessages: ChatMessage[] = [...session.messages];
+	const sessionId: string = session.sessionId;
+	const storedMessages: StoredMessage[] = (await openSession(sessionId)).messages;
+	const nextMessages: ChatMessage[] = storedMessages.map((message: StoredMessage): ChatMessage => ({ ...message }));
 	const existingUserIndex: number = nextMessages.findIndex((message: ChatMessage): boolean => message.requestId === requestId && message.role === "user");
 	const existingAssistantIndex: number = nextMessages.findIndex((message: ChatMessage): boolean => message.requestId === requestId && message.role === "assistant");
 	let changed: boolean = false;
@@ -96,7 +98,7 @@ export async function appendFailedChatTurnToSession(
 	}
 
 	session.messages = nextMessages;
-	await saveSession(session.sessionId, session.messages, {
+	await saveSession(sessionId, session.messages, {
 		...createWorkspaceMetadataSnapshot(session.activeWorkspace),
 	});
 	return true;
@@ -114,7 +116,11 @@ export async function appendTranscriptOnlyChatTurnToSession(
 	if (!session.sessionId) {
 		return false;
 	}
-	if (session.messages.some((message: ChatMessage): boolean => message.requestId === requestId)) {
+	const sessionId: string = session.sessionId;
+	const storedMessages: StoredMessage[] = (await openSession(sessionId)).messages;
+	const nextMessages: ChatMessage[] = storedMessages.map((message: StoredMessage): ChatMessage => ({ ...message }));
+	if (nextMessages.some((message: ChatMessage): boolean => message.requestId === requestId)) {
+		session.messages = nextMessages;
 		return false;
 	}
 
@@ -131,7 +137,7 @@ export async function appendTranscriptOnlyChatTurnToSession(
 	}
 
 	session.messages = [
-		...session.messages,
+		...nextMessages,
 		userChatMessage,
 		{
 			role: "assistant",
@@ -141,7 +147,7 @@ export async function appendTranscriptOnlyChatTurnToSession(
 			excludeFromLlmContext: true
 		}
 	];
-	await saveSession(session.sessionId, session.messages, {
+	await saveSession(sessionId, session.messages, {
 		...createWorkspaceMetadataSnapshot(session.activeWorkspace),
 	});
 	return true;

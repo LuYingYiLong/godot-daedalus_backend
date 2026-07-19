@@ -35,6 +35,101 @@ function assistantBlock(block: TimelineBlock | undefined): TimelineAssistantBloc
 	return block as TimelineAssistantBlock;
 }
 
+test("canonical timeline keeps request order when older assistant messages are persisted late", (): void => {
+	const stored: StoredSession = session(
+		[
+			{
+				role: "user",
+				requestId: "request-a",
+				content: "上一轮问题",
+				createdAt: "2026-07-19T00:00:00.000Z"
+			},
+			{
+				role: "user",
+				requestId: "request-b",
+				content: "最后一轮问题",
+				createdAt: "2026-07-19T00:01:00.000Z"
+			},
+			{
+				role: "assistant",
+				requestId: "request-b",
+				content: "最后一轮回答",
+				createdAt: "2026-07-19T00:01:08.000Z"
+			},
+			{
+				role: "assistant",
+				requestId: "request-a",
+				content: "上一轮延迟写入的回答",
+				createdAt: "2026-07-19T00:02:00.000Z"
+			}
+		],
+		[]
+	);
+
+	const result = buildCanonicalTimelineBlocks(stored);
+
+	assert.deepEqual(result.blocks.map((block: TimelineBlock): string => `${block.type}:${block.requestId}`), [
+		"user:request-a",
+		"assistant:request-a",
+		"user:request-b",
+		"assistant:request-b"
+	]);
+	assert.equal(assistantBlock(result.blocks[1]).content, "上一轮延迟写入的回答");
+	assert.equal(assistantBlock(result.blocks[3]).content, "最后一轮回答");
+});
+
+test("canonical timeline ignores orphan persisted turns when session events identify another conversation", (): void => {
+	const stored: StoredSession = session(
+		[
+			{
+				role: "user",
+				requestId: "foreign-request",
+				content: "你能看到 context7 吗",
+				createdAt: "2026-07-19T10:19:00.000Z"
+			},
+			{
+				role: "assistant",
+				requestId: "foreign-request",
+				content: "能看到 Context7。",
+				createdAt: "2026-07-19T10:19:07.000Z"
+			},
+			{
+				role: "user",
+				requestId: "local-request",
+				content: "帮我做一个本地井字棋",
+				createdAt: "2026-07-19T11:28:55.000Z"
+			}
+		],
+		[
+			event("event-local-start", "local-request", "agent.run.started", "2026-07-19T11:28:56.000Z", {
+				runId: "run-local",
+				requestId: "local-request",
+				sessionId: "session-test"
+			}),
+			event("event-local-delta", "local-request", "agent.message.delta", "2026-07-19T11:28:58.000Z", {
+				runId: "run-local",
+				text: "我先确认玩法。",
+				sessionId: "session-test"
+			}),
+			event("event-local-done", "local-request", "agent.message.done", "2026-07-19T11:29:00.000Z", {
+				runId: "run-local",
+				text: "我先确认玩法。",
+				sessionId: "session-test"
+			})
+		]
+	);
+
+	const result = buildCanonicalTimelineBlocks(stored);
+
+	assert.deepEqual(result.blocks.map((block: TimelineBlock): string => `${block.type}:${block.requestId}`), [
+		"user:local-request",
+		"assistant:local-request"
+	]);
+	const assistant = assistantBlock(result.blocks[1]);
+	assert.equal(assistant.content, "");
+	assert.equal(assistant.bodyParts.find((part) => part.type === "markdown")?.type, "markdown");
+});
+
 test("canonical timeline keeps plan clarification as hidden restorable state", (): void => {
 	const stored: StoredSession = session(
 		[

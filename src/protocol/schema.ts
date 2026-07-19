@@ -605,6 +605,16 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 	z.object({
 		type: z.literal("request"),
 		id: z.string(),
+		method: z.literal("session.overview.get"),
+		params: z.object({
+			sessionId: z.string().min(1),
+			planLimit: z.number().int().min(0).max(100).optional(),
+			sourceLimit: z.number().int().min(0).max(100).optional(),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
 		method: z.literal("session.context.estimate"),
 		params: z.object({
 			message: z.string().max(20000).optional(),

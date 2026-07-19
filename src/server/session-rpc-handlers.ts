@@ -87,6 +87,7 @@ import type { WorkflowPhase, WorkflowPhaseOutput, WorkflowPlan, WorkflowRunState
 import {
 	applySessionMetadata,
 	clearActiveSession,
+	createClientSession,
 	type ClientSession,
 	type PendingAiContinuation,
 	type PendingGuide,
@@ -113,6 +114,7 @@ import { serializeMessageQueue } from "./message-queue.js";
 import { bumpWorkbenchRevision, emitWorkbenchUpdated, serializeWorkbench } from "./workbench.js";
 import { createRuntimeSessionUiMetadata } from "./session-ui-metadata.js";
 import { compressSessionHistory } from "./session-compression.js";
+import { createSessionOverview } from "./session-overview.js";
 
 import { normalizeChatParamsForMode, resolveAllowedToolsForChatParams } from "./chat-mode.js";
 import { logPromptTrace, logProjectInstructionTrace } from "./prompt-trace.js";
@@ -566,6 +568,7 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 				workspace,
 				createSessionUiMetadata(request.params)
 			);
+			session = createClientSession(workspace);
 			applySessionMetadata(session, metadata);
 			await applySessionApprovalMode(session, metadata);
 			session.messages = [];
@@ -656,6 +659,7 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 				}
 
 				if (!reusingRuntime) {
+					session = createClientSession(workspace);
 					applySessionMetadata(session, timeline.metadata);
 					await applySessionApprovalMode(session, timeline.metadata);
 					session.messages = timeline.messages.map(toChatMessage);
@@ -1149,6 +1153,20 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 				id: request.id,
 				ok: true,
 				result: summary ?? { content: null, reason: "No summary yet" }
+			});
+			break;
+		}
+
+		case "session.overview.get": {
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: true,
+				result: await createSessionOverview({
+					sessionId: request.params.sessionId,
+					planLimit: request.params.planLimit,
+					sourceLimit: request.params.sourceLimit
+				})
 			});
 			break;
 		}

@@ -154,3 +154,67 @@ test("chat turn persistence reuses pre-saved user message", async (): Promise<vo
 		await fs.rm(appDataDir, { recursive: true, force: true });
 	}
 });
+
+test("chat turn persistence merges with stored messages instead of overwriting from stale memory", async (): Promise<void> => {
+	const previousUserProfile: string | undefined = process.env.USERPROFILE;
+	const previousDisableTokenizer: string | undefined = process.env.DISABLE_DEEPSEEK_TOKENIZER;
+	const appDataDir: string = await fs.mkdtemp(path.join(os.tmpdir(), "godot-daedalus-token-budget-merge-"));
+	process.env.USERPROFILE = appDataDir;
+	process.env.DISABLE_DEEPSEEK_TOKENIZER = "1";
+	try {
+		const store = await import("../../../src/session/session-store.js");
+		const tokenBudget = await import("../../../src/server/token-budget.js");
+		const metadata = await store.createSession("Merge turn", undefined);
+		const session: ClientSession = createClientSession(undefined);
+		session.sessionId = metadata.id;
+		session.sessionTitle = metadata.title;
+		session.messages = [];
+
+		await store.saveSession(metadata.id, [
+			{
+				role: "user",
+				content: "旧问题",
+				requestId: "request-old",
+				createdAt: "2026-07-16T00:00:00.000Z"
+			},
+			{
+				role: "assistant",
+				content: "旧回答",
+				requestId: "request-old",
+				createdAt: "2026-07-16T00:00:01.000Z"
+			}
+		]);
+
+		const saved = await tokenBudget.appendUserMessageToSession(
+			session,
+			"新问题",
+			"request-new",
+			"2026-07-16T00:01:00.000Z"
+		);
+
+		assert.equal(saved, true);
+		const opened = await store.openSession(metadata.id);
+		assert.deepEqual(opened.messages.map((message: ChatMessage): string => message.requestId ?? ""), [
+			"request-old",
+			"request-old",
+			"request-new"
+		]);
+		assert.deepEqual(session.messages.map((message: ChatMessage): string => message.requestId ?? ""), [
+			"request-old",
+			"request-old",
+			"request-new"
+		]);
+	} finally {
+		if (previousUserProfile === undefined) {
+			delete process.env.USERPROFILE;
+		} else {
+			process.env.USERPROFILE = previousUserProfile;
+		}
+		if (previousDisableTokenizer === undefined) {
+			delete process.env.DISABLE_DEEPSEEK_TOKENIZER;
+		} else {
+			process.env.DISABLE_DEEPSEEK_TOKENIZER = previousDisableTokenizer;
+		}
+		await fs.rm(appDataDir, { recursive: true, force: true });
+	}
+});

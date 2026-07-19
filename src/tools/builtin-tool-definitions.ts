@@ -1219,7 +1219,7 @@ const BASE_BUILTIN_TOOL_DEFINITIONS: ChatCompletionTool[] = [
 		type: "function",
 		function: {
 			name: "mcp_godot_create_text_file",
-			description: "创建一个新的 Godot 项目文本文件。该工具会实际写入磁盘，默认需要用户在 Godot 客户端审批。支持创建 .gd/.tres/.tscn/.json/.md/.txt 文件。.tscn 文件必须包含 [gd_scene ...] 头部和至少一个 [node ...] 根节点。不允许覆盖已有文件，不允许写入 .godot/ 或 addons/。写入后建议运行 godot.check_only 验证。",
+			description: "创建一个新的 Godot 项目文本文件。该工具会实际写入磁盘，默认需要用户在 Godot 客户端审批。支持创建 .gd/.tres/.tscn/.json/.md/.txt 文件。.tscn 文件必须包含 [gd_scene ...] 头部和至少一个 [node ...] 根节点。不允许覆盖已有文件，不允许写入 .godot/ 或 addons/。写入后会请求在线 Godot 编辑器重新扫描文件系统；建议继续运行 godot.check_only 验证。",
 			parameters: {
 				type: "object",
 				properties: {
@@ -1255,7 +1255,7 @@ const BASE_BUILTIN_TOOL_DEFINITIONS: ChatCompletionTool[] = [
 		type: "function",
 		function: {
 			name: "mcp_godot_overwrite_text_file",
-			description: "覆盖已有文本文件，会实际写入磁盘，默认需要用户在 Godot 客户端审批。支持写入 .gd/.tres/.tscn/.json/.md/.txt 文件。.tscn 文件必须包含 [gd_scene ...] 头部和至少一个 [node ...] 根节点。不允许写入 .godot/、addons/ 或隐藏目录。写入后建议运行 godot.check_only 验证。",
+			description: "覆盖已有文本文件，会实际写入磁盘，默认需要用户在 Godot 客户端审批。支持写入 .gd/.tres/.tscn/.json/.md/.txt 文件。.tscn 文件必须包含 [gd_scene ...] 头部和至少一个 [node ...] 根节点。不允许写入 .godot/、addons/ 或隐藏目录。写入后会请求在线 Godot 编辑器重新扫描文件系统；建议继续运行 godot.check_only 验证。",
 			parameters: {
 				type: "object",
 				properties: {
@@ -1286,7 +1286,7 @@ const BASE_BUILTIN_TOOL_DEFINITIONS: ChatCompletionTool[] = [
 		type: "function",
 		function: {
 			name: "mcp_godot_replace_text_in_file",
-			description: "替换已有文本文件中首次出现的指定文本，会实际写入磁盘，默认需要用户在 Godot 客户端审批。oldText 必须精确匹配。",
+			description: "替换已有文本文件中首次出现的指定文本，会实际写入磁盘，默认需要用户在 Godot 客户端审批。oldText 必须精确匹配。写入后会请求在线 Godot 编辑器重新扫描文件系统。",
 			parameters: {
 				type: "object",
 				properties: {

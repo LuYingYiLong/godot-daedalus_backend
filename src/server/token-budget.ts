@@ -5,7 +5,7 @@ import { type TokenCounter } from "../tokens/token-counter.js";
 import { createTokenCounter } from "../tokens/token-counter-factory.js";
 import { computeInputBudget, selectMessagesWithinBudget } from "../session/session-compressor.js";
 import type { SessionSummary } from "../session/session-store.js";
-import { createWorkspaceMetadataSnapshot, saveSession } from "../session/session-store.js";
+import { createWorkspaceMetadataSnapshot, openSession, saveSession, type StoredMessage } from "../session/session-store.js";
 import { estimateProviderMessagesTokens, estimateProviderTextTokens } from "../providers/provider-token-estimator.js";
 import {
 	createCurrentUserMessage,
@@ -146,7 +146,9 @@ export async function appendChatTurnToSession(
 	}
 
 	const clonedAdditionalContext: AdditionalContextItem[] | undefined = cloneAdditionalContextItems(additionalContext);
-	const nextMessages: ChatMessage[] = [...session.messages];
+	const sessionId: string = session.sessionId;
+	const storedMessages: StoredMessage[] = (await openSession(sessionId)).messages;
+	const nextMessages: ChatMessage[] = storedMessages.map((message: StoredMessage): ChatMessage => ({ ...message }));
 	const existingUserIndex: number = nextMessages.findIndex((message: ChatMessage): boolean => message.requestId === requestId && message.role === "user");
 	const existingAssistantIndex: number = nextMessages.findIndex((message: ChatMessage): boolean => message.requestId === requestId && message.role === "assistant");
 	let changed: boolean = false;
@@ -176,7 +178,7 @@ export async function appendChatTurnToSession(
 	}
 
 	session.messages = nextMessages;
-	await saveSession(session.sessionId, session.messages, {
+	await saveSession(sessionId, session.messages, {
 		...createWorkspaceMetadataSnapshot(session.activeWorkspace)
 	});
 	return true;
@@ -192,7 +194,11 @@ export async function appendUserMessageToSession(
 	if (!session.sessionId) {
 		return false;
 	}
-	if (session.messages.some((message: ChatMessage): boolean => message.requestId === requestId && message.role === "user")) {
+	const sessionId: string = session.sessionId;
+	const storedMessages: StoredMessage[] = (await openSession(sessionId)).messages;
+	const nextMessages: ChatMessage[] = storedMessages.map((message: StoredMessage): ChatMessage => ({ ...message }));
+	if (nextMessages.some((message: ChatMessage): boolean => message.requestId === requestId && message.role === "user")) {
+		session.messages = nextMessages;
 		return false;
 	}
 
@@ -202,8 +208,8 @@ export async function appendUserMessageToSession(
 		userChatMessage.additionalContext = clonedAdditionalContext;
 	}
 
-	session.messages = [...session.messages, userChatMessage];
-	await saveSession(session.sessionId, session.messages, {
+	session.messages = [...nextMessages, userChatMessage];
+	await saveSession(sessionId, session.messages, {
 		...createWorkspaceMetadataSnapshot(session.activeWorkspace)
 	});
 	return true;

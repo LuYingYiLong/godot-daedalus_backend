@@ -10,6 +10,12 @@ export class SessionRuntimeRegistry<TRuntime extends SessionRuntimeIdentity> {
 	}
 
 	bind(sessionId: string, candidate: TRuntime): TRuntime {
+		for (const [registeredSessionId, runtime] of this.runtimes) {
+			if (registeredSessionId !== sessionId && runtime === candidate) {
+				throw new Error(`Session runtime is already bound to ${registeredSessionId}.`);
+			}
+		}
+
 		const runtime: TRuntime = this.runtimes.get(sessionId) ?? candidate;
 		this.runtimes.set(sessionId, runtime);
 		return runtime;

@@ -422,7 +422,7 @@ server.registerTool(
 		"create_text_file",
 		{
 			title: "Create Text File",
-			description: "创建一个新的文本文件，会实际写入磁盘。支持 .gd/.tres/.tscn/.json/.md/.txt 文件。.tscn 文件必须包含 [gd_scene ...] 头部和至少一个 [node ...] 根节点。不允许覆盖已有文件，不允许写入 .godot/ 或 addons/ 目录。写入后建议运行 godot.check_only 验证。",
+			description: "创建一个新的文本文件，会实际写入磁盘。支持 .gd/.tres/.tscn/.json/.md/.txt 文件。.tscn 文件必须包含 [gd_scene ...] 头部和至少一个 [node ...] 根节点。不允许覆盖已有文件，不允许写入 .godot/ 或 addons/ 目录。写入后 Daedalus 会请求在线 Godot 编辑器重新扫描文件系统；建议运行 godot.check_only 验证。",
 			inputSchema: z.object({
 				relativePath: z.string().min(1).describe("相对于项目根目录的新文件路径"),
 				content: z.string().describe("文件内容")
@@ -496,7 +496,7 @@ server.registerTool(
 		"overwrite_text_file",
 		{
 			title: "Overwrite Text File",
-			description: "覆盖已有文本文件，会实际写入磁盘。支持 .gd/.tres/.tscn/.json/.md/.txt 文件。.tscn 文件必须包含 [gd_scene ...] 头部和至少一个 [node ...] 根节点。不允许写入 .godot/、addons/ 或隐藏目录。写入后建议运行 godot.check_only 验证。",
+			description: "覆盖已有文本文件，会实际写入磁盘。支持 .gd/.tres/.tscn/.json/.md/.txt 文件。.tscn 文件必须包含 [gd_scene ...] 头部和至少一个 [node ...] 根节点。不允许写入 .godot/、addons/ 或隐藏目录。写入后 Daedalus 会请求在线 Godot 编辑器重新扫描文件系统；建议运行 godot.check_only 验证。",
 			inputSchema: z.object({
 				relativePath: z.string().min(1).describe("相对于项目根目录的已有文件路径"),
 				content: z.string().describe("新的完整文件内容")
@@ -562,7 +562,7 @@ server.registerTool(
 		"replace_text_in_file",
 		{
 			title: "Replace Text In File",
-			description: "替换已有文件中首次出现的指定文本，会实际写入磁盘。oldText 必须精确匹配。",
+			description: "替换已有文件中首次出现的指定文本，会实际写入磁盘。oldText 必须精确匹配。写入后 Daedalus 会请求在线 Godot 编辑器重新扫描文件系统。",
 			inputSchema: z.object({
 				relativePath: z.string().min(1).describe("相对于项目根目录的已有文件路径"),
 				oldText: z.string().min(1).describe("要被替换的原文本（必须精确匹配）"),

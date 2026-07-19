@@ -77,3 +77,22 @@ test("project setting mutations refresh project.godot", (): void => {
 		["project.godot"]
 	);
 });
+
+test("workspace file mutations collect Godot editor refresh paths", (): void => {
+	assert.deepEqual(
+		collectGodotRefreshPaths("mcp_workspace_create_text_file", {
+			relativePath: "scripts/player.gd",
+			content: "extends Node\n"
+		}),
+		["scripts/player.gd"]
+	);
+	assert.deepEqual(
+		collectGodotRefreshPaths("mcp_workspace_replace_line_in_file", {
+			relativePath: "scenes/main.tscn",
+			lineNumber: 12,
+			expectedText: "[node name=\"Main\" type=\"Node\"]",
+			newText: "[node name=\"Main\" type=\"Node2D\"]"
+		}),
+		["scenes/main.tscn"]
+	);
+});

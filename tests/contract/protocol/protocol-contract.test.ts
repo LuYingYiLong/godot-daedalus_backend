@@ -102,6 +102,19 @@ test("session.workflow.todo.dismiss accepts optional workflow identity", (): voi
 	}).success, true);
 });
 
+test("session.overview.get accepts session overview limits", (): void => {
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "session-overview",
+		method: "session.overview.get",
+		params: {
+			sessionId: "session-test",
+			planLimit: 3,
+			sourceLimit: 10
+		}
+	}).success, true);
+});
+
 test("general settings update accepts auto expand todo preference", (): void => {
 	assert.equal(clientRequestSchema.safeParse({
 		type: "request",

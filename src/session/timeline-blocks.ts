@@ -813,26 +813,123 @@ function createAssistantBlock(
 	};
 }
 
-function getRequestEvents(groupedEvents: Map<string, RequestEvents>, requestId: string): StoredSessionEvent[] {
-	return groupedEvents.get(requestId)?.events ?? [];
-}
-
-function getRequestFirstEventAt(groupedEvents: Map<string, RequestEvents>, requestId: string): string {
-	return groupedEvents.get(requestId)?.firstEventAt ?? "";
-}
-
-function getRequestLastEventAt(groupedEvents: Map<string, RequestEvents>, requestId: string): string {
-	return groupedEvents.get(requestId)?.lastEventAt ?? "";
-}
-
-function collectAssistantRequestIds(messages: StoredMessage[]): Set<string> {
-	const ids: Set<string> = new Set();
-	for (const message of messages) {
-		if (message.role === "assistant" && message.requestId !== undefined && message.requestId.length > 0) {
-			ids.add(message.requestId);
-		}
+type TimelineBuildEntry =
+	| {
+		type: "request";
+		requestId: string;
+		userMessage?: StoredMessage | undefined;
+		assistantMessage?: StoredMessage | undefined;
+		events: StoredSessionEvent[];
+		firstEventAt: string;
+		lastEventAt: string;
+		orderAt: string;
+		sequence: number;
 	}
-	return ids;
+	| {
+		type: "standalone";
+		message: StoredMessage;
+		orderAt: string;
+		sequence: number;
+	};
+
+function compareTimelineBuildEntries(left: TimelineBuildEntry, right: TimelineBuildEntry): number {
+	const timeCompare: number = left.orderAt.localeCompare(right.orderAt);
+	if (timeCompare !== 0) {
+		return timeCompare;
+	}
+
+	return left.sequence - right.sequence;
+}
+
+function getTimelineEntryOrderAt(entry: Extract<TimelineBuildEntry, { type: "request" }>): string {
+	return entry.userMessage?.createdAt
+		?? entry.firstEventAt
+		?? entry.assistantMessage?.createdAt
+		?? entry.orderAt;
+}
+
+function getOrCreateRequestEntry(
+	entries: Map<string, Extract<TimelineBuildEntry, { type: "request" }>>,
+	requestId: string,
+	orderAt: string,
+	sequence: number
+): Extract<TimelineBuildEntry, { type: "request" }> {
+	const existing: Extract<TimelineBuildEntry, { type: "request" }> | undefined = entries.get(requestId);
+	if (existing !== undefined) {
+		if (orderAt.length > 0 && (existing.orderAt.length === 0 || orderAt < existing.orderAt)) {
+			existing.orderAt = orderAt;
+		}
+		existing.sequence = Math.min(existing.sequence, sequence);
+		return existing;
+	}
+
+	const entry: Extract<TimelineBuildEntry, { type: "request" }> = {
+		type: "request",
+		requestId,
+		events: [],
+		firstEventAt: "",
+		lastEventAt: "",
+		orderAt,
+		sequence
+	};
+	entries.set(requestId, entry);
+	return entry;
+}
+
+function createTimelineBuildEntries(messages: StoredMessage[], groupedEvents: Map<string, RequestEvents>): TimelineBuildEntry[] {
+	const requestEntries: Map<string, Extract<TimelineBuildEntry, { type: "request" }>> = new Map();
+	const entries: TimelineBuildEntry[] = [];
+	let sequence: number = 0;
+
+	for (const message of messages) {
+		const requestId: string = message.requestId ?? "";
+		if (message.role !== "user" && message.role !== "assistant") {
+			sequence += 1;
+			continue;
+		}
+
+		if (requestId.length === 0) {
+			entries.push({
+				type: "standalone",
+				message,
+				orderAt: message.createdAt,
+				sequence
+			});
+			sequence += 1;
+			continue;
+		}
+
+		const entry = getOrCreateRequestEntry(requestEntries, requestId, message.createdAt, sequence);
+		if (message.role === "user" && (entry.userMessage === undefined || message.createdAt < entry.userMessage.createdAt)) {
+			entry.userMessage = message;
+		}
+		if (message.role === "assistant" && (entry.assistantMessage === undefined || message.createdAt > entry.assistantMessage.createdAt)) {
+			entry.assistantMessage = message;
+		}
+		entry.orderAt = getTimelineEntryOrderAt(entry);
+		sequence += 1;
+	}
+
+	for (const [requestId, requestEvents] of groupedEvents.entries()) {
+		const entry = getOrCreateRequestEntry(requestEntries, requestId, requestEvents.firstEventAt, sequence);
+		entry.events = requestEvents.events;
+		entry.firstEventAt = requestEvents.firstEventAt;
+		entry.lastEventAt = requestEvents.lastEventAt;
+		entry.orderAt = getTimelineEntryOrderAt(entry);
+		sequence += 1;
+	}
+
+	for (const entry of requestEntries.values()) {
+		const isOrphanPersistedTurn: boolean = groupedEvents.size > 0
+			&& entry.events.length === 0
+			&& entry.userMessage !== undefined
+			&& entry.assistantMessage !== undefined;
+		if (isOrphanPersistedTurn) {
+			continue;
+		}
+		entries.push(entry);
+	}
+	return entries.sort(compareTimelineBuildEntries);
 }
 
 function getSnapshotTodoIdentity(snapshot: unknown): string | null {
@@ -953,62 +1050,49 @@ function createRenderHints(block: TimelineBlock): TimelineRenderHints {
 export function buildCanonicalTimelineBlocks(session: StoredSession): TimelineBuildResult {
 	const sourceEvents: StoredSessionEvent[] = [...session.events].sort(compareEvents);
 	const groupedEvents: Map<string, RequestEvents> = collectRequestEvents(sourceEvents);
-	const assistantRequestIds: Set<string> = collectAssistantRequestIds(session.messages);
-	const consumedRequestIds: Set<string> = new Set();
+	const timelineEntries: TimelineBuildEntry[] = createTimelineBuildEntries(session.messages, groupedEvents);
 	const blocks: TimelineBlock[] = [];
-	const requestStartedAt: Map<string, string> = new Map();
 
-	for (const message of session.messages) {
-		const requestId: string = message.requestId ?? "";
-		if (message.role === "user") {
-			blocks.push(createUserBlock(message));
-			if (requestId.length > 0) {
-				requestStartedAt.set(requestId, message.createdAt);
-				if (!assistantRequestIds.has(requestId) && groupedEvents.has(requestId)) {
-					blocks.push(createAssistantBlock(
-						session.metadata.id,
-						requestId,
-						"",
-						message.createdAt,
-						getRequestLastEventAt(groupedEvents, requestId),
-						getRequestEvents(groupedEvents, requestId)
-					));
-					consumedRequestIds.add(requestId);
-				}
+	for (const entry of timelineEntries) {
+		if (entry.type === "standalone") {
+			if (entry.message.role === "user") {
+				blocks.push(createUserBlock(entry.message));
+			} else if (entry.message.role === "assistant") {
+				blocks.push(createAssistantBlock(
+					session.metadata.id,
+					"",
+					entry.message.content,
+					entry.message.createdAt,
+					entry.message.createdAt,
+					[],
+					entry.message
+				));
 			}
 			continue;
 		}
 
-		if (message.role === "assistant") {
-			const events: StoredSessionEvent[] = requestId.length > 0 ? getRequestEvents(groupedEvents, requestId) : [];
+		if (entry.userMessage !== undefined) {
+			blocks.push(createUserBlock(entry.userMessage));
+		}
+
+		if (entry.assistantMessage !== undefined || entry.events.length > 0) {
+			const startedAtUtc: string = entry.userMessage?.createdAt
+				?? entry.firstEventAt
+				?? entry.assistantMessage?.createdAt
+				?? entry.orderAt;
+			const completedAtUtc: string = entry.assistantMessage?.createdAt
+				?? entry.lastEventAt
+				?? startedAtUtc;
 			blocks.push(createAssistantBlock(
 				session.metadata.id,
-				requestId,
-				message.content,
-				requestStartedAt.get(requestId) ?? getRequestFirstEventAt(groupedEvents, requestId),
-				message.createdAt,
-				events,
-				message
+				entry.requestId,
+				entry.assistantMessage?.content ?? "",
+				startedAtUtc,
+				completedAtUtc,
+				entry.events,
+				entry.assistantMessage
 			));
-			if (requestId.length > 0) {
-				consumedRequestIds.add(requestId);
-			}
 		}
-	}
-
-	for (const [requestId, requestEvents] of groupedEvents.entries()) {
-		if (consumedRequestIds.has(requestId)) {
-			continue;
-		}
-
-		blocks.push(createAssistantBlock(
-			session.metadata.id,
-			requestId,
-			"",
-			requestEvents.firstEventAt,
-			requestEvents.lastEventAt,
-			requestEvents.events
-		));
 	}
 
 	const snapshots = findLatestSnapshots(sourceEvents);

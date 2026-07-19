@@ -330,7 +330,7 @@ export async function createMcpSystemContext(mcpHost: McpHost, session: ClientSe
 	} else {
 		sections.push("## Workspace 工具规则");
 		sections.push(`- 当前 workspace：\`${session.activeWorkspace.name}\`，根目录：\`${session.activeWorkspace.rootPath}\`。`);
-		sections.push("- 普通文件任务（列文件、读文件、搜索文本、新建/覆盖/替换/删除文本文件）优先使用 `mcp_workspace_*` 工具。只有 Godot 项目结构、场景、资源 UID、编辑器上下文、运行时、LSP/DAP 或 Godot 项目设置相关任务，才使用 `mcp_godot_*` 工具。");
+		sections.push("- 普通非 Godot 文件任务（列文件、读文件、搜索文本、新建/覆盖/替换/删除文本文件）优先使用 `mcp_workspace_*` 工具。Godot 项目内的脚本、场景、资源、项目配置和其它会被编辑器导入/扫描的文件写入，优先使用 `mcp_godot_*` 写入工具；这些工具会在写入后请求在线 Godot 编辑器重新扫描文件系统。");
 		sections.push("- 终端验证、构建、测试和长任务优先使用 `mcp_terminal_run_command`。正常安全模式下命令只能在当前 workspace 的 OS 沙箱内运行；需要跨 workspace 或绝对路径执行时，必须触发带确认短语的审批。Full Trust 模式下仍要谨慎说明风险。");
 		sections.push("- `mcp_workspace_replace_line_in_file` 的 `lineNumber` 是 1-based；必须提供和当前行完全一致的 `expectedText`，避免行号漂移误改。");
 		sections.push("");
