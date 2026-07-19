@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import * as path from "node:path";
 import test from "node:test";
 import { ReadOnlyToolApprovalGateway } from "../../../src/tools/approval-gateway.js";
 import { clearDynamicMcpToolsForWorkspace, getDynamicMcpToolNames, replaceDynamicMcpToolsForWorkspace } from "../../../src/tools/dynamic-mcp-tools.js";
@@ -41,6 +42,17 @@ test("terminal write preset uses actual preset risk at approval boundary", (): v
 	}).action, "allow");
 	assert.equal(evaluateToolCall("manual", "mcp_terminal_run_write_preset", { presetName: "git.init" }).action, "request_approval");
 	assert.equal(evaluateToolCall("manual", "mcp_terminal_run_write_preset", { presetName: "godot.list_scenes" }).action, "request_approval");
+});
+
+test("terminal run_command requires consent for absolute cwd outside normal workspace path", (): void => {
+	const outsideCwd: string = path.resolve(path.parse(process.cwd()).root, "daedalus-outside-workspace");
+	const decision = evaluateToolCall("manual", "mcp_terminal_run_command", {
+		commandLine: "npm test",
+		cwd: outsideCwd
+	}, WORKSPACE_ID);
+
+	assert.equal(decision.action, "request_approval");
+	assert.equal(decision.requiredConsent?.expectedText, `ALLOW CROSS-WORKSPACE: ${outsideCwd}`);
 });
 
 test("auto-safe mode self-approves builtin write tools but not dynamic MCP or destructive tools", (): void => {
@@ -91,10 +103,10 @@ test("read-only gateway allows only read, verify and plan-safe dynamic MCP tools
 	clearDynamicMcpToolsForWorkspace(WORKSPACE_ID);
 });
 
-test("bypass mode still requires approval for destructive tools", (): void => {
-	assert.equal(evaluateToolCall("bypass", readTool, {}).action, "allow");
-	assert.equal(evaluateToolCall("bypass", writeTool, {}).action, "allow");
-	assert.equal(evaluateToolCall("bypass", destructiveTool, {}).action, "request_approval");
+test("full-trust mode allows every known tool risk", (): void => {
+	assert.equal(evaluateToolCall("full-trust", readTool, {}).action, "allow");
+	assert.equal(evaluateToolCall("full-trust", writeTool, {}).action, "allow");
+	assert.equal(evaluateToolCall("full-trust", destructiveTool, {}).action, "allow");
 });
 
 test("unknown tools are denied", (): void => {

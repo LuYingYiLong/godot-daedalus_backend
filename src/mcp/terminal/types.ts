@@ -25,6 +25,19 @@ export type PresetRunInput = {
 	tailLines?: number | undefined;
 };
 
+export type TerminalSandboxMode = "os-sandbox" | "full-trust" | "preset";
+
+export type CommandRunInput = {
+	commandLine: string;
+	cwd?: string | undefined;
+	env?: Record<string, string> | undefined;
+	executionMode?: TerminalExecutionMode | undefined;
+	wakeAfterMs?: number | undefined;
+	timeoutMs?: number | undefined;
+	tailLines?: number | undefined;
+	reason?: string | undefined;
+};
+
 export type TerminalCommandResult = {
 	preset: string;
 	ok: boolean;
@@ -35,6 +48,11 @@ export type TerminalCommandResult = {
 	resourcePath?: string | null | undefined;
 	godotProjectPath?: string | null | undefined;
 	godotExecutablePath?: string | undefined;
+	sandboxMode?: TerminalSandboxMode | undefined;
+	workspaceId?: string | undefined;
+	workspaceRoot?: string | undefined;
+	trusted?: boolean | undefined;
+	consentText?: string | undefined;
 	stdout: string;
 	stderr: string;
 	durationMs: number;
@@ -67,6 +85,11 @@ export type TerminalJobRecord = {
 	resourcePath?: string | null | undefined;
 	godotProjectPath?: string | null | undefined;
 	godotExecutablePath?: string | undefined;
+	sandboxMode?: TerminalSandboxMode | undefined;
+	workspaceId?: string | undefined;
+	workspaceRoot?: string | undefined;
+	trusted?: boolean | undefined;
+	consentText?: string | undefined;
 	error?: string | undefined;
 };
 

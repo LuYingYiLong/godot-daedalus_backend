@@ -191,7 +191,7 @@ function createSessionUiMetadata(params: {
 	provider?: ProviderId | undefined;
 	model?: string | undefined;
 	chatMode?: SessionChatMode | undefined;
-	approvalMode?: "manual" | "auto-safe" | undefined;
+	approvalMode?: "manual" | "auto-safe" | "full-trust" | undefined;
 	workflowTodoCollapsed?: boolean | undefined;
 	webSearchEnabled?: boolean | undefined;
 } | undefined): Partial<SessionMetadata> {

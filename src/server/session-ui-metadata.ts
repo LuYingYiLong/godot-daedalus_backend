@@ -8,6 +8,6 @@ export function createRuntimeSessionUiMetadata(session: ClientSession): Partial<
 		provider: session.activeProvider,
 		model: session.providerModel ?? session.modelProfile.model,
 		chatMode: session.workbenchComposer.chatMode,
-		approvalMode: approvalMode === "manual" || approvalMode === "auto-safe" ? approvalMode : undefined
+		approvalMode: approvalMode === "manual" || approvalMode === "auto-safe" || approvalMode === "full-trust" ? approvalMode : undefined
 	};
 }

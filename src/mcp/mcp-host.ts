@@ -14,6 +14,7 @@ import {
 	type DynamicMcpToolSource
 } from "../tools/dynamic-mcp-tools.js";
 import { getCurrentMcpWorkspaceId } from "./request-context.js";
+import { getApprovalMode } from "../approval-settings-store.js";
 import { logger } from "../logger.js";
 
 const CUSTOM_MCP_CONNECT_TIMEOUT_MS: number = 30_000;
@@ -524,15 +525,20 @@ export class McpHost {
 			.map(([_key, status]: [string, CustomMcpServerRuntimeStatus]): CustomMcpServerRuntimeStatus => status);
 	}
 
-	private createTerminalArgs(args: Record<string, unknown>, workspaceId?: string | undefined): Record<string, unknown> {
+	private async createTerminalArgs(args: Record<string, unknown>, workspaceId?: string | undefined): Promise<Record<string, unknown>> {
 		const resolvedWorkspaceId: string | undefined = workspaceId ?? getCurrentMcpWorkspaceId() ?? this.activeWorkspaceId;
+		const approvalMode = await getApprovalMode();
 		if (resolvedWorkspaceId === undefined) {
-			return args;
+			return {
+				...args,
+				__daedalusApprovalMode: approvalMode
+			};
 		}
 
 		return {
 			...args,
-			__daedalusWorkspaceId: resolvedWorkspaceId
+			__daedalusWorkspaceId: resolvedWorkspaceId,
+			__daedalusApprovalMode: approvalMode
 		};
 	}
 
@@ -561,7 +567,7 @@ export class McpHost {
 	) {
 		if (serverId === TERMINAL_MCP_SERVER_ID) {
 			await this.ensureGlobalInternalServers();
-			return this.getSession(serverId, workspaceId).callTool(name, this.createTerminalArgs(args, workspaceId));
+			return this.getSession(serverId, workspaceId).callTool(name, await this.createTerminalArgs(args, workspaceId));
 		}
 
 		if (serverId === GODOT_EDITOR_SERVER_ID) {

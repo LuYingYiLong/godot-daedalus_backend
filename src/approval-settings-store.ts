@@ -15,7 +15,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isApprovalMode(value: unknown): value is ApprovalMode {
-	return value === "manual" || value === "auto-safe";
+	return value === "manual" || value === "auto-safe" || value === "full-trust";
 }
 
 export async function getApprovalSettings(): Promise<ApprovalSettings> {

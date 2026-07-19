@@ -1,6 +1,7 @@
 import type { ChatCompletionMessageToolCall, ChatCompletionToolMessageParam } from "openai/resources/chat/completions";
 import type { McpHost } from "../mcp/mcp-host.js";
 import { type ApprovalGateway, type PendingApproval } from "./approval-gateway.js";
+import type { ToolRequiredConsent } from "./tool-policy.js";
 import { describeToolEvent, type ToolEventDisplay } from "./tool-event-describer.js";
 import { executeLlmToolWithIdempotency } from "./tool-idempotency.js";
 import type { IdempotentToolExecutionResult } from "./tool-idempotency.js";
@@ -19,7 +20,7 @@ export type ToolEvent =
 	| ({ type: "tool.progress"; step: number; toolCallId: string; toolName: string } & ToolProgressUpdate)
 	| ({ type: "tool.result"; step: number; toolCallId: string; toolName: string; resultChars: number; truncated: boolean; cached?: boolean; fileEditDraft?: FileEditBatchDraft | undefined; imageGeneration?: ImageGenerationResult | undefined } & ParsedToolResultSummary)
 	| { type: "tool.error"; step: number; toolCallId: string; toolName: string; message: string }
-	| ({ type: "tool.approval_required"; step: number; toolCallId: string; toolName: string; approvalId: string; reason: string; args: Record<string, unknown> } & ToolEventDisplay);
+	| ({ type: "tool.approval_required"; step: number; toolCallId: string; toolName: string; approvalId: string; reason: string; args: Record<string, unknown>; requiredConsent?: ToolRequiredConsent | undefined } & ToolEventDisplay);
 
 export type OnToolEvent = (event: ToolEvent) => void;
 
@@ -120,7 +121,7 @@ async function executeSingleToolCall(
 
 	if (decision.action === "request_approval") {
 		const reason: string = approvalReason.length > 0 ? approvalReason : decision.reason;
-		const pending = gateway.requestApproval(functionName, executionArgs, toolCall.id, reason, workspaceId, toolContext?.editorInstanceId, toolContext?.sessionId);
+		const pending = gateway.requestApproval(functionName, executionArgs, toolCall.id, reason, workspaceId, toolContext?.editorInstanceId, toolContext?.sessionId, decision.requiredConsent);
 		logger.info("tool", "approval_required", {
 			toolCallId: toolCall.id,
 			toolName: functionName,
@@ -138,6 +139,7 @@ async function executeSingleToolCall(
 			approvalId: pending.approvalId,
 			reason,
 			args: executionArgs,
+			requiredConsent: pending.requiredConsent,
 			...describeToolEvent(functionName, executionArgs, workspaceId)
 		});
 

@@ -1,12 +1,17 @@
 import { isDynamicMcpToolName } from "./dynamic-mcp-tools.js";
 import { HARD_BLOCKED_TOOLS, TOOL_POLICIES } from "./tool-policy-table.js";
 
-export type ApprovalMode = "manual" | "auto-safe" | "bypass";
+export type ApprovalMode = "manual" | "auto-safe" | "full-trust";
 
 export type ToolRisk = "read" | "verify" | "propose" | "write" | "destructive";
 
 export type ToolPolicy = {
 	risk: ToolRisk;
+};
+
+export type ToolRequiredConsent = {
+	prompt: string;
+	expectedText: string;
 };
 
 const TERMINAL_PRESET_RISKS: Record<string, ToolRisk> = {
@@ -55,8 +60,28 @@ export function isHardBlocked(toolName: string): boolean {
 
 export type ApprovalDecision =
 	| { action: "allow" }
-	| { action: "request_approval"; reason: string }
+	| { action: "request_approval"; reason: string; requiredConsent?: ToolRequiredConsent | undefined }
 	| { action: "deny"; reason: string };
+
+function getRequiredConsentForToolCall(toolName: string, args: Record<string, unknown>): ToolRequiredConsent | undefined {
+	if (toolName !== "mcp_terminal_run_command") {
+		return undefined;
+	}
+
+	const cwd: unknown = args.cwd;
+	if (typeof cwd !== "string" || cwd.trim().length === 0) {
+		return undefined;
+	}
+
+	if (!/^(?:[A-Za-z]:[\\/]|\/)/u.test(cwd.trim())) {
+		return undefined;
+	}
+
+	return {
+		prompt: `This command requests an absolute working directory outside the normal workspace-relative command path: ${cwd.trim()}`,
+		expectedText: `ALLOW CROSS-WORKSPACE: ${cwd.trim()}`
+	};
+}
 
 export function evaluateToolCall(
 	mode: ApprovalMode,
@@ -72,6 +97,15 @@ export function evaluateToolCall(
 
 	if (isHardBlocked(toolName)) {
 		return { action: "deny", reason: "该工具已被硬性禁用" };
+	}
+
+	const requiredConsent: ToolRequiredConsent | undefined = getRequiredConsentForToolCall(toolName, args);
+	if (requiredConsent !== undefined && mode !== "full-trust") {
+		return {
+			action: "request_approval",
+			reason: "跨工作区或绝对路径终端执行需要用户书面确认",
+			requiredConsent
+		};
 	}
 
 	if (mode === "manual") {
@@ -94,10 +128,8 @@ export function evaluateToolCall(
 		return { action: "request_approval", reason: "此写操作需要确认（auto-safe 模式）" };
 	}
 
-	if (mode === "bypass") {
-		return policy.risk === "destructive"
-			? { action: "request_approval", reason: "破坏性操作仍需用户确认" }
-			: { action: "allow" };
+	if (mode === "full-trust") {
+		return { action: "allow" };
 	}
 
 	return { action: "deny", reason: "未知审批模式" };

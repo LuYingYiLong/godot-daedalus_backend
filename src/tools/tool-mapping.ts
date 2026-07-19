@@ -11,6 +11,18 @@ export const BUILTIN_TOOL_MAPPINGS: Record<string, ToolMapping> = {
 	"mcp_skills_create": { serverId: "skills", toolName: "create" },
 	"mcp_image_generate": { serverId: "image", toolName: "generate" },
 	"mcp_web_search": { serverId: "web_search", toolName: "search" },
+	"mcp_workspace_list_files": { serverId: "workspace", toolName: "list_files" },
+	"mcp_workspace_read_text_file": { serverId: "workspace", toolName: "read_text_file" },
+	"mcp_workspace_search_text": { serverId: "workspace", toolName: "search_text" },
+	"mcp_workspace_propose_create_text_file": { serverId: "workspace", toolName: "propose_create_text_file" },
+	"mcp_workspace_create_text_file": { serverId: "workspace", toolName: "create_text_file" },
+	"mcp_workspace_propose_overwrite_text_file": { serverId: "workspace", toolName: "propose_overwrite_text_file" },
+	"mcp_workspace_overwrite_text_file": { serverId: "workspace", toolName: "overwrite_text_file" },
+	"mcp_workspace_propose_replace_text_in_file": { serverId: "workspace", toolName: "propose_replace_text_in_file" },
+	"mcp_workspace_replace_text_in_file": { serverId: "workspace", toolName: "replace_text_in_file" },
+	"mcp_workspace_propose_replace_line_in_file": { serverId: "workspace", toolName: "propose_replace_line_in_file" },
+	"mcp_workspace_replace_line_in_file": { serverId: "workspace", toolName: "replace_line_in_file" },
+	"mcp_workspace_delete_file": { serverId: "workspace", toolName: "delete_file" },
 	"mcp_godot_get_runtime_status": {
 		serverId: "godot",
 		toolName: "get_runtime_status"
@@ -186,6 +198,10 @@ export const BUILTIN_TOOL_MAPPINGS: Record<string, ToolMapping> = {
 	"mcp_terminal_get_job_tail": {
 		serverId: "terminal",
 		toolName: "get_terminal_job_tail"
+	},
+	"mcp_terminal_run_command": {
+		serverId: "terminal",
+		toolName: "run_command"
 	},
 	"mcp_terminal_cancel_job": {
 		serverId: "terminal",

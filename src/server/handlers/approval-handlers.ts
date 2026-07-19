@@ -207,6 +207,8 @@ import { getApprovalMode, setApprovalMode } from "../../approval-settings-store.
 import { getActiveConnectionSessions } from "../client-connections.js";
 import { emitWorkbenchUpdated, serializeWorkbench, setWorkbenchActiveRun } from "../workbench.js";
 
+const FULL_TRUST_CONFIRMATION_TEXT: string = "ENABLE FULL TRUST";
+
 async function applyGlobalApprovalMode(session: ClientSession): Promise<ApprovalMode> {
 	const mode: ApprovalMode = await getApprovalMode();
 	session.approvalGateway.setMode(mode);
@@ -239,6 +241,18 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 	}
 
 	case "approval.mode.set":
+		if (request.params.mode === "full-trust" && request.params.confirmationText !== FULL_TRUST_CONFIRMATION_TEXT) {
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: false,
+				error: {
+					code: "full_trust_confirmation_required",
+					message: `Switching to Full Trust requires confirmation text: ${FULL_TRUST_CONFIRMATION_TEXT}`
+				}
+			});
+			break;
+		}
 		await setApprovalMode(request.params.mode);
 		applyApprovalModeToActiveSessions(request.params.mode);
 		sendJson(socket, {
@@ -281,6 +295,25 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 				});
 				break;
 			}
+			if (pending.requiredConsent !== undefined) {
+				const consentText: string | undefined = request.params.consentText;
+				if (consentText !== pending.requiredConsent.expectedText) {
+					sendJson(socket, {
+						type: "response",
+						id: request.id,
+						ok: false,
+						error: {
+							code: "approval_consent_required",
+							message: `Approval requires exact consent text: ${pending.requiredConsent.expectedText}`
+						}
+					});
+					break;
+				}
+				pending.args = {
+					...pending.args,
+					__daedalusConsentText: consentText
+				};
+			}
 
 			const validationError: string | null = await validatePendingApprovalBeforeExecution(session, mcpHost, pending);
 			if (validationError !== null) {
@@ -319,7 +352,8 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 			const approvalPersistRequestId: string = pendingContinuation?.requestId ?? pendingState?.requestId ?? request.id;
 			if (session.sessionId !== undefined) {
 				await appendApprovalEvent(session.sessionId, pending.approvalId, approvalPersistRequestId, "approved", {
-					approvedAt: new Date().toISOString()
+					approvedAt: new Date().toISOString(),
+					...(request.params.consentText === undefined ? {} : { consentText: request.params.consentText })
 				});
 				await appendApprovalEvent(session.sessionId, pending.approvalId, approvalPersistRequestId, "executing", {
 					startedAt: new Date().toISOString()

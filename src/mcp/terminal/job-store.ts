@@ -46,6 +46,11 @@ export class TerminalJobStore {
 		resourcePath?: string | null | undefined;
 		godotProjectPath?: string | null | undefined;
 		godotExecutablePath?: string | undefined;
+		sandboxMode?: TerminalJobRecord["sandboxMode"] | undefined;
+		workspaceId?: string | undefined;
+		workspaceRoot?: string | undefined;
+		trusted?: boolean | undefined;
+		consentText?: string | undefined;
 	}): TerminalJobRecord {
 		const startedAt: string = nowIso();
 		const nextWakeAt: string | undefined = params.wakeAfterMs !== undefined
@@ -71,7 +76,12 @@ export class TerminalJobStore {
 			truncated: false,
 			resourcePath: params.resourcePath,
 			godotProjectPath: params.godotProjectPath,
-			godotExecutablePath: params.godotExecutablePath
+			godotExecutablePath: params.godotExecutablePath,
+			sandboxMode: params.sandboxMode,
+			workspaceId: params.workspaceId,
+			workspaceRoot: params.workspaceRoot,
+			trusted: params.trusted,
+			consentText: params.consentText
 		};
 	}
 

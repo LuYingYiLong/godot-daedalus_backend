@@ -144,6 +144,124 @@ const WEB_SEARCH_TOOL_DEFINITIONS: ChatCompletionTool[] = [
 	)
 ];
 
+const WORKSPACE_TOOL_DEFINITIONS: ChatCompletionTool[] = [
+	createSceneToolDefinition(
+		"mcp_workspace_list_files",
+		"列出当前 workspace 中的文件。仅在会话已绑定 workspace 时可用；普通项目文件任务优先使用 workspace 工具，Godot 场景/运行时任务再使用 Godot 专属工具。",
+		{
+			subdir: { type: "string", description: "可选 workspace 相对目录" },
+			extensions: { type: "array", items: { type: "string" }, description: "可选扩展名过滤，例如 ['.ts', '.tsx']" },
+			includeIgnored: { type: "boolean", description: "是否包含默认忽略的大目录/内部目录" },
+			limit: { type: "integer", minimum: 1, maximum: 10000, description: "最多返回多少个文件" }
+		},
+		[]
+	),
+	createSceneToolDefinition(
+		"mcp_workspace_read_text_file",
+		"读取当前 workspace 内的 UTF-8 文本文件。路径必须是 workspace 相对路径，不能是绝对路径。",
+		{
+			relativePath: { type: "string", description: "workspace 相对文件路径" }
+		},
+		["relativePath"]
+	),
+	createSceneToolDefinition(
+		"mcp_workspace_search_text",
+		"在当前 workspace 的文本文件中搜索关键词，返回匹配文件和行号。",
+		{
+			query: { type: "string", description: "要搜索的文本" },
+			extensions: { type: "array", items: { type: "string" }, description: "可选扩展名过滤" },
+			limit: { type: "integer", minimum: 1, maximum: 500, description: "最多返回多少条匹配" }
+		},
+		["query"]
+	),
+	createSceneToolDefinition(
+		"mcp_workspace_propose_create_text_file",
+		"预览新建 workspace 文本文件，不会写入磁盘。需要真正写入时使用 mcp_workspace_create_text_file。",
+		{
+			relativePath: { type: "string", description: "workspace 相对文件路径" },
+			content: { type: "string", description: "完整 UTF-8 文本内容" }
+		},
+		["relativePath", "content"]
+	),
+	createSceneToolDefinition(
+		"mcp_workspace_create_text_file",
+		"在当前 workspace 内创建新的文本文件，会实际写入磁盘。路径必须是 workspace 相对路径，不允许覆盖已有文件。",
+		{
+			relativePath: { type: "string", description: "workspace 相对文件路径" },
+			content: { type: "string", description: "完整 UTF-8 文本内容" }
+		},
+		["relativePath", "content"]
+	),
+	createSceneToolDefinition(
+		"mcp_workspace_propose_overwrite_text_file",
+		"预览覆盖已有 workspace 文本文件，不会写入磁盘。需要真正写入时使用 mcp_workspace_overwrite_text_file。",
+		{
+			relativePath: { type: "string", description: "workspace 相对文件路径" },
+			content: { type: "string", description: "新的完整 UTF-8 文本内容" }
+		},
+		["relativePath", "content"]
+	),
+	createSceneToolDefinition(
+		"mcp_workspace_overwrite_text_file",
+		"覆盖当前 workspace 中已有文本文件，会实际写入磁盘。",
+		{
+			relativePath: { type: "string", description: "workspace 相对文件路径" },
+			content: { type: "string", description: "新的完整 UTF-8 文本内容" }
+		},
+		["relativePath", "content"]
+	),
+	createSceneToolDefinition(
+		"mcp_workspace_propose_replace_text_in_file",
+		"预览替换文件中首次出现的精确文本，不会写入磁盘。oldText 必须包含空白在内精确匹配。",
+		{
+			relativePath: { type: "string", description: "workspace 相对文件路径" },
+			oldText: { type: "string", description: "要被替换的精确文本" },
+			newText: { type: "string", description: "替换后的文本" }
+		},
+		["relativePath", "oldText", "newText"]
+	),
+	createSceneToolDefinition(
+		"mcp_workspace_replace_text_in_file",
+		"替换当前 workspace 文件中首次出现的精确文本，会实际写入磁盘。",
+		{
+			relativePath: { type: "string", description: "workspace 相对文件路径" },
+			oldText: { type: "string", description: "要被替换的精确文本" },
+			newText: { type: "string", description: "替换后的文本" }
+		},
+		["relativePath", "oldText", "newText"]
+	),
+	createSceneToolDefinition(
+		"mcp_workspace_propose_replace_line_in_file",
+		"预览替换文件中的某一行，不会写入磁盘。lineNumber 使用 1-based；expectedText 必须和当前行完全一致。",
+		{
+			relativePath: { type: "string", description: "workspace 相对文件路径" },
+			lineNumber: { type: "integer", minimum: 1, description: "1-based 行号" },
+			expectedText: { type: "string", description: "当前行的精确文本，用于防止行号漂移" },
+			newText: { type: "string", description: "新的整行文本" }
+		},
+		["relativePath", "lineNumber", "expectedText", "newText"]
+	),
+	createSceneToolDefinition(
+		"mcp_workspace_replace_line_in_file",
+		"替换当前 workspace 文件中的某一行，会实际写入磁盘。lineNumber 使用 1-based；expectedText 必须和当前行完全一致。",
+		{
+			relativePath: { type: "string", description: "workspace 相对文件路径" },
+			lineNumber: { type: "integer", minimum: 1, description: "1-based 行号" },
+			expectedText: { type: "string", description: "当前行的精确文本，用于防止行号漂移" },
+			newText: { type: "string", description: "新的整行文本" }
+		},
+		["relativePath", "lineNumber", "expectedText", "newText"]
+	),
+	createSceneToolDefinition(
+		"mcp_workspace_delete_file",
+		"删除当前 workspace 中的文件。此操作不可逆，需要审批；不允许删除 workspace 外路径。",
+		{
+			relativePath: { type: "string", description: "workspace 相对文件路径" }
+		},
+		["relativePath"]
+	)
+];
+
 const GODOT_RUNTIME_TOOL_DEFINITIONS: ChatCompletionTool[] = [
 	createSceneToolDefinition(
 		"mcp_godot_get_runtime_status",
@@ -360,6 +478,7 @@ const BASE_BUILTIN_TOOL_DEFINITIONS: ChatCompletionTool[] = [
 	...SKILL_TOOL_DEFINITIONS,
 	...IMAGE_GENERATION_TOOL_DEFINITIONS,
 	...WEB_SEARCH_TOOL_DEFINITIONS,
+	...WORKSPACE_TOOL_DEFINITIONS,
 	...GODOT_RUNTIME_TOOL_DEFINITIONS,
 	...GODOT_HEADLESS_OPERATION_TOOL_DEFINITIONS,
 	...SCENE_TOOL_DEFINITIONS,
@@ -1202,6 +1321,53 @@ const BASE_BUILTIN_TOOL_DEFINITIONS: ChatCompletionTool[] = [
 				type: "object",
 				properties: {},
 				required: []
+			}
+		}
+	},
+	{
+		type: "function",
+		function: {
+			name: "mcp_terminal_run_command",
+			description: "在当前 workspace 中运行一条终端命令。正常模式下命令必须在 workspace OS 沙箱中执行；Full Trust 下不使用沙箱。适合项目内验证、构建、测试和只影响当前 workspace 的命令。",
+			parameters: {
+				type: "object",
+				properties: {
+					commandLine: {
+						type: "string",
+						description: "要运行的命令行，例如 npm test 或 git status --short"
+					},
+					cwd: {
+						type: "string",
+						description: "可选 workspace 相对工作目录；默认 workspace 根目录。普通模式不允许 workspace 外路径。"
+					},
+					env: {
+						type: "object",
+						additionalProperties: { type: "string" },
+						description: "可选附加环境变量。普通模式下只传入显式键值和必要系统环境。"
+					},
+					executionMode: {
+						type: "string",
+						enum: ["wait", "job"],
+						description: "执行模式。wait 为默认同步等待；job 会启动长任务并立即返回 jobId。"
+					},
+					wakeAfterMs: {
+						type: "number",
+						description: "job 模式下请求 backend 在指定毫秒后唤醒 AI。"
+					},
+					timeoutMs: {
+						type: "number",
+						description: "命令超时毫秒。wait 默认 30000，job 默认 30 分钟。"
+					},
+					tailLines: {
+						type: "number",
+						description: "job 模式下返回和查询的 stdout/stderr tail 行数。"
+					},
+					reason: {
+						type: "string",
+						description: "为什么需要运行该命令。"
+					}
+				},
+				required: ["commandLine"]
 			}
 		}
 	},

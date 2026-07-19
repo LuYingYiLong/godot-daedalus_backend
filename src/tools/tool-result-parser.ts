@@ -271,7 +271,7 @@ export function parseToolResultSummary(
 		};
 	}
 
-	if (toolName === "mcp_terminal_run_safe_preset" || toolName === "mcp_terminal_run_write_preset" || isGodotRuntimeTool(toolName)) {
+	if (toolName === "mcp_terminal_run_command" || toolName === "mcp_terminal_run_safe_preset" || toolName === "mcp_terminal_run_write_preset" || isGodotRuntimeTool(toolName)) {
 		return parseTerminalSummary(record, args);
 	}
 

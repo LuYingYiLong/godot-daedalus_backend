@@ -1,5 +1,5 @@
 import type { McpHost } from "../mcp/mcp-host.js";
-import { evaluateToolCall, type ApprovalDecision, type ApprovalMode } from "./tool-policy.js";
+import { evaluateToolCall, type ApprovalDecision, type ApprovalMode, type ToolRequiredConsent } from "./tool-policy.js";
 import { getEffectiveToolPolicy } from "./tool-policy.js";
 import { isPlanSafeDynamicMcpToolName } from "./dynamic-mcp-tools.js";
 import { executeLlmToolWithIdempotency, getLlmToolExecutionIdentity } from "./tool-idempotency.js";
@@ -18,6 +18,7 @@ export type PendingApproval = {
 	workspaceId?: string | undefined;
 	editorInstanceId?: string | undefined;
 	sessionId?: string | undefined;
+	requiredConsent?: ToolRequiredConsent | undefined;
 };
 
 export type ApprovalResult =
@@ -85,7 +86,8 @@ export class ApprovalGateway {
 		reason: string,
 		workspaceId?: string | undefined,
 		editorInstanceId?: string | undefined,
-		sessionId?: string | undefined
+		sessionId?: string | undefined,
+		requiredConsent?: ToolRequiredConsent | undefined
 	): PendingApproval {
 		const executionScope: string = workspaceId ?? "workspace:none";
 		const executionFingerprint: string | undefined = getLlmToolExecutionIdentity(llmToolName, args, executionScope, workspaceId)?.fingerprint;
@@ -110,7 +112,8 @@ export class ApprovalGateway {
 			executionFingerprint,
 			workspaceId,
 			editorInstanceId,
-			sessionId
+			sessionId,
+			requiredConsent
 		};
 
 		this.pendingApprovals.set(approvalId, pending);
@@ -183,7 +186,8 @@ export class ReadOnlyToolApprovalGateway extends ApprovalGateway {
 		_reason: string,
 		_workspaceId?: string | undefined,
 		_editorInstanceId?: string | undefined,
-		_sessionId?: string | undefined
+		_sessionId?: string | undefined,
+		_requiredConsent?: ToolRequiredConsent | undefined
 	): PendingApproval {
 		throw new Error("只读上下文不允许触发人工审批。");
 	}

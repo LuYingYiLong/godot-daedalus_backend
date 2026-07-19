@@ -88,6 +88,46 @@ export function describeToolEvent(toolName: string, args: Record<string, unknown
 			label: query
 		});
 	}
+	if (toolName.startsWith("mcp_workspace_")) {
+		const relativePath: string | undefined = getStringArg(args, "relativePath");
+		if (toolName.includes("list_files")) {
+			return createDisplay("workspace", "Workspace", "read", "列出文件", "列出 workspace 文件", {
+				kind: "file",
+				label: "workspace"
+			});
+		}
+		if (toolName.includes("read_text_file")) {
+			const filePath: string = relativePath ?? "unknown file";
+			return createDisplay("workspace", "Workspace", "read", "读取文件", `读取 ${filePath}`, {
+				kind: "file",
+				path: filePath,
+				label: filePath
+			});
+		}
+		if (toolName.includes("search_text")) {
+			const query: string = getStringArg(args, "query") ?? "search";
+			return createDisplay("workspace", "Workspace", "search", "搜索文件", `搜索：${query.slice(0, 100)}`, {
+				kind: "unknown",
+				label: query
+			});
+		}
+		if (toolName.includes("propose_")) {
+			const filePath: string = relativePath ?? "unknown file";
+			return createDisplay("workspace", "Workspace", "propose", "预览文件修改", filePath, {
+				kind: "file",
+				path: filePath,
+				label: filePath
+			});
+		}
+		if (toolName.includes("create_text_file") || toolName.includes("overwrite_text_file") || toolName.includes("replace_text_in_file") || toolName.includes("replace_line_in_file") || toolName.includes("delete_file")) {
+			const filePath: string = relativePath ?? "unknown file";
+			return createDisplay("workspace", "Workspace", "write", "写入文件", `写入 ${filePath}`, {
+				kind: "file",
+				path: filePath,
+				label: filePath
+			});
+		}
+	}
 	if (isDynamicMcpToolName(toolName)) {
 		const metadata = getDynamicMcpToolMetadata(toolName, workspaceId);
 		const serverId: string = metadata?.serverId ?? "custom";
@@ -376,7 +416,7 @@ export function describeToolEvent(toolName: string, args: Record<string, unknown
 			});
 		}
 
-		if (toolName.includes("create_text_file") || toolName.includes("overwrite_text_file") || toolName.includes("replace_text_in_file") || toolName.includes("delete_file")) {
+		if (toolName.includes("create_text_file") || toolName.includes("overwrite_text_file") || toolName.includes("replace_text_in_file") || toolName.includes("replace_line_in_file") || toolName.includes("delete_file")) {
 			const filePath: string = relativePath ?? "unknown file";
 			return createDisplay("godot", "Godot", "write", "写入文件", `写入 ${filePath}`, {
 				kind: "file",

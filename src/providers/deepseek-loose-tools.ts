@@ -10,6 +10,21 @@ const RAW_TOOL_NAME_MAP: Readonly<Record<string, string>> = {
 	load_skill: "mcp_skills_load",
 	propose_create_skill: "mcp_skills_propose_create",
 	create_skill: "mcp_skills_create",
+	list_files: "mcp_workspace_list_files",
+	workspace_list_files: "mcp_workspace_list_files",
+	read_workspace_text_file: "mcp_workspace_read_text_file",
+	workspace_read_text_file: "mcp_workspace_read_text_file",
+	search_workspace_text: "mcp_workspace_search_text",
+	workspace_search_text: "mcp_workspace_search_text",
+	workspace_propose_create_text_file: "mcp_workspace_propose_create_text_file",
+	workspace_create_text_file: "mcp_workspace_create_text_file",
+	workspace_propose_overwrite_text_file: "mcp_workspace_propose_overwrite_text_file",
+	workspace_overwrite_text_file: "mcp_workspace_overwrite_text_file",
+	workspace_propose_replace_text_in_file: "mcp_workspace_propose_replace_text_in_file",
+	workspace_replace_text_in_file: "mcp_workspace_replace_text_in_file",
+	workspace_propose_replace_line_in_file: "mcp_workspace_propose_replace_line_in_file",
+	workspace_replace_line_in_file: "mcp_workspace_replace_line_in_file",
+	workspace_delete_file: "mcp_workspace_delete_file",
 	get_runtime_status: "mcp_godot_get_runtime_status",
 	get_godot_version: "mcp_godot_get_godot_version",
 	launch_editor: "mcp_godot_launch_editor",
@@ -51,6 +66,8 @@ const RAW_TOOL_NAME_MAP: Readonly<Record<string, string>> = {
 	replace_text_in_file: "mcp_godot_replace_text_in_file",
 	delete_file: "mcp_godot_delete_file",
 	get_terminal_capabilities: "mcp_terminal_get_capabilities",
+	run_command: "mcp_terminal_run_command",
+	terminal_run_command: "mcp_terminal_run_command",
 	run_safe_preset: "mcp_terminal_run_safe_preset",
 	run_write_preset: "mcp_terminal_run_write_preset",
 	run_godot_scene_script: "mcp_terminal_run_godot_scene_script",
@@ -97,6 +114,16 @@ const RAW_TOOL_NAME_MAP: Readonly<Record<string, string>> = {
 const RAW_TOOL_NAMES: readonly string[] = Object.keys(RAW_TOOL_NAME_MAP);
 
 const RELATIVE_PATH_TOOL_NAMES: ReadonlySet<string> = new Set([
+	"mcp_workspace_read_text_file",
+	"mcp_workspace_propose_create_text_file",
+	"mcp_workspace_create_text_file",
+	"mcp_workspace_propose_overwrite_text_file",
+	"mcp_workspace_overwrite_text_file",
+	"mcp_workspace_propose_replace_text_in_file",
+	"mcp_workspace_replace_text_in_file",
+	"mcp_workspace_propose_replace_line_in_file",
+	"mcp_workspace_replace_line_in_file",
+	"mcp_workspace_delete_file",
 	"mcp_godot_read_text_file",
 	"mcp_godot_propose_create_text_file",
 	"mcp_godot_create_text_file",
@@ -240,6 +267,10 @@ function normalizeParameterName(toolName: string, parameterName: string): string
 		return "subdir";
 	}
 
+	if (toolName === "mcp_terminal_run_command" && (localParameterName === "command" || localParameterName === "cmd" || localParameterName === "shell")) {
+		return "commandLine";
+	}
+
 	if (
 		(toolName === "mcp_godot_get_project_settings"
 			|| toolName === "mcp_godot_propose_set_project_setting"
@@ -293,7 +324,7 @@ function defaultParameterName(toolName: string): string | undefined {
 		return "resourcePath";
 	}
 
-	if (toolName === "mcp_godot_search_text") {
+	if (toolName === "mcp_godot_search_text" || toolName === "mcp_workspace_search_text") {
 		return "query";
 	}
 
@@ -328,6 +359,10 @@ function defaultParameterName(toolName: string): string | undefined {
 
 	if (toolName === "mcp_terminal_run_safe_preset" || toolName === "mcp_terminal_run_write_preset") {
 		return "presetName";
+	}
+
+	if (toolName === "mcp_terminal_run_command") {
+		return "commandLine";
 	}
 
 	return undefined;

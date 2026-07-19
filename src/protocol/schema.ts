@@ -54,7 +54,7 @@ const sessionUiMetadataParamsSchema = z.object({
 	provider: providerIdSchema.optional(),
 	model: z.string().min(1).optional(),
 	chatMode: z.enum(["agent", "ask", "plan"]).optional(),
-	approvalMode: z.enum(["manual", "auto-safe"]).optional(),
+	approvalMode: z.enum(["manual", "auto-safe", "full-trust"]).optional(),
 	workflowTodoCollapsed: z.boolean().optional(),
 	webSearchEnabled: z.boolean().optional()
 }).strict();
@@ -897,7 +897,8 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		id: z.string(),
 		method: z.literal("approval.mode.set"),
 		params: z.object({
-			mode: z.enum(["manual", "auto-safe"]),
+			mode: z.enum(["manual", "auto-safe", "full-trust"]),
+			confirmationText: z.string().optional(),
 		}),
 	}),
 	z.object({
@@ -906,6 +907,7 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		method: z.literal("approval.approve"),
 		params: z.object({
 			approvalId: z.string().min(1),
+			consentText: z.string().optional(),
 		}),
 	}),
 	z.object({

@@ -94,6 +94,13 @@ function addTarget(targets: Map<string, TrackedTarget>, workspaceRoot: string, v
 function collectTrackedTargets(mcpHost: McpHost, workspaceRoot: string, llmToolName: string, args: Record<string, unknown>): TrackedTarget[] {
 	const targets: Map<string, TrackedTarget> = new Map();
 	switch (llmToolName) {
+		case "mcp_workspace_create_text_file":
+		case "mcp_workspace_overwrite_text_file":
+		case "mcp_workspace_replace_text_in_file":
+		case "mcp_workspace_replace_line_in_file":
+		case "mcp_workspace_delete_file":
+			addTarget(targets, workspaceRoot, args.relativePath);
+			break;
 		case "mcp_godot_set_project_setting":
 		case "mcp_godot_unset_project_setting":
 			addTarget(targets, workspaceRoot, "project.godot");

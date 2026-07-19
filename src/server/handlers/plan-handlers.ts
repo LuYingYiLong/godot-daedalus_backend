@@ -209,10 +209,10 @@ export async function handlePlanRequest(socket: WebSocket, request: ClientReques
 					},
 					markdown: current.markdown
 				}));
-				sendSessionEvent(socket, plan.metadata.requestId, session, "plan.approved", {
-					...createPlanEventPayload(approvedPlan),
-					operationRequestId: request.id
-				});
+				// sendSessionEvent(socket, plan.metadata.requestId, session, "plan.approved", {
+				// 	...createPlanEventPayload(approvedPlan),
+				// 	operationRequestId: request.id
+				// });
 				const executingPlan: StoredPlan = await updateStoredPlan(sessionId, plan.metadata.planId, (current: StoredPlan): StoredPlan => ({
 					metadata: {
 						...current.metadata,

@@ -5,6 +5,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 export const TERMINAL_MCP_SERVER_ID: string = "terminal";
+export const WORKSPACE_MCP_SERVER_ID: string = "workspace";
 
 const defaultWs = getDefaultWorkspace();
 const DEFAULT_GODOT_PROJECT_PATH: string | undefined = process.env.GODOT_PROJECT_PATH ?? defaultWs?.rootPath;
@@ -33,13 +34,25 @@ export function buildGlobalMcpServerConfigs(): McpServerConfig[] {
 }
 
 export function buildMcpServerConfigs(workspace?: WorkspaceConfig): McpServerConfig[] {
-	const projectPath: string | undefined = workspace?.rootPath ?? DEFAULT_GODOT_PROJECT_PATH;
+	const projectPath: string | undefined = workspace?.rootPath;
 
 	if (!projectPath) {
 		return [];
 	}
 
 	const configs: McpServerConfig[] = [];
+	configs.push({
+		id: WORKSPACE_MCP_SERVER_ID,
+		name: "Workspace MCP",
+		transport: "stdio",
+		command: "npx",
+		args: ["tsx", "src/mcp/workspace/server.ts"],
+		env: {
+			WORKSPACE_ID: workspace?.id ?? "default",
+			WORKSPACE_ROOT: projectPath
+		}
+	});
+
 	const isGodotProject: boolean = existsSync(join(projectPath, "project.godot"));
 	if (isGodotProject) {
 		configs.push({

@@ -2,7 +2,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as path from "node:path";
 import { z } from "zod";
 import { terminalJobStore } from "./job-store.js";
-import { runCommandWait, startCommandJob } from "./process-runner.js";
+import { runCommandInvocationWait, runCommandWait, startCommandInvocationJob, startCommandJob } from "./process-runner.js";
+import { createSandboxInvocation } from "./sandbox-runner.js";
 import {
 	BACKEND_DIR,
 	COMMAND_PRESETS,
@@ -22,7 +23,7 @@ import {
 } from "./presets.js";
 import { findWorkspace } from "../../workspace/registry.js";
 import type { WorkspaceConfig } from "../../workspace/types.js";
-import type { CommandPreset, PresetRunInput, TerminalCommandResult, TerminalJobRecord } from "./types.js";
+import type { CommandPreset, CommandRunInput, PresetRunInput, TerminalCommandResult, TerminalJobRecord } from "./types.js";
 import { logger } from "../../logger.js";
 
 function asJsonTextResult(value: unknown): { content: Array<{ type: "text"; text: string }> } {
@@ -112,6 +113,8 @@ function createJobStartedResult(record: TerminalJobRecord): Record<string, unkno
 
 type TerminalInternalInput = {
 	__daedalusWorkspaceId?: string | undefined;
+	__daedalusApprovalMode?: "manual" | "auto-safe" | "full-trust" | undefined;
+	__daedalusConsentText?: string | undefined;
 };
 
 function resolveTerminalContext(input: TerminalInternalInput): {
@@ -139,6 +142,155 @@ function resolveTerminalContext(input: TerminalInternalInput): {
 		godotProjectPath: workspace?.rootPath ?? GODOT_PROJECT,
 		godotExecutablePath: workspace?.godotExecutablePath ?? GODOT_EXECUTABLE
 	};
+}
+
+function createCommandLineEnv(inputEnv: Record<string, string> | undefined, trusted: boolean): Record<string, string> | undefined {
+	if (trusted) {
+		return {
+			...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
+			...(inputEnv ?? {})
+		};
+	}
+
+	return inputEnv;
+}
+
+function resolveCommandCwd(input: CommandRunInput & TerminalInternalInput, context: ReturnType<typeof resolveTerminalContext>, allowOutsideWorkspace: boolean): string {
+	const workspaceRoot: string = context.workspace?.rootPath ?? context.godotProjectPath;
+	if (workspaceRoot.length === 0) {
+		throw new Error("Workspace is not selected for terminal command execution.");
+	}
+
+	const requestedCwd: string = input.cwd?.trim() ?? "";
+	if (requestedCwd.length === 0) {
+		return path.resolve(workspaceRoot);
+	}
+
+	const resolvedCwd: string = path.isAbsolute(requestedCwd)
+		? path.resolve(requestedCwd)
+		: path.resolve(workspaceRoot, requestedCwd);
+	if (!allowOutsideWorkspace && !isPathInsideRoot(resolvedCwd, path.resolve(workspaceRoot))) {
+		throw new Error(`Terminal cwd is outside the active workspace: ${resolvedCwd}`);
+	}
+
+	return resolvedCwd;
+}
+
+async function runCommand(input: CommandRunInput & TerminalInternalInput): Promise<Record<string, unknown>> {
+	const context = resolveTerminalContext(input);
+	const trusted: boolean = input.__daedalusApprovalMode === "full-trust";
+	const workspaceRoot: string = context.workspace?.rootPath ?? context.godotProjectPath;
+	const hasCrossWorkspaceConsent: boolean = typeof input.__daedalusConsentText === "string" && input.__daedalusConsentText.startsWith("ALLOW CROSS-WORKSPACE: ");
+	const startedAtMs: number = Date.now();
+
+	if (input.commandLine.trim().length === 0) {
+		return { ok: false, error: "commandLine cannot be empty" };
+	}
+	if (workspaceRoot.length === 0) {
+		return { ok: false, error: "Workspace is not selected for terminal command execution." };
+	}
+
+	let cwd: string;
+	try {
+		cwd = resolveCommandCwd(input, context, trusted || hasCrossWorkspaceConsent);
+	} catch (error: unknown) {
+		return { ok: false, error: error instanceof Error ? error.message : "Invalid terminal cwd" };
+	}
+	const activeWorkspaceRoot: string = path.resolve(workspaceRoot);
+	const sandboxWorkspaceRoot: string = !trusted && hasCrossWorkspaceConsent && !isPathInsideRoot(cwd, activeWorkspaceRoot)
+		? cwd
+		: activeWorkspaceRoot;
+
+	const timeoutMs: number = normalizeTimeoutMs(input.timeoutMs, {
+		name: "terminal.command",
+		description: "Run workspace command",
+		command: [input.commandLine],
+		workingDirectory: cwd,
+		risk: "verify"
+	}, input.executionMode === "job" ? DEFAULT_JOB_TIMEOUT_MS : COMMAND_TIMEOUT_MS);
+	const wakeAfterMs: number | undefined = normalizeWakeAfterMs(input.wakeAfterMs);
+	const commonInvocation = {
+		commandLine: input.commandLine,
+		sandboxMode: trusted ? "full-trust" as const : "os-sandbox" as const,
+		workspaceId: context.workspace?.id ?? context.workspaceId,
+		workspaceRoot: sandboxWorkspaceRoot,
+		trusted,
+		consentText: input.__daedalusConsentText
+	};
+	const executableInvocation = trusted
+		? {
+			...commonInvocation,
+			command: input.commandLine,
+			args: [],
+			shell: true,
+			env: createCommandLineEnv(input.env, true)
+		}
+		: (() => {
+			const sandboxInvocation = createSandboxInvocation({
+			commandLine: input.commandLine,
+			cwd,
+			workspaceRoot: sandboxWorkspaceRoot,
+			env: createCommandLineEnv(input.env, false)
+			});
+			if (sandboxInvocation.available === false) {
+				return {
+					ok: false,
+					error: sandboxInvocation.error,
+					code: "sandbox_unavailable",
+					sandboxMode: sandboxInvocation.sandboxMode,
+					workspaceId: context.workspace?.id ?? context.workspaceId,
+					workspaceRoot: sandboxWorkspaceRoot,
+					cwd
+				} as const;
+			}
+			return {
+			...commonInvocation,
+				command: sandboxInvocation.command,
+				args: sandboxInvocation.args,
+				env: sandboxInvocation.env
+			};
+		})();
+
+	if ("ok" in executableInvocation && executableInvocation.ok === false) {
+		return executableInvocation;
+	}
+
+	if (input.executionMode === "job") {
+		const record: TerminalJobRecord = startCommandInvocationJob({
+			presetName: "terminal.command",
+			invocation: executableInvocation,
+			cwd,
+			timeoutMs,
+			wakeAfterMs,
+			tailLines: input.tailLines
+		});
+		logger.info("terminal", "command_job_started", {
+			jobId: record.jobId,
+			cwd,
+			workspaceId: context.workspace?.id ?? context.workspaceId,
+			trusted,
+			sandboxMode: executableInvocation.sandboxMode,
+			durationMs: Date.now() - startedAtMs
+		});
+		return createJobStartedResult(record);
+	}
+
+	const result: TerminalCommandResult = await runCommandInvocationWait({
+		presetName: "terminal.command",
+		invocation: executableInvocation,
+		cwd,
+		timeoutMs
+	});
+	logger.info("terminal", "command_finished", {
+		cwd,
+		workspaceId: context.workspace?.id ?? context.workspaceId,
+		trusted,
+		sandboxMode: executableInvocation.sandboxMode,
+		ok: result.ok,
+		exitCode: result.exitCode,
+		durationMs: result.durationMs
+	});
+	return result as unknown as Record<string, unknown>;
 }
 
 async function runPreset(input: PresetRunInput, allowedRisks: readonly string[]): Promise<Record<string, unknown>> {
@@ -284,6 +436,17 @@ const presetRunSchema = z.object({
 	tailLines: z.number().int().positive().optional().describe("job tail 行数。")
 }).passthrough();
 
+const commandRunSchema = z.object({
+	commandLine: z.string().min(1).describe("要运行的命令行"),
+	cwd: z.string().optional().describe("workspace 相对工作目录；Full Trust 下可传绝对路径"),
+	env: z.record(z.string(), z.string()).optional().describe("附加环境变量"),
+	executionMode: z.enum(["wait", "job"]).optional().describe("wait 为默认同步等待；job 为长任务"),
+	wakeAfterMs: z.number().int().positive().optional().describe("job 模式下请求 backend 在指定毫秒后唤醒 AI。"),
+	timeoutMs: z.number().int().positive().optional().describe("命令超时毫秒。wait 默认 30000，job 默认 30 分钟。"),
+	tailLines: z.number().int().positive().optional().describe("job tail 行数。"),
+	reason: z.string().optional().describe("为什么需要运行该命令。")
+}).passthrough();
+
 export function registerTerminalTools(server: McpServer): void {
 	server.registerTool(
 		"get_terminal_capabilities",
@@ -295,6 +458,11 @@ export function registerTerminalTools(server: McpServer): void {
 		async (input: TerminalInternalInput) => {
 			const context = resolveTerminalContext(input);
 			return asJsonTextResult({
+				commandRunner: {
+					sandboxModes: ["os-sandbox", "full-trust"],
+					normalModeRequiresSandbox: true,
+					windowsSandboxHelper: process.env.DAEDALUS_WINDOWS_SANDBOX_HELPER ?? null
+				},
 				presets: COMMAND_PRESETS.map((preset: CommandPreset) => ({
 					name: preset.name,
 					description: preset.description,
@@ -316,6 +484,16 @@ export function registerTerminalTools(server: McpServer): void {
 				}))
 			});
 		}
+	);
+
+	server.registerTool(
+		"run_command",
+		{
+			title: "Run Workspace Command",
+			description: "在当前 workspace 中运行自由命令。普通模式必须使用 OS 沙箱，Full Trust 模式裸跑。",
+			inputSchema: commandRunSchema
+		},
+		async (input: CommandRunInput & TerminalInternalInput) => asJsonTextResult(await runCommand(input))
 	);
 
 	server.registerTool(

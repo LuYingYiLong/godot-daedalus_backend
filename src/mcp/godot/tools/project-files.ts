@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { z } from "zod";
 import { validateTscnContent } from "./tscn-tools.js";
 import { asJsonTextResult, asTextResult, assertWritablePath, parseProjectFeatureVersion, parseProjectSettingString, projectRoot, readProjectConfig, resolveProjectPath, toProjectRelativePath, type ProjectSummary } from "../context.js";
+import { createWorkspaceFileService } from "../../../workspace/files.js";
 
 const MAX_TEXT_FILE_BYTES: number = 512 * 1024;
 const MAX_NEW_FILE_BYTES: number = 64 * 1024;
@@ -33,6 +34,29 @@ const TEXT_EXTENSIONS: Set<string> = new Set([
 	".txt",
 	".uid"
 ]);
+
+const godotFileService = createWorkspaceFileService({
+	rootPath: projectRoot,
+	readMaxBytes: MAX_TEXT_FILE_BYTES,
+	newFileMaxBytes: MAX_TSCN_FILE_BYTES,
+	writeMaxBytes: MAX_TEXT_FILE_BYTES,
+	validateWritablePath: assertWritablePath,
+	validateContent: ({ relativePath, content, operation }): string[] => {
+		const errors: string[] = [];
+		if (operation === "create" && !relativePath.endsWith(".tscn") && content.length > MAX_NEW_FILE_BYTES) {
+			errors.push(`Content too large: ${content.length} bytes (max ${MAX_NEW_FILE_BYTES})`);
+		}
+		if (relativePath.endsWith(".tscn")) {
+			if (content.length > MAX_TSCN_FILE_BYTES) {
+				errors.push(`Content too large: ${content.length} bytes (max ${MAX_TSCN_FILE_BYTES})`);
+			}
+			if (content.length > 0) {
+				errors.push(...validateTscnContent(content));
+			}
+		}
+		return errors;
+	}
+});
 
 
 function shouldSkipDirectory(name: string): boolean {
@@ -196,20 +220,7 @@ export async function createTextFile(relativePath: string, content: string): Pro
 	path: string;
 	size: number;
 }> {
-	const validation = await validateNewTextFile(relativePath, content);
-
-	if (!validation.valid || validation.resolvedPath === undefined) {
-		throw new Error(validation.errors.join("; "));
-	}
-
-	await fs.mkdir(path.dirname(validation.resolvedPath), { recursive: true });
-	await fs.writeFile(validation.resolvedPath, content, "utf8");
-
-	return {
-		created: true,
-		path: validation.normalizedPath,
-		size: content.length
-	};
+	return godotFileService.createTextFile(relativePath, content);
 }
 
 export async function overwriteTextFile(relativePath: string, content: string): Promise<{
@@ -234,16 +245,7 @@ export async function overwriteTextFile(relativePath: string, content: string): 
 		}
 	}
 
-	const resolvedPath: string = await assertWritablePath(relativePath);
-	const oldContent: string = await fs.readFile(resolvedPath, "utf8");
-	await fs.writeFile(resolvedPath, content, "utf8");
-
-	return {
-		overwritten: true,
-		path: path.relative(projectRoot, resolvedPath).replaceAll(path.sep, "/"),
-		size: content.length,
-		oldSize: oldContent.length
-	};
+	return godotFileService.overwriteTextFile(relativePath, content);
 }
 
 export async function replaceTextInFile(relativePath: string, oldText: string, newText: string): Promise<{
@@ -257,29 +259,7 @@ export async function replaceTextInFile(relativePath: string, oldText: string, n
 		throw new Error("oldText must not be empty");
 	}
 
-	const resolvedPath: string = await assertWritablePath(relativePath);
-	const oldContent: string = await fs.readFile(resolvedPath, "utf8");
-
-	if (!oldContent.includes(oldText)) {
-		throw new Error("oldText was not found in file");
-	}
-
-	const occurrenceCount: number = oldContent.split(oldText).length - 1;
-	const newContent: string = oldContent.replace(oldText, newText);
-
-	if (newContent.length > MAX_TEXT_FILE_BYTES) {
-		throw new Error(`Content too large after replacement: ${newContent.length} bytes (max ${MAX_TEXT_FILE_BYTES})`);
-	}
-
-	await fs.writeFile(resolvedPath, newContent, "utf8");
-
-	return {
-		replaced: true,
-		path: path.relative(projectRoot, resolvedPath).replaceAll(path.sep, "/"),
-		occurrences: occurrenceCount,
-		size: newContent.length,
-		oldSize: oldContent.length
-	};
+	return godotFileService.replaceTextInFile(relativePath, oldText, newText);
 }
 
 export function registerProjectFileTools(server: McpServer): void {

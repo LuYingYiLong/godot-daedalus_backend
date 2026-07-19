@@ -27,6 +27,9 @@ const DEFAULT_WORKFLOW_TOOL_NAMES: Record<WorkflowToolGroup, readonly string[]> 
 	read: [
 		"mcp_skills_load",
 		"mcp_web_search",
+		"mcp_workspace_list_files",
+		"mcp_workspace_read_text_file",
+		"mcp_workspace_search_text",
 		"mcp_godot_get_runtime_status",
 		"mcp_godot_get_godot_version",
 		"mcp_godot_get_debug_output",
@@ -65,6 +68,7 @@ const DEFAULT_WORKFLOW_TOOL_NAMES: Record<WorkflowToolGroup, readonly string[]> 
 		CUSTOM_MCP_TOOLS_SENTINEL
 	],
 	verify: [
+		"mcp_terminal_run_command",
 		"mcp_godot_validate_scene_script_references",
 		"mcp_godot_lsp_get_file_diagnostics",
 		"mcp_terminal_get_capabilities",
@@ -72,6 +76,15 @@ const DEFAULT_WORKFLOW_TOOL_NAMES: Record<WorkflowToolGroup, readonly string[]> 
 	],
 	write: [
 		"mcp_image_generate",
+		"mcp_workspace_propose_create_text_file",
+		"mcp_workspace_create_text_file",
+		"mcp_workspace_propose_overwrite_text_file",
+		"mcp_workspace_overwrite_text_file",
+		"mcp_workspace_propose_replace_text_in_file",
+		"mcp_workspace_replace_text_in_file",
+		"mcp_workspace_propose_replace_line_in_file",
+		"mcp_workspace_replace_line_in_file",
+		"mcp_workspace_delete_file",
 		"mcp_godot_propose_create_text_file",
 		"mcp_godot_create_text_file",
 		"mcp_godot_propose_overwrite_text_file",
