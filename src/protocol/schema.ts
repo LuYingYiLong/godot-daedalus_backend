@@ -108,6 +108,8 @@ export const additionalContextItemSchema = z.object({
 export const aiChatParamsSchema = z.object({
 	message: z.string(),
 	mode: z.enum(["agent", "ask", "plan"]).optional(),
+	provider: providerIdSchema.optional(),
+	model: z.string().min(1).optional(),
 	promptId: promptIdSchema.optional(),
 	skillRefs: z.array(skillRefSchema).max(4).optional(),
 	systemPrompt: z.string().optional(),

@@ -165,7 +165,9 @@ export async function createTimelinePageResult(page: StoredSessionTimelinePage, 
 		hasMoreAfter: page.hasMoreAfter,
 		timelineBlocks: await hydrateTimelineImageThumbnails(page.metadata.id, page.timelineBlocks),
 		latestWorkflowSnapshot: page.latestWorkflowSnapshot === null ? null : createPreviewValue(page.latestWorkflowSnapshot),
-		latestAgentSnapshot: page.latestAgentSnapshot === null ? null : createPreviewValue(page.latestAgentSnapshot)
+		latestAgentSnapshot: page.latestAgentSnapshot === null ? null : createPreviewValue(page.latestAgentSnapshot),
+		latestPlanClarification: page.latestPlanClarification,
+		latestPlanApproval: page.latestPlanApproval
 	};
 }
 

@@ -55,6 +55,21 @@ export type TimelinePlanRecommendedReply = {
 	description?: string | undefined;
 };
 
+export type TimelinePlanClarification = {
+	planId: string;
+	title: string;
+	question: string;
+	recommendedReplies: TimelinePlanRecommendedReply[];
+};
+
+export type TimelinePlanApproval = {
+	planId: string;
+	title: string;
+	status: string;
+	previewMarkdown: string;
+	updatedAt: string;
+};
+
 export type TimelineSummaryStartPart = {
 	type: "summary_start";
 	runId: string;
@@ -122,6 +137,8 @@ export type TimelineBuildResult = {
 	eventCount: number;
 	latestWorkflowSnapshot: unknown | null;
 	latestAgentSnapshot: unknown | null;
+	latestPlanClarification: TimelinePlanClarification | null;
+	latestPlanApproval: TimelinePlanApproval | null;
 };
 
 type RequestEvents = {
@@ -455,6 +472,22 @@ function parsePlanRecommendedReplies(value: unknown): TimelinePlanRecommendedRep
 	return replies;
 }
 
+function createPlanClarificationSnapshot(data: Record<string, unknown>): TimelinePlanClarification | null {
+	const planId: string = asString(data.planId).trim();
+	const question: string = asString(data.question).trim();
+	if (planId.length === 0 || question.length === 0) {
+		return null;
+	}
+
+	const title: string = asString(data.title).trim();
+	return {
+		planId,
+		title: title.length > 0 ? title : "Plan clarification",
+		question,
+		recommendedReplies: parsePlanRecommendedReplies(data.recommendedReplies)
+	};
+}
+
 function createPlanPart(eventData: Record<string, unknown>): TimelinePlanPart | null {
 	const planId: string = asString(eventData.planId).trim();
 	if (planId.length === 0) {
@@ -467,6 +500,34 @@ function createPlanPart(eventData: Record<string, unknown>): TimelinePlanPart | 
 		title: asString(eventData.title) || "Plan",
 		status: asString(eventData.status),
 		previewMarkdown: asString(eventData.previewMarkdown) || asString(eventData.markdown)
+	};
+}
+
+function replaceOrAppendPlanPart(parts: TimelineBodyPart[], planPart: TimelinePlanPart): void {
+	const existingIndex: number = parts.findIndex((part: TimelineBodyPart): boolean => {
+		return part.type === "plan" && part.planId === planPart.planId;
+	});
+
+	if (existingIndex < 0) {
+		parts.push(planPart);
+		return;
+	}
+
+	parts[existingIndex] = planPart;
+}
+
+function createPlanApprovalSnapshot(eventData: Record<string, unknown>): TimelinePlanApproval | null {
+	const planPart: TimelinePlanPart | null = createPlanPart(eventData);
+	if (planPart === null || planPart.status !== "ready") {
+		return null;
+	}
+
+	return {
+		planId: planPart.planId,
+		title: planPart.title,
+		status: planPart.status,
+		previewMarkdown: planPart.previewMarkdown,
+		updatedAt: asString(eventData.updatedAt)
 	};
 }
 
@@ -664,17 +725,8 @@ function buildAssistantBodyParts(
 		} else if (event.event === "plan.generated" || event.event === "plan.revised") {
 			const planPart: TimelinePlanPart | null = createPlanPart(eventData);
 			if (planPart !== null) {
-				parts.push(planPart);
+				replaceOrAppendPlanPart(parts, planPart);
 			}
-		} else if (event.event === "plan.clarification.required") {
-			appendStatusPart(parts, {
-				status: "message",
-				title: asString(eventData.title),
-				details: asString(eventData.question),
-				code: "plan.clarification.required",
-				planId: asString(eventData.planId),
-				recommendedReplies: parsePlanRecommendedReplies(eventData.recommendedReplies)
-			});
 		} else if (event.event === "plan.approved") {
 			appendStatusPart(parts, {
 				status: "success",
@@ -795,15 +847,33 @@ function shouldClearDismissedSnapshot(snapshot: unknown | null, dismissedIdentit
 	return snapshotIdentity === null || snapshotIdentity === dismissedIdentity;
 }
 
-function findLatestSnapshots(events: StoredSessionEvent[]): { latestWorkflowSnapshot: unknown | null; latestAgentSnapshot: unknown | null } {
+function findLatestSnapshots(events: StoredSessionEvent[]): { latestWorkflowSnapshot: unknown | null; latestAgentSnapshot: unknown | null; latestPlanClarification: TimelinePlanClarification | null; latestPlanApproval: TimelinePlanApproval | null } {
 	let latestWorkflowSnapshot: unknown | null = null;
 	let latestAgentSnapshot: unknown | null = null;
+	let latestPlanClarification: TimelinePlanClarification | null = null;
+	let latestPlanApproval: TimelinePlanApproval | null = null;
 	for (const event of events) {
 		if (event.event === "workflow.todo.updated") {
 			latestWorkflowSnapshot = event.data;
 		}
 		if (event.event === "agent.run.snapshot") {
 			latestAgentSnapshot = event.data;
+		}
+		if (event.event === "plan.clarification.required" && isRecord(event.data)) {
+			latestPlanClarification = createPlanClarificationSnapshot(event.data);
+			latestPlanApproval = null;
+		}
+		if ((event.event === "plan.generated" || event.event === "plan.revised") && isRecord(event.data)) {
+			latestPlanApproval = createPlanApprovalSnapshot(event.data);
+		}
+		if ((event.event === "plan.generated" || event.event === "plan.revised" || event.event === "plan.approved" || event.event === "plan.execution.started") && isRecord(event.data)) {
+			const planId: string = asString(event.data.planId);
+			if (planId.length === 0 || planId === latestPlanClarification?.planId) {
+				latestPlanClarification = null;
+			}
+			if ((event.event === "plan.approved" || event.event === "plan.execution.started") && (planId.length === 0 || planId === latestPlanApproval?.planId)) {
+				latestPlanApproval = null;
+			}
 		}
 		if (event.event === "workflow.todo.dismissed") {
 			const dismissedIdentity: string | null = getDismissedTodoIdentity(event.data);
@@ -816,7 +886,7 @@ function findLatestSnapshots(events: StoredSessionEvent[]): { latestWorkflowSnap
 		}
 	}
 
-	return { latestWorkflowSnapshot, latestAgentSnapshot };
+	return { latestWorkflowSnapshot, latestAgentSnapshot, latestPlanClarification, latestPlanApproval };
 }
 
 function withRenderHints(block: TimelineBlock): TimelineBlock {
@@ -926,6 +996,8 @@ export function buildCanonicalTimelineBlocks(session: StoredSession): TimelineBu
 		blocks: blocks.map(withRenderHints),
 		eventCount: sourceEvents.length,
 		latestWorkflowSnapshot: snapshots.latestWorkflowSnapshot,
-		latestAgentSnapshot: snapshots.latestAgentSnapshot
+		latestAgentSnapshot: snapshots.latestAgentSnapshot,
+		latestPlanClarification: snapshots.latestPlanClarification,
+		latestPlanApproval: snapshots.latestPlanApproval
 	};
 }

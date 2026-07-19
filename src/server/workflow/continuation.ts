@@ -144,7 +144,8 @@ export async function continueWorkflowExecution(
 		}
 
 		const phaseMessage: string = createPhaseMessage(state.originalParams, plan, phase, phaseOutputs);
-		const streamPhase: boolean = isFinalPhase && streamFinal;
+		// 流式请求的所有阶段都走流式通路，避免非最终阶段在长时间推理时完全没有进度事件。
+		const streamPhase: boolean = streamFinal;
 		const phaseParams: AiChatParams = createPhaseParams(state.originalParams, phase, phaseMessage, streamPhase);
 		const carriedGuidePromptSection: string = state.guidePromptSection ?? "";
 		state = { ...state, guidePromptSection: undefined };

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { createApprovedPlanExecutionParams, createPlanDecision, createPlannerSystemPrompt, createPlanVisibleDeltaFilter } from "../../../src/server/plan-mode.js";
+import { createApprovedPlanExecutionParams, createPlanDecision, createPlannerSystemPrompt, createPlanVisibleDeltaFilter, normalizePlanDecision } from "../../../src/server/plan-mode.js";
 import { createPlanMetadata } from "../../../src/server/plan-store.js";
 import type { StoredPlan } from "../../../src/server/plan-store.js";
 import type { ProviderChatOptions } from "../../../src/providers/deepseek-client.js";
@@ -24,6 +24,68 @@ test("broad Godot AI plugin goal requires clarification with at most three repli
 	assert.ok(decision.recommendedReplies.length > 0);
 	assert.ok(decision.recommendedReplies.length <= 3);
 	assert.ok(decision.recommendedReplies.some((reply): boolean => reply.text.includes("前端")));
+});
+
+test("plan clarification normalization accepts common reply aliases", (): void => {
+	const decision = normalizePlanDecision({
+		decision: "needs_clarification",
+		title: "玩法澄清",
+		clarificationQuestion: "请选择五子棋玩法。",
+		options: [
+			{
+				title: "双人同屏",
+				value: "做一个双人同屏本地五子棋。",
+				description: "只需要落子和胜负判定。"
+			},
+			"做人机对战版本。"
+		]
+	}, "执行计划");
+
+	assert.equal(decision.decision, "needs_clarification");
+	assert.equal(decision.question, "请选择五子棋玩法。");
+	assert.deepEqual(decision.recommendedReplies, [
+		{
+			label: "双人同屏",
+			text: "做一个双人同屏本地五子棋。",
+			description: "只需要落子和胜负判定。"
+		},
+		{
+			label: "做人机对战版本。",
+			text: "做人机对战版本。"
+		}
+	]);
+});
+
+test("plan clarification normalization allows a custom-answer-only question", (): void => {
+	const decision = normalizePlanDecision({
+		title: "技术栈澄清",
+		question: "你希望用网页、命令行还是 Godot 场景实现？"
+	}, "执行计划");
+
+	assert.equal(decision.decision, "needs_clarification");
+	assert.equal(decision.question, "你希望用网页、命令行还是 Godot 场景实现？");
+	assert.deepEqual(decision.recommendedReplies, []);
+});
+
+test("plan normalization infers ready plans from structured fields without a decision", (): void => {
+	const decision = normalizePlanDecision({
+		title: "本地五子棋计划",
+		summary: "实现一个本地双人五子棋。",
+		keyChanges: [
+			"新增棋盘状态",
+			"实现落子和胜负判定"
+		],
+		testPlan: [
+			"验证横竖斜五连"
+		]
+	}, "执行计划");
+
+	assert.equal(decision.decision, "plan_ready");
+	assert.match(decision.planMarkdown, /# 本地五子棋计划/);
+	assert.match(decision.planMarkdown, /## Summary/);
+	assert.match(decision.planMarkdown, /实现一个本地双人五子棋/);
+	assert.match(decision.planMarkdown, /## Key Changes/);
+	assert.match(decision.planMarkdown, /新增棋盘状态/);
 });
 
 test("plan metadata stores PLAN.md under the session plan directory", (): void => {
@@ -78,6 +140,14 @@ test("plan mode does not inject hardcoded visible status prose", async (): Promi
 	assert.equal(source.includes("我已根据你的反馈修订计划"), false);
 });
 
+test("plan mode does not hard-fail when provider omits read tool calls", async (): Promise<void> => {
+	const planModeSource: string = await readFile(new URL("../../../src/server/plan-mode.ts", import.meta.url), "utf8");
+
+	assert.match(planModeSource, /runtime\.requireToolInspection === true/);
+	assert.equal(planModeSource.includes("Plan runner did not call any read/verify tool before producing a plan."), false);
+	assert.match(planModeSource, /plan_ready_without_tool_inspection/);
+});
+
 test("plan events are persisted for timeline recovery", (): void => {
 	assert.equal(shouldPersistSessionEvent("plan.clarification.required"), true);
 	assert.equal(shouldPersistSessionEvent("plan.generated"), true);
@@ -96,12 +166,27 @@ test("approved plan execution forces agent multi-phase workflow", (): void => {
 		}),
 		markdown: "# 审批测试计划\n\n## Summary\n执行一次需要审批的写入测试。"
 	};
-	const params = createApprovedPlanExecutionParams(plan);
+	const params = createApprovedPlanExecutionParams(plan, "moonshot", "kimi-k3");
 
 	assert.equal(params.mode, "agent");
 	assert.equal(params.options?.workflow, "multi_phase");
 	assert.equal(params.options?.toolBudget, "project_edit");
-	assert.match(params.message, /执行用户已经批准的计划/);
-	assert.match(params.message, /原始用户请求：\n审批/);
+	assert.equal(params.message, "执行计划。");
+	assert.equal(params.provider, "moonshot");
+	assert.equal(params.model, "kimi-k3");
 	assert.match(params.systemPrompt ?? "", /执行阶段必须以该计划为主要约束/);
+	assert.match(params.systemPrompt ?? "", /原始用户请求：\n审批/);
+});
+
+test("plan approval persists agent mode and streams every execution phase", async (): Promise<void> => {
+	const planHandlersSource: string = await readFile(new URL("../../../src/server/handlers/plan-handlers.ts", import.meta.url), "utf8");
+	const continuationSource: string = await readFile(new URL("../../../src/server/workflow/continuation.ts", import.meta.url), "utf8");
+	const modeSwitchIndex: number = planHandlersSource.indexOf('session.workbenchComposer.chatMode = "agent"');
+	const executionStartIndex: number = planHandlersSource.indexOf("await handleChatRequest(socket, executionRequest");
+
+	assert.ok(modeSwitchIndex >= 0);
+	assert.ok(executionStartIndex > modeSwitchIndex);
+	assert.match(planHandlersSource, /updateSessionMetadata\(sessionId, createRuntimeSessionUiMetadata\(session\)\)/);
+	assert.match(planHandlersSource, /workbench: serializeWorkbench\(session\)/);
+	assert.match(continuationSource, /const streamPhase: boolean = streamFinal/);
 });

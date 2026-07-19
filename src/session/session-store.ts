@@ -4,7 +4,7 @@ import { getDefaultArchivedSessionsDir, getDefaultSessionsDir } from "../app-pat
 import { writeJsonFileAtomic } from "../json-file-store.js";
 import type { ChatMessage } from "../protocol/types.js";
 import type { WorkspaceConfig } from "../workspace/types.js";
-import { buildCanonicalTimelineBlocks, type TimelineBlock } from "./timeline-blocks.js";
+import { buildCanonicalTimelineBlocks, type TimelineBlock, type TimelinePlanApproval, type TimelinePlanClarification } from "./timeline-blocks.js";
 
 const SESSIONS_DIR: string = getDefaultSessionsDir();
 const ARCHIVED_SESSIONS_DIR: string = getDefaultArchivedSessionsDir();
@@ -94,6 +94,8 @@ export type StoredSessionTimelinePage = {
 	hasMoreAfter: boolean;
 	latestWorkflowSnapshot: unknown | null;
 	latestAgentSnapshot: unknown | null;
+	latestPlanClarification: TimelinePlanClarification | null;
+	latestPlanApproval: TimelinePlanApproval | null;
 };
 
 type TimelineCacheEntry = {
@@ -376,7 +378,9 @@ async function createTimelinePageFromStoredSession(stored: StoredSession, offset
 		hasMoreBefore: normalizedOffset > 0,
 		hasMoreAfter: endOffset < blockCount,
 		latestWorkflowSnapshot: timeline.latestWorkflowSnapshot,
-		latestAgentSnapshot: timeline.latestAgentSnapshot
+		latestAgentSnapshot: timeline.latestAgentSnapshot,
+		latestPlanClarification: timeline.latestPlanClarification,
+		latestPlanApproval: timeline.latestPlanApproval
 	};
 }
 

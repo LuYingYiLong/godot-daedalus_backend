@@ -1,5 +1,5 @@
 import type WebSocket from "ws";
-import type { AiChatParams, ChatMessage } from "../protocol/types.js";
+import type { AiChatParams, ChatMessage, ProviderId } from "../protocol/types.js";
 import type { ProviderChatOptions } from "../providers/deepseek-client.js";
 import type { McpHost } from "../mcp/mcp-host.js";
 import { parseJsonObjectLoose } from "./next-step-hints.js";
@@ -31,6 +31,8 @@ const PLAN_RUNNER_MAX_ATTEMPTS: number = 2;
 type PlanDecisionRuntime = {
 	socket: WebSocket;
 	requestId: string;
+	operationRequestId?: string | undefined;
+	planId?: string | undefined;
 	session: ClientSession;
 	mcpHost: McpHost;
 	requireToolInspection?: boolean | undefined;
@@ -50,21 +52,40 @@ export type PlanDecision =
 		assumptions: string[];
 	};
 
-export function sendPlanMessageDelta(socket: WebSocket, requestId: string, session: ClientSession, text: string): void {
+export function sendPlanMessageDelta(
+	socket: WebSocket,
+	requestId: string,
+	session: ClientSession,
+	text: string,
+	operationRequestId?: string | undefined,
+	planId?: string | undefined
+): void {
 	if (text.trim().length === 0) {
 		return;
 	}
 	sendSessionEvent(socket, requestId, session, "agent.message.delta", {
 		runId: requestId,
+		requestId,
+		operationRequestId: operationRequestId ?? requestId,
+		planId: planId ?? null,
 		mode: "plan",
 		text
 	});
 }
 
-export function sendPlanMessageDone(socket: WebSocket, requestId: string, session: ClientSession, planId?: string | undefined): void {
+export function sendPlanMessageDone(
+	socket: WebSocket,
+	requestId: string,
+	session: ClientSession,
+	planId?: string | undefined,
+	canonicalRequestId?: string | undefined,
+	operationRequestId?: string | undefined
+): void {
 	sendSessionEvent(socket, requestId, session, "agent.message.done", {
-		runId: requestId,
+		runId: canonicalRequestId ?? requestId,
 		mode: "plan",
+		requestId: canonicalRequestId ?? requestId,
+		operationRequestId: operationRequestId ?? requestId,
 		planId: planId ?? null
 	});
 }
@@ -137,6 +158,44 @@ function createGodotPluginClarification(message: string): PlanDecision {
 	};
 }
 
+function readFirstString(record: Record<string, unknown>, keys: readonly string[]): string {
+	for (const key of keys) {
+		const value: unknown = record[key];
+		if (typeof value === "string" && value.trim().length > 0) {
+			return value.trim();
+		}
+	}
+	return "";
+}
+
+function readFirstValue(record: Record<string, unknown>, keys: readonly string[]): unknown {
+	for (const key of keys) {
+		if (record[key] !== undefined) {
+			return record[key];
+		}
+	}
+	return undefined;
+}
+
+function normalizeDecisionValue(value: unknown): string {
+	const decision: string = String(value ?? "").trim().toLowerCase().replaceAll("-", "_");
+	if (decision === "needs_clarification" || decision === "need_clarification" || decision === "clarification" || decision === "clarify" || decision === "ask_clarification") {
+		return "needs_clarification";
+	}
+	if (decision === "plan_ready" || decision === "ready" || decision === "plan" || decision === "planned" || decision === "create_plan") {
+		return "plan_ready";
+	}
+	return decision;
+}
+
+function isPlanDecisionFormatError(error: unknown): boolean {
+	const message: string = error instanceof Error ? error.message : String(error);
+	return message.includes("Plan planner returned non-object JSON")
+		|| message.includes("Plan clarification decision is missing question")
+		|| message.includes("Unknown plan decision")
+		|| message.includes("LLM did not return valid JSON");
+}
+
 function normalizeRecommendedReplies(value: unknown): PlanRecommendedReply[] {
 	if (!Array.isArray(value)) {
 		return [];
@@ -144,12 +203,25 @@ function normalizeRecommendedReplies(value: unknown): PlanRecommendedReply[] {
 
 	const replies: PlanRecommendedReply[] = [];
 	for (const item of value) {
+		if (typeof item === "string") {
+			const text: string = item.trim();
+			if (text.length > 0) {
+				replies.push({
+					label: clipTextByChars(text, 32),
+					text: clipTextByChars(text, 1200)
+				});
+			}
+			if (replies.length >= CLARIFICATION_REPLY_MAX_COUNT) {
+				break;
+			}
+			continue;
+		}
 		if (typeof item !== "object" || item === null || Array.isArray(item)) {
 			continue;
 		}
 		const record: Record<string, unknown> = item as Record<string, unknown>;
-		const label: string = String(record.label ?? record.title ?? "").trim();
-		const text: string = String(record.text ?? record.message ?? "").trim();
+		const label: string = readFirstString(record, ["label", "title", "name"]);
+		const text: string = readFirstString(record, ["text", "message", "content", "value", "reply"]);
 		const description: string = String(record.description ?? "").trim();
 		if (label.length === 0 || text.length === 0) {
 			continue;
@@ -164,6 +236,40 @@ function normalizeRecommendedReplies(value: unknown): PlanRecommendedReply[] {
 		}
 	}
 	return replies;
+}
+
+function createStructuredPlanMarkdown(record: Record<string, unknown>, title: string): string {
+	const lines: string[] = [`# ${title}`];
+	const sections: Array<[string, readonly string[]]> = [
+		["Summary", ["summary", "overview"]],
+		["Key Changes", ["keyChanges", "key_changes", "changes"]],
+		["Public Interfaces", ["publicInterfaces", "public_interfaces", "interfaces"]],
+		["Test Plan", ["testPlan", "test_plan", "tests"]],
+		["Assumptions", ["assumptions"]]
+	];
+
+	for (const [heading, keys] of sections) {
+		const value: unknown = readFirstValue(record, keys);
+		if (value === undefined) {
+			continue;
+		}
+		lines.push("", `## ${heading}`);
+		if (Array.isArray(value)) {
+			for (const item of value) {
+				const text: string = String(item).trim();
+				if (text.length > 0) {
+					lines.push(`- ${text}`);
+				}
+			}
+			continue;
+		}
+		const text: string = String(value).trim();
+		if (text.length > 0) {
+			lines.push(text);
+		}
+	}
+
+	return lines.join("\n").trim();
 }
 
 function ensurePlanMarkdown(title: string, markdown: string, assumptions: readonly string[]): string {
@@ -241,18 +347,35 @@ function createPlannerMessage(
 	return lines.join("\n");
 }
 
-function normalizePlanDecision(raw: unknown, fallbackTitle: string): PlanDecision {
+export function normalizePlanDecision(raw: unknown, fallbackTitle: string): PlanDecision {
 	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
 		throw new Error("Plan planner returned non-object JSON.");
 	}
 	const record: Record<string, unknown> = raw as Record<string, unknown>;
-	const decision: string = String(record.decision ?? "").trim();
 	const title: string = clipTextByChars(String(record.title ?? fallbackTitle).trim() || fallbackTitle, 80);
+	const question: string = readFirstString(record, ["question", "clarificationQuestion", "prompt"]);
+	const rawPlanMarkdown: string = readFirstString(record, ["planMarkdown", "plan_markdown", "markdown"]);
+	const structuredPlanMarkdown: string = rawPlanMarkdown.length > 0 ? rawPlanMarkdown : createStructuredPlanMarkdown(record, title);
+	let decision: string = normalizeDecisionValue(record.decision);
+	if (decision.length === 0) {
+		if (question.length > 0) {
+			decision = "needs_clarification";
+		} else if (structuredPlanMarkdown.length > title.length + 2) {
+			decision = "plan_ready";
+		}
+	}
+
 	if (decision === "needs_clarification") {
-		const question: string = String(record.question ?? "").trim();
-		const replies: PlanRecommendedReply[] = normalizeRecommendedReplies(record.recommendedReplies);
-		if (question.length === 0 || replies.length === 0) {
-			throw new Error("Plan clarification decision is missing question or replies.");
+		const replies: PlanRecommendedReply[] = normalizeRecommendedReplies(readFirstValue(record, [
+			"recommendedReplies",
+			"recommended_replies",
+			"replies",
+			"options",
+			"choices",
+			"suggestions"
+		]));
+		if (question.length === 0) {
+			throw new Error("Plan clarification decision is missing question.");
 		}
 		return {
 			decision: "needs_clarification",
@@ -268,7 +391,7 @@ function normalizePlanDecision(raw: unknown, fallbackTitle: string): PlanDecisio
 		return {
 			decision: "plan_ready",
 			title,
-			planMarkdown: ensurePlanMarkdown(title, String(record.planMarkdown ?? "").trim(), assumptions),
+			planMarkdown: ensurePlanMarkdown(title, structuredPlanMarkdown, assumptions),
 			assumptions
 		};
 	}
@@ -292,27 +415,58 @@ export async function createPlanDecision(
 		throw new Error("Plan agent runner requires runtime context.");
 	}
 
-	const requireToolInspection: boolean = runtime.requireToolInspection ?? true;
+	const requireToolInspection: boolean = runtime.requireToolInspection === true;
+	let lastPlanReadyDecision: PlanDecision | null = null;
+	let lastToolCallCount: number = 0;
+	let formatRetryInstruction: string | undefined;
 	for (let attempt: number = 0; attempt < PLAN_RUNNER_MAX_ATTEMPTS; attempt += 1) {
-		const extraInstruction: string | undefined = attempt === 0
-			? undefined
+		const extraInstruction: string | undefined = formatRetryInstruction !== undefined
+			? formatRetryInstruction
+			: attempt === 0
+				? undefined
 			: "你上一次没有先调用任何工具就给出了计划。请先使用一个最小必要的 read/verify 或 Plan-safe custom MCP 工具读取事实，再输出 JSON 决策。";
-		const result = await runPlanAgentDecision(
-			params,
-			options,
-			clarifications,
-			revisions,
-			currentPlanMarkdown,
-			runtime,
-			extraInstruction,
-			abortSignal
-		);
+		let result: { decision: PlanDecision; toolCallCount: number };
+		try {
+			result = await runPlanAgentDecision(
+				params,
+				options,
+				clarifications,
+				revisions,
+				currentPlanMarkdown,
+				runtime,
+				extraInstruction,
+				abortSignal
+			);
+		} catch (error: unknown) {
+			if (!isPlanDecisionFormatError(error) || attempt + 1 >= PLAN_RUNNER_MAX_ATTEMPTS) {
+				throw error;
+			}
+			formatRetryInstruction = [
+				"你上一次没有输出可识别的最终 JSON 决策。现在必须只在最终答案中输出一个 JSON object。",
+				"如果需要用户澄清，必须包含 decision:\"needs_clarification\" 和 question；recommendedReplies 可以为空数组。",
+				"如果计划已经足够明确，必须包含 decision:\"plan_ready\" 和 planMarkdown。"
+			].join("\n");
+			continue;
+		}
+		formatRetryInstruction = undefined;
 		if (result.decision.decision !== "plan_ready" || !requireToolInspection || result.toolCallCount > 0) {
 			return result.decision;
 		}
+		lastPlanReadyDecision = result.decision;
+		lastToolCallCount = result.toolCallCount;
 	}
 
-	throw new Error("Plan runner did not call any read/verify tool before producing a plan.");
+	if (lastPlanReadyDecision !== null) {
+		logger.warn("plan", "plan_ready_without_tool_inspection", {
+			requestId: runtime.requestId,
+			sessionId: runtime.session.sessionId,
+			planId: runtime.planId,
+			toolCallCount: lastToolCallCount
+		});
+		return lastPlanReadyDecision;
+	}
+
+	throw new Error("Plan runner did not produce a usable plan decision.");
 }
 
 async function runPlanAgentDecision(
@@ -341,21 +495,28 @@ async function runPlanAgentDecision(
 	const allowedToolNames: readonly string[] = resolveAllowedToolsForChatParams(plannerParams, undefined, runtime.session.activeWorkspace?.id) ?? [];
 	const gateway = new ReadOnlyToolApprovalGateway(allowedToolNames);
 	const visibleDeltaFilter: PlanVisibleDeltaFilter = createPlanVisibleDeltaFilter();
+	const planThreadRequestId: string = runtime.requestId;
+	const operationRequestId: string = runtime.operationRequestId ?? runtime.requestId;
 	const baseForwarder: OnToolEvent = createAgentToolEventForwarder(
 		runtime.socket,
-		runtime.requestId,
+		planThreadRequestId,
 		runtime.session,
-		runtime.requestId,
-		`plan-step-${runtime.requestId}`,
-		runtime.requestId,
-		runtime.mcpHost
+		planThreadRequestId,
+		`plan-step-${operationRequestId}`,
+		planThreadRequestId,
+		runtime.mcpHost,
+		{
+			requestId: planThreadRequestId,
+			operationRequestId,
+			planId: runtime.planId ?? null
+		}
 	);
 	let toolCallCount: number = 0;
 	const onEvent: OnToolEvent = (event: ToolEvent): void => {
 		if (event.type === "ai.delta") {
 			const visibleText: string = visibleDeltaFilter.push(event.text);
 			if (visibleText.length > 0) {
-				sendPlanMessageDelta(runtime.socket, runtime.requestId, runtime.session, visibleText);
+				sendPlanMessageDelta(runtime.socket, planThreadRequestId, runtime.session, visibleText, operationRequestId, runtime.planId);
 			}
 			return;
 		}
@@ -407,6 +568,7 @@ export async function createInitialPlan(
 	const decision: PlanDecision = await createPlanDecision(params, options, [], [], undefined, {
 		socket,
 		requestId,
+		operationRequestId: requestId,
 		session,
 		mcpHost
 	}, abortSignal);
@@ -442,8 +604,11 @@ export async function createInitialPlan(
 	}
 
 	const storedPlan: StoredPlan = await writeStoredPlan(metadata, markdown);
-	sendSessionEvent(socket, requestId, session, eventName, createPlanEventPayload(storedPlan));
-	sendPlanMessageDone(socket, requestId, session, metadata.planId);
+	sendSessionEvent(socket, requestId, session, eventName, {
+		...createPlanEventPayload(storedPlan),
+		operationRequestId: requestId
+	});
+	sendPlanMessageDone(socket, requestId, session, metadata.planId, metadata.requestId);
 	await waitForSessionEventPersistence(session);
 	await appendTranscriptOnlyChatTurnToSession(
 		session,
@@ -477,7 +642,12 @@ export async function applyPlanClarification(
 		nextClarifications,
 		plan.metadata.revisions,
 		plan.markdown,
-		runtime,
+		{
+			...runtime,
+			requestId: plan.metadata.requestId,
+			operationRequestId: runtime.requestId,
+			planId: plan.metadata.planId
+		},
 		abortSignal
 	);
 	return updateStoredPlan(plan.metadata.sessionId, plan.metadata.planId, (): StoredPlan => {
@@ -524,7 +694,12 @@ export async function applyPlanRevision(
 		plan.metadata.clarifications,
 		nextRevisions,
 		plan.markdown,
-		runtime,
+		{
+			...runtime,
+			requestId: plan.metadata.requestId,
+			operationRequestId: runtime.requestId,
+			planId: plan.metadata.planId
+		},
 		abortSignal
 	);
 	return updateStoredPlan(plan.metadata.sessionId, plan.metadata.planId, (): StoredPlan => {
@@ -557,26 +732,30 @@ export async function applyPlanRevision(
 	});
 }
 
-export function createApprovedPlanSystemPrompt(markdown: string): string {
+export function createApprovedPlanSystemPrompt(markdown: string, originalMessage: string): string {
 	return [
 		"以下是用户已经批准的 Daedalus Plan。执行阶段必须以该计划为主要约束。",
+		"原始用户请求：",
+		originalMessage.trim().length > 0 ? originalMessage.trim() : "未提供。",
+		"",
 		"如果执行中发现计划与实际项目冲突，先说明阻塞点或走正常审批/验证流程，不要擅自扩大范围。",
 		"",
 		markdown.trim()
 	].join("\n");
 }
 
-export function createApprovedPlanExecutionParams(plan: StoredPlan): AiChatParams {
+export function createApprovedPlanExecutionParams(
+	plan: StoredPlan,
+	provider?: ProviderId | undefined,
+	model?: string | undefined
+): AiChatParams {
 	return {
-		message: [
-			"执行用户已经批准的计划。",
-			"",
-			"原始用户请求：",
-			plan.metadata.originalMessage
-		].join("\n"),
+		message: "执行计划。",
 		mode: "agent",
+		provider,
+		model,
 		promptId: "godot.assistant",
-		systemPrompt: createApprovedPlanSystemPrompt(plan.markdown),
+		systemPrompt: createApprovedPlanSystemPrompt(plan.markdown, plan.metadata.originalMessage),
 		options: {
 			stream: true,
 			toolBudget: "project_edit",

@@ -17,7 +17,8 @@ export function createAgentToolEventForwarder(
 	runId: string,
 	stepRunId: string,
 	persistRequestId: string = requestId,
-	mcpHost?: McpHost | undefined
+	mcpHost?: McpHost | undefined,
+	eventMetadata: Record<string, unknown> = {}
 ): OnToolEvent {
 	const createdSkillRefsByToolCallId: Map<string, string> = new Map();
 	return (event: ToolEvent): void => {
@@ -25,6 +26,7 @@ export function createAgentToolEventForwarder(
 			sendSessionEvent(socket, requestId, session, "agent.message.delta", {
 				runId,
 				stepRunId,
+				...eventMetadata,
 				text: event.text
 			}, persistRequestId);
 			return;
@@ -33,6 +35,7 @@ export function createAgentToolEventForwarder(
 			sendSessionEvent(socket, requestId, session, "agent.thinking.delta", {
 				runId,
 				stepRunId,
+				...eventMetadata,
 				text: event.text
 			}, persistRequestId);
 			return;
@@ -40,7 +43,8 @@ export function createAgentToolEventForwarder(
 		if (event.type === "ai.thinking.done") {
 			sendSessionEvent(socket, requestId, session, "agent.thinking.done", {
 				runId,
-				stepRunId
+				stepRunId,
+				...eventMetadata
 			}, persistRequestId);
 			return;
 		}
@@ -55,7 +59,8 @@ export function createAgentToolEventForwarder(
 				...event,
 				type: "agent.tool.call",
 				runId,
-				stepRunId
+				stepRunId,
+				...eventMetadata
 			}, persistRequestId);
 			return;
 		}
@@ -67,7 +72,8 @@ export function createAgentToolEventForwarder(
 				...event,
 				type: "agent.tool.progress",
 				runId,
-				stepRunId
+				stepRunId,
+				...eventMetadata
 			}, persistRequestId);
 			return;
 		}
@@ -98,7 +104,8 @@ export function createAgentToolEventForwarder(
 					wakeAfterMs: event.terminalJobWakeAfterMs,
 					runId,
 					stepRunId,
-					toolName: event.toolName
+					toolName: event.toolName,
+					...eventMetadata
 				}, persistRequestId);
 				if (mcpHost !== undefined) {
 					scheduleTerminalJobWakeup({
@@ -119,6 +126,7 @@ export function createAgentToolEventForwarder(
 				type: "agent.tool.result",
 				runId,
 				stepRunId,
+				...eventMetadata,
 				...(fileEditBatch === undefined ? {} : { fileEditBatch })
 			}, persistRequestId);
 			return;
@@ -131,7 +139,8 @@ export function createAgentToolEventForwarder(
 				...event,
 				type: "agent.tool.error",
 				runId,
-				stepRunId
+				stepRunId,
+				...eventMetadata
 			}, persistRequestId);
 			return;
 		}
@@ -140,7 +149,8 @@ export function createAgentToolEventForwarder(
 				...event,
 				type: "agent.tool.approval_required",
 				runId,
-				stepRunId
+				stepRunId,
+				...eventMetadata
 			}, persistRequestId);
 		}
 	};

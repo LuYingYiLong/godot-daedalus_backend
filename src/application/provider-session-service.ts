@@ -30,7 +30,11 @@ export async function ensureProviderConfigured(runtime: ProviderSessionRuntime):
 		return undefined;
 	}
 
-	applyProviderConfigToRuntime(runtime, config);
+	runtime.providerApiKey = config.apiKey;
+	runtime.providerBaseUrl = normalizeConfiguredProviderBaseUrl(config.baseUrl);
+	const model: string = runtime.providerModel ?? config.model ?? getProviderDefaultModel(runtime.activeProvider);
+	runtime.providerModel = model;
+	runtime.modelProfile = resolveModelProfile(runtime.activeProvider, model);
 	return runtime.providerApiKey;
 }
 

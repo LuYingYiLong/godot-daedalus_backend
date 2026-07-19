@@ -2,7 +2,7 @@ import WebSocket from "ws";
 import type { AiChatParams, ServerEvent } from "../protocol/types.js";
 import type { ProviderChatOptions } from "../providers/deepseek-client.js";
 import { appendAgentEvent, appendSessionEvent, appendWorkflowEvent, openSession, renameSession, type SessionMetadata } from "../session/session-store.js";
-import { generateSessionTitle, shouldApplyGeneratedSessionTitle } from "./session-title.js";
+import { createFallbackSessionTitle, generateSessionTitle, shouldApplyGeneratedSessionTitle } from "./session-title.js";
 import { resolveProviderTaskModelOptions } from "../providers/task-model-routing.js";
 import type { ClientSession, ThinkingEventBuffer } from "./client-session.js";
 import { sendJson } from "./send-json.js";
@@ -278,8 +278,18 @@ export function maybeScheduleSessionTitleGeneration(
 			return;
 		}
 
-		const titleOptions = (await resolveProviderTaskModelOptions("sessionTitle", options)).options;
-		const generatedTitle: string = await generateSessionTitle(params.message, titleOptions);
+		let generatedTitle: string;
+		try {
+			const titleOptions = (await resolveProviderTaskModelOptions("sessionTitle", options)).options;
+			generatedTitle = await generateSessionTitle(params.message, titleOptions);
+		} catch (error: unknown) {
+			generatedTitle = createFallbackSessionTitle(params.message);
+			logger.warn("session_title", "generation_failed_fallback", {
+				sessionId,
+				requestId,
+				message: error instanceof Error ? error.message : String(error)
+			});
+		}
 		if (generatedTitle.length === 0) {
 			logger.info("session_title", "skipped_empty_title", {
 				sessionId,

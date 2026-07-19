@@ -35,7 +35,7 @@ function assistantBlock(block: TimelineBlock | undefined): TimelineAssistantBloc
 	return block as TimelineAssistantBlock;
 }
 
-test("canonical timeline merges plan clarification request events into original assistant block", (): void => {
+test("canonical timeline keeps plan clarification as hidden restorable state", (): void => {
 	const stored: StoredSession = session(
 		[
 			{
@@ -97,28 +97,128 @@ test("canonical timeline merges plan clarification request events into original 
 	assert.equal(result.blocks.length, 2);
 	const assistant = assistantBlock(result.blocks[1]);
 	assert.equal(assistant.requestId, "request-plan");
-	assert.deepEqual(assistant.bodyParts.map((part) => part.type), ["markdown", "status", "thinking", "tool", "plan"]);
-	const statusPart = assistant.bodyParts.find((part) => part.type === "status");
-	assert.equal(statusPart?.type, "status");
-	assert.equal(statusPart?.code, "plan.clarification.required");
-	assert.equal(statusPart?.title, "目标形态");
-	assert.equal(statusPart?.details, "请选择 CLI 还是 Godot 场景。");
-	assert.deepEqual(statusPart?.recommendedReplies, [
-		{
-			label: "CLI",
-			text: "先做 CLI 版本。",
-			description: "适合快速验证规则。"
-		},
-		{
-			label: "Godot 场景",
-			text: "先做 Godot 场景版本。",
-			description: undefined
-		}
-	]);
+	assert.deepEqual(assistant.bodyParts.map((part) => part.type), ["markdown", "thinking", "tool", "plan"]);
+	assert.equal(assistant.bodyParts.find((part) => part.type === "status" && part.code === "plan.clarification.required"), undefined);
 	assert.equal(assistant.bodyParts.find((part) => part.type === "tool")?.type, "tool");
 	const planPart = assistant.bodyParts.find((part) => part.type === "plan");
 	assert.equal(planPart?.type, "plan");
 	assert.equal(planPart?.planId, "plan-a");
+	assert.equal(result.latestPlanClarification, null);
+	assert.deepEqual(result.latestPlanApproval, {
+		planId: "plan-a",
+		title: "井字棋计划",
+		status: "ready",
+		previewMarkdown: "## Summary\n\n实现井字棋。",
+		updatedAt: ""
+	});
+});
+
+test("canonical timeline restores latest pending plan clarification without rendering status", (): void => {
+	const stored: StoredSession = session(
+		[
+			{
+				role: "user",
+				requestId: "request-plan",
+				content: "写一个本地井字棋",
+				createdAt: "2026-07-09T00:00:00.000Z",
+				excludeFromLlmContext: true
+			},
+			{
+				role: "assistant",
+				requestId: "request-plan",
+				content: "请选择目标形态。",
+				createdAt: "2026-07-09T00:00:01.000Z",
+				excludeFromLlmContext: true
+			}
+		],
+		[
+			event("event-clarify", "request-plan", "plan.clarification.required", "2026-07-09T00:00:01.000Z", {
+				planId: "plan-a",
+				title: "目标形态",
+				requestId: "request-plan",
+				question: "请选择 CLI 还是 Godot 场景。",
+				recommendedReplies: [
+					{
+						label: "CLI",
+						text: "先做 CLI 版本。",
+						description: "适合快速验证规则。"
+					},
+					{
+						label: "Godot 场景",
+						text: "先做 Godot 场景版本。"
+					}
+				]
+			})
+		]
+	);
+
+	const result = buildCanonicalTimelineBlocks(stored);
+	const assistant = assistantBlock(result.blocks[1]);
+
+	assert.deepEqual(assistant.bodyParts.map((part) => part.type), ["markdown"]);
+	assert.deepEqual(result.latestPlanClarification, {
+		planId: "plan-a",
+		title: "目标形态",
+		question: "请选择 CLI 还是 Godot 场景。",
+		recommendedReplies: [
+			{
+				label: "CLI",
+				text: "先做 CLI 版本。",
+				description: "适合快速验证规则。"
+			},
+			{
+				label: "Godot 场景",
+				text: "先做 Godot 场景版本。",
+				description: undefined
+			}
+		]
+	});
+	assert.equal(result.latestPlanApproval, null);
+});
+
+test("canonical timeline replaces an existing plan part when the same plan is revised", (): void => {
+	const stored: StoredSession = session(
+		[
+			{
+				role: "user",
+				requestId: "request-plan",
+				content: "写一个本地井字棋",
+				createdAt: "2026-07-09T00:00:00.000Z",
+				excludeFromLlmContext: true
+			},
+			{
+				role: "assistant",
+				requestId: "request-plan",
+				content: "计划初稿。",
+				createdAt: "2026-07-09T00:00:01.000Z",
+				excludeFromLlmContext: true
+			}
+		],
+		[
+			event("event-plan", "request-plan", "plan.generated", "2026-07-09T00:00:01.000Z", {
+				planId: "plan-a",
+				requestId: "request-plan",
+				status: "ready",
+				title: "初始计划",
+				previewMarkdown: "先做 CLI。"
+			}),
+			event("event-revised", "request-plan", "plan.revised", "2026-07-09T00:00:02.000Z", {
+				planId: "plan-a",
+				requestId: "request-plan",
+				status: "ready",
+				title: "修订计划",
+				previewMarkdown: "改做网页。"
+			})
+		]
+	);
+
+	const result = buildCanonicalTimelineBlocks(stored);
+	const assistant = assistantBlock(result.blocks[1]);
+	const planParts = assistant.bodyParts.filter((part) => part.type === "plan");
+
+	assert.equal(planParts.length, 1);
+	assert.equal(planParts[0]?.type === "plan" ? planParts[0].title : "", "修订计划");
+	assert.equal(planParts[0]?.type === "plan" ? planParts[0].previewMarkdown : "", "改做网页。");
 });
 
 test("canonical timeline keeps plan execution as independent blocks with tools and inline diff", (): void => {

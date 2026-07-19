@@ -36,7 +36,7 @@ import {
 	archiveSession, deleteArchivedSession, deleteSession, listArchivedSessions, renameSession, restoreArchivedSession,
 	rewindSessionFromRequest,
 	readSummary, writeSummary,
-	appendSessionEvent, appendApprovalEvent, appendWorkflowEvent, appendAgentEvent, clearSessionEvents, readApprovalEvents,
+	appendSessionEvent, appendApprovalEvent, appendWorkflowEvent, appendAgentEvent, clearSessionEvents, readApprovalEvents, updateSessionMetadata,
 	openSessionRecentTimeline, openSessionTimelinePage,
 	type SessionMetadata,
 	type SessionSummary,
@@ -61,9 +61,9 @@ import {
 import { preprocessImageAttachmentsForTextModel, type ImageRecognitionPreprocessResult } from "../providers/image-recognition.js";
 import { hydrateImageAttachmentContexts } from "../session/session-attachments.js";
 import { resolveProviderTaskModelOptions } from "../providers/task-model-routing.js";
-import { getProviderDefaultBaseUrl, getProviderDefaultModel, getProviderDisplayName } from "../providers/provider-registry.js";
+import { getProviderDefaultBaseUrl, getProviderDefaultModel, getProviderDisplayName, isProviderId } from "../providers/provider-registry.js";
 import { classifyProviderError, createProviderStatusEvent } from "../providers/provider-error.js";
-import { generateSessionTitle, shouldApplyGeneratedSessionTitle } from "./session-title.js";
+import { isFirstSessionUserTurn } from "./session-title.js";
 import { createReadOnlyFactWorkflowPlan, createSingleAnswerPlan, isCurrentProjectFactRequest, planWorkflow, planWorkflowAfterLlmPlannerFailure, READ_TOOLS, VERIFY_TOOLS, WRITE_TOOLS } from "../workflow/planner.js";
 import { createLlmWorkflowPlan, reviseLlmWorkflowPlan } from "../workflow/llm-planner.js";
 import { createGodotTemplateWorkflowPlan } from "../workflow/godot-template-planner.js";
@@ -119,6 +119,7 @@ import { isCancellationError, sendAiCancelled, beginRequestExecution, finishRequ
 import { estimateTextTokens, estimateMessagesTokens, estimateTextTokensForProvider, estimateCurrentMessageTokensForProvider, computeHistoryBudget, appendChatTurnToSession, appendUserMessageToSession, appendFailedChatTurnToSession, selectHistoryForModel, createSummaryMessage, loadSessionCompressorPrompt, filterLlmContextMessages } from "./token-budget.js";
 import { getSessionProjectPath, toChatMessage, clampSessionOpenMessageLimit, createPreviewValue, createTimelinePageResult, startFullSessionLoad, waitForFullSessionLoad } from "./session-preview.js";
 import { createProviderChatOptions } from "./provider-chat-options.js";
+import { createRuntimeSessionUiMetadata } from "./session-ui-metadata.js";
 import { createGodotRuntimeStatus } from "./godot-runtime-status.js";
 import { clipTextByChars, cloneAdditionalContextItems, getAdditionalContextDataRecord, getContextNumber, getContextString, createLineColumnRangeText, appendScriptSelectionPromptLines, appendFilesystemSelectionPromptLines, createAdditionalContextPromptSection } from "./additional-context.js";
 import { MAX_GUIDE_TEXT_CHARS, createGuideId, createPendingGuide, serializePendingGuide, findPendingGuideIndexById, findPendingGuideByClientId, readEventDataObject, hydratePendingGuides, persistGuideEvent, formatGuidePromptSection, consumePendingGuideSection } from "./pending-guides.js";
@@ -174,6 +175,38 @@ import { compressSessionHistory } from "./session-compression.js";
 import { getWebSearchSettingsStatus, isWebSearchToolAvailable } from "../web-search-settings-store.js";
 
 const WEB_SEARCH_TOOL_NAME: string = "mcp_web_search";
+
+function applyChatRequestModelSnapshot(session: ClientSession, params: AiChatParams): boolean {
+	if (params.provider === undefined && params.model === undefined) {
+		return false;
+	}
+
+	const nextProvider: ProviderId = params.provider ?? session.activeProvider;
+	if (!isProviderId(nextProvider)) {
+		return false;
+	}
+
+	const providerChanged: boolean = nextProvider !== session.activeProvider;
+	const currentModel: string = session.providerModel ?? session.modelProfile.model ?? getProviderDefaultModel(session.activeProvider);
+	const requestedModel: string | undefined = params.model?.trim();
+	const nextModel: string = requestedModel !== undefined && requestedModel.length > 0
+		? requestedModel
+		: providerChanged
+			? getProviderDefaultModel(nextProvider)
+			: currentModel;
+	if (!providerChanged && nextModel === currentModel) {
+		return false;
+	}
+
+	session.activeProvider = nextProvider;
+	session.providerModel = nextModel;
+	session.modelProfile = resolveModelProfile(nextProvider, nextModel);
+	if (providerChanged) {
+		session.providerApiKey = undefined;
+		session.providerBaseUrl = undefined;
+	}
+	return true;
+}
 
 function isImageGenerationOnlyToolRestriction(toolNames: readonly string[] | undefined): boolean {
 	return toolNames !== undefined && toolNames.length === 1 && toolNames[0] === "mcp_image_generate";
@@ -444,6 +477,10 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				mode: rawParams.mode ?? session.workbenchComposer.chatMode,
 				additionalContext: rawParams.additionalContext ?? session.workbenchComposer.additionalContext
 			});
+			const modelSnapshotChanged: boolean = applyChatRequestModelSnapshot(session, params);
+			if (modelSnapshotChanged && session.sessionId !== undefined) {
+				await updateSessionMetadata(session.sessionId, createRuntimeSessionUiMetadata(session));
+			}
 			const webSearchEnabled: boolean = params.webSearchEnabled === true;
 			const webSearchAvailable: boolean = webSearchEnabled ? await isWebSearchToolAvailable() : false;
 			if (webSearchEnabled && !webSearchAvailable) {
@@ -520,6 +557,8 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 
 			try {
 				const options: ProviderChatOptions = createProviderChatOptions(session, apiKey);
+				const isFirstUserTurn: boolean = isFirstSessionUserTurn(session.messages, request.id);
+				maybeScheduleSessionTitleGeneration(socket, request.id, session, params, options, isFirstUserTurn);
 				const hydratedParams: AiChatParams = await hydrateImageAttachmentContexts(session.sessionId, params);
 				const imagePreprocess: ImageRecognitionPreprocessResult = await preprocessImageAttachmentsForTextModel(
 					hydratedParams,
@@ -551,13 +590,12 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				});
 				const requestHasImages: boolean = hasImageAttachments(effectiveParams);
 				if (effectiveParams.mode === "plan") {
-					const plannerOptions: ProviderChatOptions = (await resolveProviderTaskModelOptions("workflowPlanner", options)).options;
 					const plan: StoredPlan = await createInitialPlan(
 						socket,
 						request.id,
 						session,
 						effectiveParams,
-						plannerOptions,
+						options,
 						mcpHost,
 						turnStartedAt,
 						abortController.signal
@@ -629,7 +667,6 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 					session.summaryMessage = undefined;
 					session.summaryCoveredMessageCount = undefined;
 				}
-				const wasEmptyBeforeUserMessage: boolean = session.messages.length === 0;
 				await appendUserMessageToSession(
 					session,
 					effectiveParams.message,
@@ -637,7 +674,6 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 					turnStartedAt,
 					effectiveParams.additionalContext
 				);
-				maybeScheduleSessionTitleGeneration(socket, request.id, session, effectiveParams, options, wasEmptyBeforeUserMessage);
 				await maybeAutoCompressContextBeforeRun(
 					socket,
 					request.id,

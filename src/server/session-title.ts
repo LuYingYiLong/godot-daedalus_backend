@@ -16,6 +16,12 @@ export function shouldApplyGeneratedSessionTitle(originalTitle: string | undefin
 	return (currentTitle ?? "").trim() === (originalTitle ?? "").trim();
 }
 
+export function isFirstSessionUserTurn(messages: readonly ChatMessage[], requestId: string): boolean {
+	return !messages.some((message: ChatMessage): boolean => (
+		message.role === "user" && message.requestId !== requestId
+	));
+}
+
 export function normalizeGeneratedSessionTitle(rawTitle: string): string {
 	let title: string = rawTitle
 		.replace(/^[\s"'“”‘’`]+|[\s"'“”‘’`]+$/g, "")

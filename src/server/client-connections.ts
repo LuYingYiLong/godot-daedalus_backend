@@ -240,6 +240,14 @@ export function beginSessionRun(sessionId: string | undefined, requestId: string
 	return { ok: true };
 }
 
+export function getActiveSessionRunRequestId(sessionId: string | undefined): string | undefined {
+	if (sessionId === undefined) {
+		return undefined;
+	}
+
+	return activeSessionRuns.get(sessionId);
+}
+
 export function finishSessionRun(sessionId: string | undefined, requestId: string): void {
 	if (sessionId === undefined) {
 		return;
