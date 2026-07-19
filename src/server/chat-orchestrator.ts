@@ -569,6 +569,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 					}
 				);
 				const storedUserPrompt: string = await getUserPrompt();
+				await mcpHost.ensureGlobalCustomServers();
 				const effectiveParams: AiChatParams = {
 					...imagePreprocess.params,
 					systemPrompt: imagePreprocess.params.systemPrompt ?? (storedUserPrompt.length > 0 ? storedUserPrompt : undefined)

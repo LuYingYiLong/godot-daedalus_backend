@@ -138,7 +138,7 @@ const WEB_SEARCH_TOOL_DEFINITIONS: ChatCompletionTool[] = [
 		{
 			query: { type: "string", description: "面向搜索引擎的简洁查询，包含关键实体、地区、时间或版本。" },
 			reason: { type: "string", description: "为什么需要联网搜索，例如 current policy、latest model capability、unknown entity。" },
-			maxResults: { type: "integer", minimum: 1, maximum: 10, description: "最多返回的搜索结果数，默认 5，最大 10。" }
+			maxResults: { type: "integer", minimum: 0, maximum: 100, description: "最多返回的搜索结果数；不提供时使用 Daedalus Search 设置，范围 0-100。" }
 		},
 		["query"]
 	)

@@ -304,21 +304,22 @@ test("Zhipu web search tool uses provider-native web_search and returns sources"
 			const { updateWebSearchSettings } = await import("../../../src/web-search-settings-store.js");
 			await updateWebSearchSettings({
 				provider: "zhipu",
-				model: "glm-5.2"
+				model: "glm-5.2",
+				maxResults: 20
 			});
 
 			const { executeLlmToolWithIdempotency } = await import("../../../src/tools/tool-idempotency.js");
 			const toolResult = await executeLlmToolWithIdempotency(
 				{} as never,
 				"mcp_web_search",
-				{ query: "current Daedalus release", reason: "latest version", maxResults: 3 }
+				{ query: "current Daedalus release", reason: "latest version" }
 			);
 			const searchRequest = requests.find((request: RecordedRequest): boolean => request.url === "/web_search");
 			assert.equal(searchRequest?.authorization, "Bearer zhipu-test-key");
 			assert.equal(searchRequest?.body.search_query, "current Daedalus release");
 			assert.equal(searchRequest?.body.search_engine, "search_std");
 			assert.equal(searchRequest?.body.search_intent, false);
-			assert.equal(searchRequest?.body.count, 3);
+			assert.equal(searchRequest?.body.count, 20);
 			assert.equal(searchRequest?.body.search_recency_filter, "noLimit");
 			assert.equal(searchRequest?.body.content_size, "medium");
 			assert.equal(typeof searchRequest?.body.request_id, "string");
@@ -342,6 +343,40 @@ test("Zhipu web search tool uses provider-native web_search and returns sources"
 				source: "Example",
 				publishedAt: "2026-07-18"
 			}]);
+		});
+	});
+});
+
+test("Zhipu web search tool lets explicit maxResults override settings", async (): Promise<void> => {
+	await withTempAppData(async (): Promise<void> => {
+		await withZhipuMockServer(async (baseUrl: string, requests: RecordedRequest[]): Promise<void> => {
+			mock.method(keytar, "setPassword", async (): Promise<void> => undefined);
+			mock.method(keytar, "getPassword", async (_service: string, account: string): Promise<string | null> => {
+				return account === "provider:zhipu:api_key" ? "zhipu-test-key" : null;
+			});
+
+			await saveProviderConfig({
+				provider: "zhipu",
+				apiKey: "zhipu-test-key",
+				baseUrl,
+				model: "glm-5.2"
+			});
+			const { updateWebSearchSettings } = await import("../../../src/web-search-settings-store.js");
+			await updateWebSearchSettings({
+				provider: "zhipu",
+				model: "glm-5.2",
+				maxResults: 50
+			});
+
+			const { executeLlmToolWithIdempotency } = await import("../../../src/tools/tool-idempotency.js");
+			await executeLlmToolWithIdempotency(
+				{} as never,
+				"mcp_web_search",
+				{ query: "current Daedalus release", maxResults: 3 }
+			);
+
+			const searchRequest = requests.find((request: RecordedRequest): boolean => request.url === "/web_search");
+			assert.equal(searchRequest?.body.count, 3);
 		});
 	});
 });

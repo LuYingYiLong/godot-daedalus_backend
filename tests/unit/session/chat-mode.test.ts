@@ -3,7 +3,13 @@ import test from "node:test";
 import { aiChatParamsSchema } from "../../../src/protocol/schema.js";
 import type { AiChatParams } from "../../../src/protocol/types.js";
 import { composeSystemPrompt } from "../../../src/prompts/registry.js";
-import { clearDynamicMcpToolsForWorkspace, getPlanSafeDynamicMcpToolNames, replaceDynamicMcpToolsForWorkspace } from "../../../src/tools/dynamic-mcp-tools.js";
+import {
+	clearDynamicMcpToolsForWorkspace,
+	clearGlobalDynamicMcpTools,
+	getPlanSafeDynamicMcpToolNames,
+	replaceDynamicMcpToolsForWorkspace,
+	replaceGlobalDynamicMcpTools
+} from "../../../src/tools/dynamic-mcp-tools.js";
 import { CUSTOM_MCP_TOOLS_SENTINEL } from "../../../src/tools/tool-sentinels.js";
 import { READ_TOOLS, VERIFY_TOOLS, WRITE_TOOLS } from "../../../src/workflow/planner.js";
 import { createPhasePrompt } from "../../../src/workflow/runner.js";
@@ -123,6 +129,35 @@ test("ask and plan modes allow built-in read, verify and plan-safe custom MCP to
 	);
 	assert.deepEqual(planAllowedTools, allowedTools);
 	clearDynamicMcpToolsForWorkspace(workspaceId);
+});
+
+test("ask and plan modes allow plan-safe custom MCP tools without workspace", (): void => {
+	replaceGlobalDynamicMcpTools([
+		{
+			serverId: "context7",
+			serverName: "context7",
+			toolName: "get-library-docs",
+			planAccess: "read"
+		}
+	]);
+
+	try {
+		const allowedTools: readonly string[] | undefined = resolveAllowedToolsForChatParams(
+			{
+				message: "用 context7 查 React 文档",
+				mode: "ask"
+			},
+			undefined,
+			undefined
+		);
+		const planSafeDynamicToolNames: string[] = getPlanSafeDynamicMcpToolNames();
+
+		assert.ok(allowedTools !== undefined);
+		assert.equal(planSafeDynamicToolNames.length, 1);
+		assert.equal(allowedTools.includes(planSafeDynamicToolNames[0] ?? ""), true);
+	} finally {
+		clearGlobalDynamicMcpTools();
+	}
 });
 
 test("agent mode honors explicit builtin skill tool restriction", (): void => {

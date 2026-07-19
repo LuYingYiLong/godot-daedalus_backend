@@ -6,13 +6,20 @@ import { McpSession } from "./mcp-session.js";
 import type { McpServerConfig } from "./types.js";
 import { findWorkspace, getDefaultWorkspace } from "../workspace/registry.js";
 import type { WorkspaceConfig } from "../workspace/types.js";
-import { clearDynamicMcpToolsForWorkspace, replaceDynamicMcpToolsForWorkspace, type DynamicMcpToolSource } from "../tools/dynamic-mcp-tools.js";
+import {
+	clearDynamicMcpToolsForWorkspace,
+	clearGlobalDynamicMcpTools,
+	replaceDynamicMcpToolsForWorkspace,
+	replaceGlobalDynamicMcpTools,
+	type DynamicMcpToolSource
+} from "../tools/dynamic-mcp-tools.js";
 import { getCurrentMcpWorkspaceId } from "./request-context.js";
 import { logger } from "../logger.js";
 
 const CUSTOM_MCP_CONNECT_TIMEOUT_MS: number = 30_000;
 const CUSTOM_MCP_LIST_TOOLS_TIMEOUT_MS: number = 10_000;
 const CUSTOM_MCP_CLOSE_TIMEOUT_MS: number = 2_000;
+const GLOBAL_CUSTOM_SCOPE_ID: string = "__global_custom_mcp__";
 
 type McpToolListResult = {
 	tools: Array<{
@@ -59,13 +66,19 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
 export class McpHost {
 	private workspaceSessions: Map<string, Map<string, McpSession>> = new Map();
 	private workspaceCustomTools: Map<string, Map<string, DynamicMcpToolSource[]>> = new Map();
+	private globalCustomSessions: Map<string, McpSession> = new Map();
+	private globalCustomTools: Map<string, DynamicMcpToolSource[]> = new Map();
 	private customServerStatuses: Map<string, CustomMcpServerRuntimeStatus> = new Map();
 	private workspaceInitializations: Map<string, Promise<void>> = new Map();
+	private globalCustomInitialization?: Promise<void> | undefined;
+	private globalCustomInitialized: boolean = false;
 	private activeWorkspaceId?: string | undefined;
 	private readonly editorBridge: GodotEditorBridge = new GodotEditorBridge();
 	private readonly diagnosticsBridge: GodotDiagnosticsBridge = new GodotDiagnosticsBridge();
 
 	async connectAll(): Promise<void> {
+		await this.ensureGlobalCustomServers();
+
 		if (process.env.MCP_AUTO_CONNECT !== "1") {
 			logger.info("mcp", "lazy_workspace_startup");
 			return;
@@ -113,8 +126,7 @@ export class McpHost {
 
 	private async initializeWorkspace(workspace: WorkspaceConfig): Promise<void> {
 		const configs: McpServerConfig[] = [
-			...buildMcpServerConfigs(workspace),
-			...await buildCustomMcpServerConfigs(workspace)
+			...buildMcpServerConfigs(workspace)
 		];
 		if (configs.length === 0) {
 			throw new Error(`MCP workspace has no project path: ${workspace.id}`);
@@ -235,66 +247,55 @@ export class McpHost {
 		replaceDynamicMcpToolsForWorkspace(workspaceId, workspaceTools === undefined ? [] : Array.from(workspaceTools.values()).flat());
 	}
 
-	async refreshCustomServersForActiveWorkspace(): Promise<void> {
-		const workspaceId: string | undefined = getCurrentMcpWorkspaceId() ?? this.activeWorkspaceId;
-		if (workspaceId === undefined) {
-			return;
-		}
-
-		await this.refreshCustomServersForWorkspace(workspaceId);
+	private syncGlobalDynamicTools(): void {
+		replaceGlobalDynamicMcpTools(Array.from(this.globalCustomTools.values()).flat());
 	}
 
-	async refreshCustomServersForWorkspace(workspaceId: string): Promise<void> {
-		const workspace: WorkspaceConfig | undefined = findWorkspace(workspaceId);
-		if (workspace === undefined) {
+	async ensureGlobalCustomServers(): Promise<void> {
+		if (this.globalCustomInitialized) {
+			return;
+		}
+		if (this.globalCustomInitialization !== undefined) {
+			await this.globalCustomInitialization;
 			return;
 		}
 
-		await this.ensureWorkspace(workspace);
-		const sessions: Map<string, McpSession> | undefined = this.workspaceSessions.get(workspace.id);
-		if (sessions === undefined) {
-			return;
+		this.globalCustomInitialization = this.refreshGlobalCustomServers();
+		try {
+			await this.globalCustomInitialization;
+		} finally {
+			this.globalCustomInitialization = undefined;
 		}
+	}
 
-		for (const [serverId, session] of sessions.entries()) {
-			if (!session.isCustom) {
-				continue;
-			}
-
+	async refreshGlobalCustomServers(): Promise<void> {
+		for (const session of this.globalCustomSessions.values()) {
 			await this.closeCustomSessionQuietly(session);
-			sessions.delete(serverId);
 		}
 
-		this.workspaceCustomTools.set(workspace.id, new Map());
-		const customConfigs: McpServerConfig[] = await buildCustomMcpServerConfigs(workspace);
-		const enabledCustomIds: Set<string> = new Set(customConfigs.map((config: McpServerConfig): string => config.id));
-		const workspaceStatusPrefix: string = `${workspace.id}\u0000`;
-		for (const statusKey of this.customServerStatuses.keys()) {
-			if (!statusKey.startsWith(workspaceStatusPrefix)) {
-				continue;
-			}
-			const serverId: string = customStatusServerId(statusKey);
-			if (!enabledCustomIds.has(serverId)) {
+		this.globalCustomSessions.clear();
+		this.globalCustomTools.clear();
+		for (const statusKey of Array.from(this.customServerStatuses.keys())) {
+			if (statusKey.startsWith(`${GLOBAL_CUSTOM_SCOPE_ID}\u0000`)) {
 				this.customServerStatuses.delete(statusKey);
 			}
 		}
 
+		const customConfigs: McpServerConfig[] = await buildCustomMcpServerConfigs();
 		for (const config of customConfigs) {
 			const session: McpSession = new McpSession(config);
 			try {
 				await this.connectSession(config, session);
-				await this.cacheCustomServerTools(workspace.id, config, session);
-				sessions.set(config.id, session);
-				logger.info("mcp", "custom_session_connected", {
-					workspaceId: workspace.id,
+				await this.cacheGlobalCustomServerTools(config, session);
+				this.globalCustomSessions.set(config.id, session);
+				logger.info("mcp", "global_custom_session_connected", {
 					serverId: config.id,
 					serverName: config.name
 				});
 			} catch (error: unknown) {
 				await this.closeCustomSessionQuietly(session);
-				this.setCustomServerError(workspace.id, config.id, error);
-				logger.warn("mcp", "custom_session_failed", {
-					workspaceId: workspace.id,
+				this.setCustomServerError(GLOBAL_CUSTOM_SCOPE_ID, config.id, error);
+				logger.warn("mcp", "global_custom_session_failed", {
 					serverId: config.id,
 					serverName: config.name,
 					error: error instanceof Error ? error.message : error
@@ -302,7 +303,44 @@ export class McpHost {
 			}
 		}
 
-		this.syncDynamicToolsForWorkspace(workspace.id);
+		this.syncGlobalDynamicTools();
+		this.globalCustomInitialized = true;
+	}
+
+	private async cacheGlobalCustomServerTools(config: McpServerConfig, session: McpSession): Promise<void> {
+		const toolsResult: McpToolListResult = await withTimeout(
+			session.listTools(),
+			CUSTOM_MCP_LIST_TOOLS_TIMEOUT_MS,
+			`Custom MCP "${config.name}" listTools`
+		) as McpToolListResult;
+		const toolSources: DynamicMcpToolSource[] = toolsResult.tools.map((tool): DynamicMcpToolSource => ({
+			serverId: config.id,
+			serverName: config.name,
+			toolName: tool.name,
+			description: tool.description,
+			inputSchema: tool.inputSchema,
+			planAccess: config.planAccess ?? "disabled"
+		}));
+
+		this.globalCustomTools.set(config.id, toolSources);
+		this.customServerStatuses.set(customStatusKey(GLOBAL_CUSTOM_SCOPE_ID, config.id), {
+			id: config.id,
+			status: "connected",
+			toolCount: toolSources.length
+		});
+		logger.info("mcp", "global_custom_tools_cached", {
+			serverId: config.id,
+			serverName: config.name,
+			toolCount: toolSources.length
+		});
+	}
+
+	async refreshCustomServersForActiveWorkspace(): Promise<void> {
+		await this.refreshGlobalCustomServers();
+	}
+
+	async refreshCustomServersForWorkspace(_workspaceId: string): Promise<void> {
+		await this.refreshGlobalCustomServers();
 	}
 
 	private getWorkspaceId(workspaceId?: string | undefined): string {
@@ -368,6 +406,11 @@ export class McpHost {
 	}
 
 	getSession(id: string, workspaceId?: string | undefined): McpSession {
+		const globalCustomSession: McpSession | undefined = this.globalCustomSessions.get(id);
+		if (globalCustomSession !== undefined) {
+			return globalCustomSession;
+		}
+
 		const resolvedWorkspaceId: string = this.getWorkspaceId(workspaceId);
 		const session: McpSession | undefined = this.getActiveSessions(resolvedWorkspaceId).get(id);
 
@@ -379,17 +422,26 @@ export class McpHost {
 	}
 
 	getConnectedServerIds(workspaceId?: string | undefined): string[] {
+		const globalCustomServerIds: string[] = Array.from(this.globalCustomSessions.keys());
 		const resolvedWorkspaceId: string | undefined = workspaceId ?? getCurrentMcpWorkspaceId() ?? this.activeWorkspaceId;
 		if (!resolvedWorkspaceId) {
-			return this.editorBridge.isOnline() ? [GODOT_EDITOR_SERVER_ID] : [];
+			const serverIds: string[] = [...globalCustomServerIds];
+			if (this.editorBridge.isOnline()) {
+				serverIds.push(GODOT_EDITOR_SERVER_ID);
+			}
+			return serverIds.sort();
 		}
 
 		const sessions: Map<string, McpSession> | undefined = this.workspaceSessions.get(resolvedWorkspaceId);
 		if (!sessions) {
-			return this.editorBridge.isOnline(resolvedWorkspaceId) ? [GODOT_EDITOR_SERVER_ID] : [];
+			const serverIds: string[] = [...globalCustomServerIds];
+			if (this.editorBridge.isOnline(resolvedWorkspaceId)) {
+				serverIds.push(GODOT_EDITOR_SERVER_ID);
+			}
+			return serverIds.sort();
 		}
 
-		const serverIds: string[] = Array.from(sessions.keys());
+		const serverIds: string[] = [...globalCustomServerIds, ...Array.from(sessions.keys())];
 		serverIds.push(GODOT_DIAGNOSTICS_SERVER_ID);
 		if (this.editorBridge.isOnline(resolvedWorkspaceId)) {
 			serverIds.push(GODOT_EDITOR_SERVER_ID);
@@ -408,12 +460,15 @@ export class McpHost {
 	getCustomServerStatusesForWorkspace(workspaceId?: string | undefined): CustomMcpServerRuntimeStatus[] {
 		const resolvedWorkspaceId: string | undefined = workspaceId ?? getCurrentMcpWorkspaceId() ?? this.activeWorkspaceId;
 		if (resolvedWorkspaceId === undefined) {
-			return Array.from(this.customServerStatuses.values());
+			const globalStatusPrefix: string = `${GLOBAL_CUSTOM_SCOPE_ID}\u0000`;
+			return Array.from(this.customServerStatuses.entries())
+				.filter(([key]: [string, CustomMcpServerRuntimeStatus]): boolean => key.startsWith(globalStatusPrefix))
+				.map(([_key, status]: [string, CustomMcpServerRuntimeStatus]): CustomMcpServerRuntimeStatus => status);
 		}
 
 		const workspaceStatusPrefix: string = `${resolvedWorkspaceId}\u0000`;
 		return Array.from(this.customServerStatuses.entries())
-			.filter(([key]: [string, CustomMcpServerRuntimeStatus]): boolean => key.startsWith(workspaceStatusPrefix))
+			.filter(([key]: [string, CustomMcpServerRuntimeStatus]): boolean => key.startsWith(workspaceStatusPrefix) || key.startsWith(`${GLOBAL_CUSTOM_SCOPE_ID}\u0000`))
 			.map(([_key, status]: [string, CustomMcpServerRuntimeStatus]): CustomMcpServerRuntimeStatus => status);
 	}
 
@@ -475,16 +530,24 @@ export class McpHost {
 	}
 
 	async closeAll(): Promise<void> {
+		for (const session of this.globalCustomSessions.values()) {
+			await session.close();
+		}
+
 		for (const sessions of this.workspaceSessions.values()) {
 			for (const session of sessions.values()) {
 				await session.close();
 			}
 		}
 
+		this.globalCustomSessions.clear();
+		this.globalCustomTools.clear();
 		this.workspaceSessions.clear();
 		this.workspaceCustomTools.clear();
 		this.customServerStatuses.clear();
+		clearGlobalDynamicMcpTools();
 		this.activeWorkspaceId = undefined;
+		this.globalCustomInitialized = false;
 		this.diagnosticsBridge.clearWorkspace();
 	}
 }

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { clearDynamicMcpToolsForWorkspace, replaceDynamicMcpToolsForWorkspace } from "../../../src/tools/dynamic-mcp-tools.js";
+import { clearDynamicMcpToolsForWorkspace, clearGlobalDynamicMcpTools, replaceDynamicMcpToolsForWorkspace, replaceGlobalDynamicMcpTools } from "../../../src/tools/dynamic-mcp-tools.js";
 import { createWorkspaceToolCatalog } from "../../../src/tools/tool-catalog.js";
-import { filterToolNamesForWorkspace, getDefaultWorkflowToolNames } from "../../../src/tools/tool-catalog.js";
+import { filterToolNamesForWorkspace, getDefaultWorkflowToolNames, getNoWorkspaceToolNames } from "../../../src/tools/tool-catalog.js";
 import { CUSTOM_MCP_TOOLS_SENTINEL } from "../../../src/tools/tool-sentinels.js";
 
 function getFunctionToolName(tool: { type: string; function?: { name: string } | undefined }): string {
@@ -99,10 +99,34 @@ test("workspace runtime filter hides Godot tools without an active workspace", (
 		"mcp_skills_load",
 		"mcp_godot_get_runtime_status",
 		"mcp_image_generate",
-		"mcp_web_search"
+		"mcp_web_search",
+		CUSTOM_MCP_TOOLS_SENTINEL,
+		"mcp_custom_context7_get_library_docs_12345678"
 	], undefined).sort();
-	assert.deepEqual(names, ["mcp_image_generate", "mcp_web_search"]);
+	assert.deepEqual(names, ["mcp_custom_context7_get_library_docs_12345678", "mcp_image_generate", "mcp_web_search", CUSTOM_MCP_TOOLS_SENTINEL].sort());
+	assert.deepEqual(getNoWorkspaceToolNames().sort(), ["mcp_image_generate", "mcp_web_search", CUSTOM_MCP_TOOLS_SENTINEL].sort());
 	assert.deepEqual(filterToolNamesForWorkspace(getDefaultWorkflowToolNames("write"), undefined), ["mcp_image_generate"]);
+});
+
+test("workspace tool catalog exposes global dynamic MCP tools without workspace", (): void => {
+	replaceGlobalDynamicMcpTools([{
+		serverId: "context7",
+		serverName: "context7",
+		toolName: "get-library-docs",
+		planAccess: "read"
+	}]);
+
+	try {
+		const catalog = createWorkspaceToolCatalog();
+		const dynamicTools = catalog.getDefinitionsForNames([CUSTOM_MCP_TOOLS_SENTINEL]);
+		const toolName: string = getFunctionToolName(dynamicTools[0]!);
+
+		assert.match(toolName, /^mcp_custom_context7_/u);
+		assert.deepEqual(catalog.resolveMapping(toolName), { serverId: "context7", toolName: "get-library-docs" });
+		assert.equal(catalog.getToolNamesForPhase("read").includes(toolName), true);
+	} finally {
+		clearGlobalDynamicMcpTools();
+	}
 });
 
 test("workflow defaults are catalog-backed and resolve to known tools", (): void => {

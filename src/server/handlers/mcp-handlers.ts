@@ -32,6 +32,7 @@ function canCallMcpToolDirectly(toolName: string): boolean {
 }
 
 async function createMcpConfigListResult(mcpHost: McpHost, workspaceId?: string | undefined): Promise<Record<string, unknown>> {
+	await mcpHost.ensureGlobalCustomServers();
 	const summaries: CustomMcpServerSummary[] = await listCustomMcpServerSummaries();
 	const statusesById: Map<string, CustomMcpServerRuntimeStatus> = new Map(
 		mcpHost.getCustomServerStatusesForWorkspace(workspaceId).map((status: CustomMcpServerRuntimeStatus): [string, CustomMcpServerRuntimeStatus] => [status.id, status])

@@ -26,6 +26,7 @@ type DynamicToolSet = {
 	metadata: Map<string, DynamicMcpToolMetadata>;
 };
 
+let globalDynamicTools: DynamicToolSet = createEmptyDynamicToolSet();
 const workspaceDynamicTools: Map<string, DynamicToolSet> = new Map();
 
 function createEmptyDynamicToolSet(): DynamicToolSet {
@@ -68,10 +69,20 @@ function buildDynamicToolSet(sources: readonly DynamicMcpToolSource[]): DynamicT
 	return { definitions, mapping, metadata };
 }
 
+function mergeDynamicToolSets(primary: DynamicToolSet, secondary: DynamicToolSet): DynamicToolSet {
+	return {
+		definitions: [...primary.definitions, ...secondary.definitions],
+		mapping: new Map([...primary.mapping, ...secondary.mapping]),
+		metadata: new Map([...primary.metadata, ...secondary.metadata])
+	};
+}
+
 function getDynamicToolSet(workspaceId?: string | undefined): DynamicToolSet {
-	return workspaceId === undefined
-		? createEmptyDynamicToolSet()
-		: workspaceDynamicTools.get(workspaceId) ?? createEmptyDynamicToolSet();
+	if (workspaceId === undefined) {
+		return globalDynamicTools;
+	}
+
+	return mergeDynamicToolSets(globalDynamicTools, workspaceDynamicTools.get(workspaceId) ?? createEmptyDynamicToolSet());
 }
 
 function slugifyToolPart(value: string, maxLength: number): string {
@@ -143,6 +154,14 @@ export function replaceDynamicMcpToolsForWorkspace(workspaceId: string, sources:
 
 export function clearDynamicMcpToolsForWorkspace(workspaceId: string): void {
 	workspaceDynamicTools.delete(workspaceId);
+}
+
+export function replaceGlobalDynamicMcpTools(sources: readonly DynamicMcpToolSource[]): void {
+	globalDynamicTools = buildDynamicToolSet(sources);
+}
+
+export function clearGlobalDynamicMcpTools(): void {
+	globalDynamicTools = createEmptyDynamicToolSet();
 }
 
 export function getDynamicMcpToolNames(workspaceId?: string | undefined): string[] {

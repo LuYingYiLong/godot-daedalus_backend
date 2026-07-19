@@ -389,6 +389,7 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 	params: z.object({
 			provider: providerIdSchema.optional(),
 			model: z.string().min(1).optional(),
+			maxResults: z.number().min(0).max(100).optional(),
 		}),
 	}),
 	z.object({

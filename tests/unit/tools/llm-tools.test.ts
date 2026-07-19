@@ -8,7 +8,9 @@ import {
 	getDynamicMcpToolMetadata,
 	getPlanSafeDynamicMcpToolNames,
 	isPlanSafeDynamicMcpToolName,
+	clearGlobalDynamicMcpTools,
 	clearDynamicMcpToolsForWorkspace,
+	replaceGlobalDynamicMcpTools,
 	replaceDynamicMcpToolsForWorkspace
 } from "../../../src/tools/dynamic-mcp-tools.js";
 import { CUSTOM_MCP_TOOLS_SENTINEL } from "../../../src/tools/tool-sentinels.js";
@@ -25,6 +27,7 @@ type FunctionTool = ReturnType<typeof getToolDefinitions>[number] & {
 const WORKSPACE_ID: string = "llm-tools-workspace";
 
 afterEach((): void => {
+	clearGlobalDynamicMcpTools();
 	clearDynamicMcpToolsForWorkspace(WORKSPACE_ID);
 });
 
@@ -100,6 +103,53 @@ test("dynamic MCP tools are included only through the custom sentinel", (): void
 	assert.deepEqual(withoutSentinel, ["mcp_godot_read_text_file"]);
 	assert.notEqual(dynamicName, undefined);
 	assert.equal(getDynamicMcpToolMetadata(dynamicName ?? "", WORKSPACE_ID)?.toolName, "make_level");
+});
+
+test("global dynamic MCP tools are available without workspace", (): void => {
+	replaceGlobalDynamicMcpTools([
+		{
+			serverId: "context7",
+			serverName: "context7",
+			toolName: "get-library-docs",
+			description: "Fetch current library documentation"
+		}
+	]);
+
+	const dynamicNames: string[] = getToolDefinitionsForNames([CUSTOM_MCP_TOOLS_SENTINEL])
+		.filter(isFunctionTool)
+		.map((tool): string => tool.function.name);
+	const contextName: string | undefined = dynamicNames.find((name: string): boolean => name.startsWith("mcp_custom_context7"));
+
+	assert.notEqual(contextName, undefined);
+	assert.deepEqual(resolveToolMapping(contextName ?? ""), {
+		serverId: "context7",
+		toolName: "get-library-docs"
+	});
+	assert.equal(getDynamicMcpToolMetadata(contextName ?? "")?.serverId, "context7");
+});
+
+test("workspace dynamic MCP tools include global tools", (): void => {
+	replaceGlobalDynamicMcpTools([
+		{
+			serverId: "context7",
+			serverName: "context7",
+			toolName: "get-library-docs"
+		}
+	]);
+	replaceDynamicMcpToolsForWorkspace(WORKSPACE_ID, [
+		{
+			serverId: "workspace-local",
+			serverName: "Workspace Local",
+			toolName: "inspect"
+		}
+	]);
+
+	const dynamicNames: string[] = getToolDefinitionsForNames([CUSTOM_MCP_TOOLS_SENTINEL], WORKSPACE_ID)
+		.filter(isFunctionTool)
+		.map((tool): string => tool.function.name);
+
+	assert.equal(dynamicNames.some((name: string): boolean => getDynamicMcpToolMetadata(name, WORKSPACE_ID)?.serverId === "context7"), true);
+	assert.equal(dynamicNames.some((name: string): boolean => getDynamicMcpToolMetadata(name, WORKSPACE_ID)?.serverId === "workspace-local"), true);
 });
 
 test("tool mapping resolves builtin and dynamic tools", (): void => {

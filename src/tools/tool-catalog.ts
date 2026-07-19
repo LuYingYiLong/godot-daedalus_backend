@@ -112,7 +112,9 @@ const NO_WORKSPACE_TOOL_NAMES: ReadonlySet<string> = new Set([
 ]);
 
 export function isToolAvailableWithoutWorkspace(toolName: string): boolean {
-	return NO_WORKSPACE_TOOL_NAMES.has(toolName);
+	return NO_WORKSPACE_TOOL_NAMES.has(toolName)
+		|| toolName === CUSTOM_MCP_TOOLS_SENTINEL
+		|| isDynamicMcpToolName(toolName);
 }
 
 export function filterToolNamesForWorkspace(toolNames: readonly string[], workspaceId?: string | undefined): string[] {
@@ -123,7 +125,7 @@ export function filterToolNamesForWorkspace(toolNames: readonly string[], worksp
 }
 
 export function getNoWorkspaceToolNames(): string[] {
-	return [...NO_WORKSPACE_TOOL_NAMES];
+	return [...NO_WORKSPACE_TOOL_NAMES, CUSTOM_MCP_TOOLS_SENTINEL];
 }
 
 export type ToolCatalogEntry = {

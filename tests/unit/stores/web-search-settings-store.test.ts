@@ -31,6 +31,7 @@ test("web search settings expose supported catalog models", async (): Promise<vo
 
 		assert.equal(status.provider, "zhipu");
 		assert.equal(status.model, "glm-5.2");
+		assert.equal(status.maxResults, 5);
 		assert.equal(status.available, false);
 		assert.equal(status.configured, false);
 		assert.equal(status.models.length, 1);
@@ -49,16 +50,30 @@ test("web search settings persist search model and report configured availabilit
 
 		const saved = await store.updateWebSearchSettings({
 			provider: "zhipu",
-			model: "glm-5.2"
+			model: "glm-5.2",
+			maxResults: 20
 		});
 
 		assert.equal(saved.available, true);
 		assert.equal(saved.configured, true);
+		assert.equal(saved.maxResults, 20);
 		assert.equal(saved.apiKeyMasked, "zhi...-key");
 		const rawConfig: string = await readFile(appPaths.getWebSearchSettingsConfigPath(), "utf8");
 		assert.doesNotMatch(rawConfig, /"enabled"/u);
 		assert.match(rawConfig, /"provider": "zhipu"/u);
 		assert.match(rawConfig, /"model": "glm-5\.2"/u);
+		assert.match(rawConfig, /"maxResults": 20/u);
+	});
+});
+
+test("web search settings clamp persisted search result count", async (): Promise<void> => {
+	await withTempAppData(async (): Promise<void> => {
+		mock.method(keytar, "getPassword", async (): Promise<string | null> => null);
+		const store = await import(`../../../src/web-search-settings-store.js?case=${Date.now()}-${Math.random()}`);
+
+		assert.equal((await store.updateWebSearchSettings({ maxResults: -1 })).maxResults, 0);
+		assert.equal((await store.updateWebSearchSettings({ maxResults: 101 })).maxResults, 100);
+		assert.equal((await store.updateWebSearchSettings({ maxResults: 12.8 })).maxResults, 12);
 	});
 });
 

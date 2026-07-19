@@ -28,8 +28,8 @@ export type WebSearchResult = {
 	results: WebSearchResultItem[];
 };
 
-const DEFAULT_MAX_RESULTS: number = 5;
-const MAX_RESULTS: number = 10;
+const MIN_RESULTS: number = 0;
+const MAX_RESULTS: number = 100;
 const WEB_SEARCH_TIMEOUT_MS: number = 45_000;
 
 type AbortSignalHandle = {
@@ -88,7 +88,7 @@ export function parseWebSearchToolArgs(args: Record<string, unknown>): WebSearch
 	return {
 		query,
 		reason: getString(args.reason),
-		maxResults: rawMaxResults === undefined ? undefined : clampInteger(rawMaxResults, 1, MAX_RESULTS)
+		maxResults: rawMaxResults === undefined ? undefined : clampInteger(rawMaxResults, MIN_RESULTS, MAX_RESULTS)
 	};
 }
 
@@ -191,6 +191,7 @@ async function parseErrorMessage(response: Response): Promise<string> {
 
 async function executeZhipuWebSearch(config: WebSearchRuntimeConfig, input: WebSearchToolArgs, abortSignal?: AbortSignal | undefined): Promise<WebSearchResult> {
 	const signalHandle: AbortSignalHandle = createAbortSignalHandle(abortSignal);
+	const maxResults: number = input.maxResults ?? config.maxResults;
 	try {
 		const response: Response = await fetch(createEndpointUrl(config), {
 			method: "POST",
@@ -202,7 +203,7 @@ async function executeZhipuWebSearch(config: WebSearchRuntimeConfig, input: WebS
 				search_query: createZhipuSearchQuery(input),
 				search_engine: "search_std",
 				search_intent: false,
-				count: input.maxResults ?? DEFAULT_MAX_RESULTS,
+				count: Math.max(1, maxResults),
 				search_recency_filter: "noLimit",
 				content_size: "medium",
 				request_id: randomUUID()
@@ -220,7 +221,8 @@ async function executeZhipuWebSearch(config: WebSearchRuntimeConfig, input: WebS
 		}
 		const results: WebSearchResultItem[] = collectZhipuSearchRecords(body)
 			.map(parseSearchResultItem)
-			.filter((item: WebSearchResultItem | null): item is WebSearchResultItem => item !== null);
+			.filter((item: WebSearchResultItem | null): item is WebSearchResultItem => item !== null)
+			.slice(0, maxResults);
 		const answer: string = getZhipuAnswer(body) || `Web search returned ${results.length} result${results.length === 1 ? "" : "s"}.`;
 
 		return {

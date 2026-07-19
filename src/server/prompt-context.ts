@@ -205,6 +205,7 @@ function canCallMcpToolDirectly(toolName: string): boolean {
 }
 
 async function createMcpConfigListResult(mcpHost: McpHost, workspaceId?: string | undefined): Promise<Record<string, unknown>> {
+	await mcpHost.ensureGlobalCustomServers();
 	const summaries: CustomMcpServerSummary[] = await listCustomMcpServerSummaries();
 	const statusesById: Map<string, CustomMcpServerRuntimeStatus> = new Map(
 		mcpHost.getCustomServerStatusesForWorkspace(workspaceId).map((status: CustomMcpServerRuntimeStatus): [string, CustomMcpServerRuntimeStatus] => [status.id, status])
@@ -314,6 +315,7 @@ function formatRuntimeValue(value: unknown): string {
 }
 
 export async function createMcpSystemContext(mcpHost: McpHost, session: ClientSession): Promise<string> {
+	await mcpHost.ensureGlobalCustomServers();
 	const workspaceId: string | undefined = session.activeWorkspace?.id;
 	const serverIds: string[] = mcpHost.getConnectedServerIds(workspaceId);
 	const godotRuntime: Record<string, unknown> = createGodotRuntimeStatus(session, mcpHost);
@@ -323,9 +325,8 @@ export async function createMcpSystemContext(mcpHost: McpHost, session: ClientSe
 		sections.push("## 工作区状态");
 		sections.push("- 当前会话未选择工作区。");
 		sections.push("- Godot 项目、编辑器、LSP/DAP 和项目文件工具在本轮不可用；不要尝试读取、创建或修改 Godot 项目。");
-		sections.push("- 如果用户需要项目级操作，请要求用户先选择或添加工作区；如果只是普通问答或图片生成，可以继续完成。");
+		sections.push("- 如果用户需要项目级操作，请要求用户先选择或添加工作区；普通问答、图片生成、联网搜索和用户自定义 MCP 工具仍可继续使用。");
 		sections.push("");
-		return sections.join("\n");
 	}
 
 	// Godot environment section

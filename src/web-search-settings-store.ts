@@ -15,12 +15,14 @@ export type WebSearchSettings = {
 	schemaVersion: 1;
 	provider: ProviderId;
 	model: string;
+	maxResults: number;
 	updatedAt: string;
 };
 
 export type WebSearchSettingsPatch = {
 	provider?: ProviderId | undefined;
 	model?: string | undefined;
+	maxResults?: number | undefined;
 };
 
 export type WebSearchModelOption = {
@@ -46,6 +48,7 @@ export type WebSearchSettingsStatus = WebSearchSettings & {
 export type WebSearchRuntimeConfig = {
 	provider: ProviderId;
 	model: string;
+	maxResults: number;
 	apiKey: string;
 	baseUrl?: string | undefined;
 };
@@ -53,11 +56,15 @@ export type WebSearchRuntimeConfig = {
 const SUPPORTED_WEB_SEARCH_PROVIDERS: ReadonlySet<ProviderId> = new Set(["zhipu"]);
 const FALLBACK_PROVIDER: ProviderId = "zhipu";
 const FALLBACK_MODEL: string = "glm-5.2";
+const DEFAULT_MAX_RESULTS: number = 5;
+const MIN_MAX_RESULTS: number = 0;
+const MAX_MAX_RESULTS: number = 100;
 
 export const DEFAULT_WEB_SEARCH_SETTINGS: WebSearchSettings = {
 	schemaVersion: 1,
 	provider: FALLBACK_PROVIDER,
 	model: FALLBACK_MODEL,
+	maxResults: DEFAULT_MAX_RESULTS,
 	updatedAt: ""
 };
 
@@ -100,6 +107,13 @@ function normalizeSearchProvider(value: unknown): ProviderId {
 	return DEFAULT_WEB_SEARCH_SETTINGS.provider;
 }
 
+function normalizeMaxResults(value: unknown): number {
+	if (typeof value !== "number" || !Number.isFinite(value)) {
+		return DEFAULT_WEB_SEARCH_SETTINGS.maxResults;
+	}
+	return Math.min(MAX_MAX_RESULTS, Math.max(MIN_MAX_RESULTS, Math.floor(value)));
+}
+
 export function normalizeWebSearchSettings(value: unknown): WebSearchSettings {
 	if (!isRecord(value) || value.schemaVersion !== 1) {
 		return { ...DEFAULT_WEB_SEARCH_SETTINGS };
@@ -117,6 +131,7 @@ export function normalizeWebSearchSettings(value: unknown): WebSearchSettings {
 		schemaVersion: 1,
 		provider,
 		model,
+		maxResults: normalizeMaxResults(value.maxResults),
 		updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : ""
 	};
 }
@@ -151,6 +166,7 @@ export async function updateWebSearchSettings(patch: WebSearchSettingsPatch): Pr
 		schemaVersion: 1,
 		provider,
 		model,
+		maxResults: patch.maxResults === undefined ? current.maxResults : normalizeMaxResults(patch.maxResults),
 		updatedAt: new Date().toISOString()
 	};
 	validateSettings(next);
@@ -215,6 +231,7 @@ export async function resolveWebSearchRuntimeConfig(): Promise<WebSearchRuntimeC
 	return {
 		provider: settings.provider,
 		model: settings.model,
+		maxResults: settings.maxResults,
 		apiKey: config.apiKey,
 		baseUrl: config.baseUrl
 	};

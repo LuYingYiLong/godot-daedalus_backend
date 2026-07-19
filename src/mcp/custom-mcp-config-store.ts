@@ -484,7 +484,7 @@ export async function listCustomMcpServerSummaries(): Promise<CustomMcpServerSum
 	return summaries;
 }
 
-export async function buildCustomMcpServerConfigs(workspace: WorkspaceConfig): Promise<McpServerConfig[]> {
+export async function buildCustomMcpServerConfigs(workspace?: WorkspaceConfig | undefined): Promise<McpServerConfig[]> {
 	const configs: StoredCustomMcpServerConfig[] = await readStoredConfigs();
 	const result: McpServerConfig[] = [];
 
@@ -495,10 +495,12 @@ export async function buildCustomMcpServerConfigs(workspace: WorkspaceConfig): P
 
 		if (config.transport === "stdio") {
 			const env: Record<string, string> = {
-				BACKEND_DIR: process.cwd(),
-				GODOT_PROJECT_PATH: workspace.rootPath
+				BACKEND_DIR: process.cwd()
 			};
-			if (workspace.godotExecutablePath !== undefined) {
+			if (workspace !== undefined) {
+				env.GODOT_PROJECT_PATH = workspace.rootPath;
+			}
+			if (workspace?.godotExecutablePath !== undefined) {
 				env.GODOT_EXECUTABLE_PATH = workspace.godotExecutablePath;
 			}
 
