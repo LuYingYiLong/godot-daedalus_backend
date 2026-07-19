@@ -179,6 +179,56 @@ async function withMiniMaxThinkTagMockServer(streaming: boolean, run: (baseUrl: 
 	}
 }
 
+async function withApprovalToolCallMockServer(run: (baseUrl: string, requests: RecordedRequest[]) => Promise<void>): Promise<void> {
+	const requests: RecordedRequest[] = [];
+	const server: Server = createServer(async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
+		const body: Record<string, unknown> = await readRequestBody(request);
+		requests.push({ url: request.url ?? "", body });
+		assert.equal(request.url, "/chat/completions");
+
+		response.writeHead(200, { "Content-Type": "application/json" });
+		response.end(JSON.stringify({
+			id: "chatcmpl-approval",
+			object: "chat.completion",
+			created: 1,
+			model: "deepseek-chat",
+			choices: [{
+				index: 0,
+				message: {
+					role: "assistant",
+					content: null,
+					tool_calls: [{
+						id: "call-write",
+						type: "function",
+						function: {
+							name: "mcp_godot_create_text_file",
+							arguments: JSON.stringify({
+								relativePath: "approval-test.md",
+								content: "hello",
+								approvalReason: "Create a small file to test the approval UI."
+							})
+						}
+					}]
+				},
+				finish_reason: "tool_calls"
+			}]
+		}));
+	});
+	server.listen(0, "127.0.0.1");
+	await once(server, "listening");
+	const address = server.address();
+	if (address === null || typeof address === "string") {
+		throw new Error("Mock server did not expose a TCP port");
+	}
+
+	try {
+		await run(`http://127.0.0.1:${address.port}`, requests);
+	} finally {
+		server.close();
+		await once(server, "close");
+	}
+}
+
 test("DeepSeek V4 thinking models skip required tool_choice", (): void => {
 	const tools: ChatCompletionTool[] = [{
 		type: "function",
@@ -339,6 +389,44 @@ test("MiniMax non-streaming agent strips think tags from visible text", async ()
 		assert.equal(result.text, "最终答案。");
 		assert.deepEqual(thinking, ["先分析一下"]);
 		assert.equal(thinkingDoneCount, 1);
+	});
+});
+
+test("agent uses model-provided approval reason and strips it from pending args", async (): Promise<void> => {
+	await withApprovalToolCallMockServer(async (baseUrl: string, requests: RecordedRequest[]): Promise<void> => {
+		const gateway = new ApprovalGateway();
+		const approvalEvents: Record<string, unknown>[] = [];
+		const result = await runOpenAICompatibleAgent(
+			{ message: "create a test file" },
+			{ provider: "deepseek", apiKey: "test-key", baseUrl, model: "deepseek-chat" },
+			[],
+			"System prompt",
+			createMockMcpHost(),
+			gateway,
+			["mcp_godot_create_text_file"],
+			(event): void => {
+				if (event.type === "tool.approval_required") {
+					approvalEvents.push(event);
+				}
+			}
+		);
+
+		assert.equal(result.status, "approval_required");
+		assert.equal(result.reason, "Create a small file to test the approval UI.");
+		assert.equal(requests.length, 1);
+		const pending = gateway.listPending()[0];
+		assert.notEqual(pending, undefined);
+		assert.equal(pending?.reason, "Create a small file to test the approval UI.");
+		assert.deepEqual(pending?.args, {
+			relativePath: "approval-test.md",
+			content: "hello"
+		});
+		assert.equal(approvalEvents.length, 1);
+		assert.equal(approvalEvents[0]?.reason, "Create a small file to test the approval UI.");
+		assert.deepEqual(approvalEvents[0]?.args, {
+			relativePath: "approval-test.md",
+			content: "hello"
+		});
 	});
 });
 

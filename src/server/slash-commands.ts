@@ -5,6 +5,9 @@ import type { SkillWorkspace } from "../skills/types.js";
 import type { McpHost } from "../mcp/mcp-host.js";
 import type { ClientSession } from "./client-session.js";
 import { sendJson } from "./send-json.js";
+import { appendApprovalEvent } from "../session/session-store.js";
+import { createPersistedApprovalRequestedData } from "../session/approval-persistence.js";
+import { emitWorkbenchUpdated } from "./workbench.js";
 
 export type SlashCommandDefinition = {
 	command: string;
@@ -46,6 +49,14 @@ const SLASH_COMMANDS: readonly SlashCommandDefinition[] = [
 		description: "显示待审批工具调用。",
 		requiresArgument: false,
 		examples: ["/approvals"]
+	},
+	{
+		command: "/test-approval",
+		usage: "/test-approval",
+		insertText: "/test-approval",
+		description: "创建一个用于 Studio UI 调试的待审批文件写入。",
+		requiresArgument: false,
+		examples: ["/test-approval"]
 	},
 	{
 		command: "/skills",
@@ -144,6 +155,40 @@ function formatPendingApprovals(session: ClientSession): string {
 			`  - Args: \`${JSON.stringify(approval.args)}\``
 		].join("\n"))
 	].join("\n");
+}
+
+async function createTestApproval(socket: WebSocket, request: ClientRequest, session: ClientSession): Promise<string> {
+	const workspaceId: string | undefined = session.activeWorkspace?.id;
+	if (workspaceId === undefined) {
+		return "当前会话没有工作区，无法创建文件写入审批。请选择一个工作区后再运行 `/test-approval`。";
+	}
+
+	const suffix: string = Date.now().toString(36);
+	const pending = session.approvalGateway.requestApproval(
+		"mcp_godot_create_text_file",
+		{
+			relativePath: `daedalus-approval-test-${suffix}.md`,
+			content: "# Daedalus approval test\n\nThis file is created only if the pending approval is approved.\n"
+		},
+		`slash-test-approval-${suffix}`,
+		"Create a temporary markdown file to test the Studio approval UI.",
+		workspaceId,
+		session.editorInstanceId,
+		session.sessionId
+	);
+
+	if (session.sessionId !== undefined) {
+		await appendApprovalEvent(
+			session.sessionId,
+			pending.approvalId,
+			request.id,
+			"requested",
+			createPersistedApprovalRequestedData(pending, undefined, workspaceId)
+		);
+	}
+
+	emitWorkbenchUpdated(socket, request.id, session);
+	return `已创建测试审批：\`${pending.approvalId}\`。请在 Studio 审批面板中 Approve 或 Reject。`;
 }
 
 function getSkillWorkspace(session: ClientSession): SkillWorkspace {
@@ -272,6 +317,11 @@ export async function handleSlashCommand(params: {
 
 	if (command === "/approvals") {
 		sendChatText(socket, request, formatPendingApprovals(session), session, mcpHost, createSessionInfo);
+		return { type: "handled" };
+	}
+
+	if (command === "/test-approval") {
+		sendChatText(socket, request, await createTestApproval(socket, request, session), session, mcpHost, createSessionInfo);
 		return { type: "handled" };
 	}
 

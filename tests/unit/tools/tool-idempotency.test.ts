@@ -41,6 +41,23 @@ test("tool execution fingerprints include workspace scope", (): void => {
 	assert.equal(alpha?.argsHash, beta?.argsHash);
 });
 
+test("approval reason does not affect execution fingerprints", (): void => {
+	const baseArgs: Record<string, unknown> = {
+		relativePath: "scripts/player.gd",
+		content: "extends Node\n"
+	};
+	const argsWithReason: Record<string, unknown> = {
+		...baseArgs,
+		approvalReason: "Create the script file so the approval UI can explain the change."
+	};
+
+	const base = getLlmToolExecutionIdentity("mcp_godot_create_text_file", baseArgs, "workspace:alpha");
+	const withReason = getLlmToolExecutionIdentity("mcp_godot_create_text_file", argsWithReason, "workspace:alpha");
+
+	assert.notEqual(base, undefined);
+	assert.deepEqual(withReason, base);
+});
+
 test("read tools do not produce execution identities", (): void => {
 	assert.equal(getLlmToolExecutionIdentity("mcp_godot_read_text_file", { relativePath: "project.godot" }), undefined);
 });

@@ -13,6 +13,7 @@ import { parseExternalMcpMode, isToolAllowedForExternalMcpMode, type ExternalMcp
 import { getApprovalMode } from "../../approval-settings-store.js";
 import { logger } from "../../logger.js";
 import { isWebSearchToolAvailable } from "../../web-search-settings-store.js";
+import { getApprovalReasonFromArgs, stripApprovalReasonArg } from "../../tools/approval-reason.js";
 
 function getToolDefinitionName(definition: ChatCompletionTool): string {
 	return definition.type === "function" ? definition.function.name : "";
@@ -87,13 +88,15 @@ export async function handleToolRequest(socket: WebSocket, request: ClientReques
 		const mode: ExternalMcpMode = parseExternalMcpMode(request.params.mode);
 		const toolName: string = request.params.toolName;
 		const args: Record<string, unknown> = request.params.args ?? {};
+		const executionArgs: Record<string, unknown> = stripApprovalReasonArg(args);
+		const approvalReason: string = getApprovalReasonFromArgs(args, "");
 		const entry: ToolCatalogEntry | undefined = await findCatalogEntry(session, toolName);
 		if (entry === undefined) {
 			sendToolError(socket, request, "unknown_tool", `Unknown tool: ${toolName}`);
 			break;
 		}
 
-		const effectivePolicy: ToolPolicy | undefined = getEffectiveToolPolicy(toolName, args, session.activeWorkspace?.id);
+		const effectivePolicy: ToolPolicy | undefined = getEffectiveToolPolicy(toolName, executionArgs, session.activeWorkspace?.id);
 		if (!isToolAllowedForExternalMcpMode(mode, toolName, effectivePolicy)) {
 			sendToolError(socket, request, "tool_not_allowed", `Tool is not allowed in external MCP ${mode} mode: ${toolName}`);
 			break;
@@ -102,18 +105,19 @@ export async function handleToolRequest(socket: WebSocket, request: ClientReques
 		const approvalMode = await getApprovalMode();
 		session.approvalGateway.setMode(approvalMode);
 		const toolCallId: string = request.params.toolCallId ?? request.id;
-		const decision: ApprovalDecision = await session.approvalGateway.evaluate(toolName, args, toolCallId, session.activeWorkspace?.id);
+		const decision: ApprovalDecision = await session.approvalGateway.evaluate(toolName, executionArgs, toolCallId, session.activeWorkspace?.id);
 		if (decision.action === "deny") {
 			sendToolError(socket, request, "tool_denied", decision.reason);
 			break;
 		}
 
 		if (decision.action === "request_approval") {
+			const reason: string = approvalReason.length > 0 ? approvalReason : decision.reason;
 			const pending = session.approvalGateway.requestApproval(
 				toolName,
-				args,
+				executionArgs,
 				toolCallId,
-				decision.reason,
+				reason,
 				session.activeWorkspace?.id,
 				session.editorInstanceId,
 				session.sessionId
@@ -133,8 +137,8 @@ export async function handleToolRequest(socket: WebSocket, request: ClientReques
 					approvalId: pending.approvalId,
 					reason: pending.reason,
 					toolName,
-					args,
-					display: describeToolEvent(toolName, args, session.activeWorkspace?.id)
+					args: executionArgs,
+					display: describeToolEvent(toolName, executionArgs, session.activeWorkspace?.id)
 				}
 			});
 			break;
@@ -144,7 +148,7 @@ export async function handleToolRequest(socket: WebSocket, request: ClientReques
 			const result: IdempotentToolExecutionResult = await executeLlmToolWithIdempotency(
 				mcpHost,
 				toolName,
-				args,
+				executionArgs,
 				session.activeWorkspace?.id,
 				session.editorInstanceId,
 				session.sessionId
@@ -160,7 +164,7 @@ export async function handleToolRequest(socket: WebSocket, request: ClientReques
 					resultChars: result.rawContentLength,
 					truncated: result.truncated,
 					cached: result.reused,
-					parsed: parseToolResultSummary(toolName, args, result.content)
+					parsed: parseToolResultSummary(toolName, executionArgs, result.content)
 				}
 			});
 		} catch (error: unknown) {

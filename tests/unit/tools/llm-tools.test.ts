@@ -18,6 +18,7 @@ type FunctionTool = ReturnType<typeof getToolDefinitions>[number] & {
 	type: "function";
 	function: {
 		name: string;
+		parameters?: unknown;
 	};
 };
 
@@ -37,6 +38,20 @@ function getToolNames(workspaceId?: string | undefined): string[] {
 		.map((tool): string => tool.function.name);
 }
 
+function getToolProperties(toolName: string, workspaceId?: string | undefined): Record<string, unknown> {
+	const tool: FunctionTool | undefined = getToolDefinitionsForNames([toolName], workspaceId)
+		.filter(isFunctionTool)
+		.find((item: FunctionTool): boolean => item.function.name === toolName);
+	assert.notEqual(tool, undefined);
+	const parameters: unknown = tool?.function.parameters;
+	assert.equal(typeof parameters, "object");
+	assert.notEqual(parameters, null);
+	const properties: unknown = (parameters as Record<string, unknown>).properties;
+	assert.equal(typeof properties, "object");
+	assert.notEqual(properties, null);
+	return properties as Record<string, unknown>;
+}
+
 test("builtin tool definitions expose representative Godot tools", (): void => {
 	const names: string[] = getToolNames();
 
@@ -46,6 +61,15 @@ test("builtin tool definitions expose representative Godot tools", (): void => {
 	assert.ok(names.includes("mcp_terminal_get_job_status"));
 	assert.ok(names.includes("mcp_terminal_cancel_job"));
 	assert.ok(names.includes("mcp_web_search"));
+});
+
+test("approval-gated write tools expose approval reason metadata", (): void => {
+	assert.ok("approvalReason" in getToolProperties("mcp_godot_create_text_file"));
+	assert.ok("approvalReason" in getToolProperties("mcp_godot_create_scene"));
+	assert.ok("approvalReason" in getToolProperties("mcp_godot_delete_file"));
+	assert.equal("approvalReason" in getToolProperties("mcp_godot_read_text_file"), false);
+	assert.equal("approvalReason" in getToolProperties("mcp_godot_propose_create_text_file"), false);
+	assert.equal("approvalReason" in getToolProperties("mcp_godot_propose_create_scene"), false);
 });
 
 test("dynamic MCP tools are included only through the custom sentinel", (): void => {

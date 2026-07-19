@@ -18,7 +18,6 @@ import {
 	applyPlanClarification,
 	applyPlanRevision,
 	createApprovedPlanExecutionParams,
-	sendPlanMessageDelta,
 	sendPlanMessageDone
 } from "../plan-mode.js";
 import { sendSessionEvent } from "../session-events.js";
@@ -58,12 +57,10 @@ function sendPlanResponse(socket: WebSocket, requestId: string, plan: StoredPlan
 
 async function emitPlanUpdate(socket: WebSocket, requestId: string, session: ClientSession, plan: StoredPlan, revised: boolean): Promise<void> {
 	if (plan.metadata.status === "clarification_required") {
-		sendPlanMessageDelta(socket, requestId, session, `我还需要继续确认一个关键点：\n\n${plan.metadata.clarificationQuestion ?? ""}\n`);
 		sendSessionEvent(socket, requestId, session, "plan.clarification.required", createPlanEventPayload(plan));
 		sendPlanMessageDone(socket, requestId, session, plan.metadata.planId);
 		return;
 	}
-	sendPlanMessageDelta(socket, requestId, session, revised ? "我已根据你的反馈修订计划，请重新预览并确认。\n" : "我已根据你的澄清生成计划，请预览并确认。\n");
 	sendSessionEvent(socket, requestId, session, revised ? "plan.revised" : "plan.generated", createPlanEventPayload(plan));
 	sendPlanMessageDone(socket, requestId, session, plan.metadata.planId);
 }
@@ -95,7 +92,6 @@ export async function handlePlanRequest(socket: WebSocket, request: ClientReques
 				if (sessionId === undefined) {
 					throw new Error("Plan clarification requires an active session.");
 				}
-				sendPlanMessageDelta(socket, request.id, session, "我正在吸收你的澄清并重新判断计划是否足够明确。\n\n");
 				const apiKey: string | undefined = await ensureProviderConfigured(session);
 				if (!apiKey) {
 					sendProviderMissing(socket, request.id, session);
@@ -124,7 +120,6 @@ export async function handlePlanRequest(socket: WebSocket, request: ClientReques
 				if (sessionId === undefined) {
 					throw new Error("Plan revision requires an active session.");
 				}
-				sendPlanMessageDelta(socket, request.id, session, "我正在根据你的反馈修订计划，会保持在只读规划阶段。\n\n");
 				const apiKey: string | undefined = await ensureProviderConfigured(session);
 				if (!apiKey) {
 					sendProviderMissing(socket, request.id, session);

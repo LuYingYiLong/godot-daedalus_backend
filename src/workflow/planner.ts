@@ -125,6 +125,55 @@ function createPlan(title: string, phaseIds: FixedWorkflowPhaseId[]): WorkflowPl
 	};
 }
 
+export function isApprovalTestRequest(message: string): boolean {
+	const normalized: string = message.toLowerCase();
+	const mentionsApproval: boolean = includesAny(normalized, [
+		"审批",
+		"approval",
+		"approve"
+	]);
+	const requestsTrigger: boolean = includesAny(normalized, [
+		"拉起",
+		"触发",
+		"测试",
+		"试一下",
+		"随便",
+		"test",
+		"trigger",
+		"show"
+	]);
+
+	return mentionsApproval && requestsTrigger && !isExplicitReadOnlyRequest(normalized);
+}
+
+export function createApprovalTestWorkflowPlan(params: AiChatParams): WorkflowPlan {
+	const phase: WorkflowPhase = {
+		id: "approval-test",
+		title: "触发审批",
+		toolGroup: "write",
+		promptId: params.promptId,
+		skillId: undefined,
+		toolBudget: "project_edit",
+		allowedTools: ["mcp_godot_create_text_file"],
+		instruction: [
+			"为测试 Studio 审批界面，必须通过 API tool_calls 调用 mcp_godot_create_text_file 创建一个临时 Markdown 文件。",
+			"不要调用只读工具，不要只描述计划或意图。",
+			"建议参数：relativePath 使用 daedalus-approval-test.md 或带短随机后缀的 .md 文件名；content 写明这是审批 UI 测试文件。",
+			"必须填写 approvalReason，例如：Create a temporary markdown file to test the Studio approval UI."
+		].join("\n"),
+		acceptanceCriteria: ["已发起 mcp_godot_create_text_file 写入调用并进入审批流程。"],
+		requireToolCallOnFirstStep: true
+	};
+	return {
+		id: createWorkflowId(),
+		title: createWorkflowTitle(params.message),
+		phases: [phase],
+		todos: createTodos([phase]),
+		source: "fixed",
+		revision: 0
+	};
+}
+
 export function createSingleAnswerPlan(params: AiChatParams, allowedTools?: readonly string[] | undefined): WorkflowPlan {
 	const title: string = createWorkflowTitle(params.message);
 	const phase: WorkflowPhase = {
@@ -242,6 +291,10 @@ export function planWorkflow(params: AiChatParams): WorkflowPlan | null {
 	const text: string = params.message.toLowerCase();
 	if (isExplicitReadOnlyRequest(text)) {
 		return null;
+	}
+
+	if (params.mode === "agent" && isApprovalTestRequest(text)) {
+		return createApprovalTestWorkflowPlan(params);
 	}
 
 	const wantsReview: boolean = includesAny(text, ["审查", "检查", "review", "code review", "复查", "评审"]);

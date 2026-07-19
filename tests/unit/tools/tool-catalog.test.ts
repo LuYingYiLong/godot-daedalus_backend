@@ -15,6 +15,17 @@ function getFunctionToolName(tool: { type: string; function?: { name: string } |
 	return functionDefinition.name;
 }
 
+function getFunctionToolProperties(tool: { type: string; function?: { parameters?: unknown } | undefined }): Record<string, unknown> {
+	assert.equal(tool.type, "function");
+	const parameters: unknown = tool.function?.parameters;
+	assert.equal(typeof parameters, "object");
+	assert.notEqual(parameters, null);
+	const properties: unknown = (parameters as Record<string, unknown>).properties;
+	assert.equal(typeof properties, "object");
+	assert.notEqual(properties, null);
+	return properties as Record<string, unknown>;
+}
+
 test("workspace tool catalog keeps dynamic MCP definitions isolated", (): void => {
 	replaceDynamicMcpToolsForWorkspace("catalog-a", [{
 		serverId: "a",
@@ -53,6 +64,34 @@ test("workspace tool catalog keeps builtin metadata complete", (): void => {
 	assert.deepEqual(sceneCapture?.mapping, { serverId: "godot_editor", toolName: "capture_scene_view" });
 	assert.equal(sceneCapture?.policy.risk, "read");
 	assert.equal(sceneCapture?.capabilityRequirement, "sceneViewCapture");
+});
+
+test("workspace tool catalog exposes approval reason schema for write tools", (): void => {
+	replaceDynamicMcpToolsForWorkspace("catalog-approval", [{
+		serverId: "writer",
+		serverName: "Writer",
+		toolName: "write_file",
+		inputSchema: {
+			type: "object",
+			properties: {
+				path: { type: "string" }
+			},
+			required: ["path"]
+		}
+	}]);
+
+	try {
+		const catalog = createWorkspaceToolCatalog({ workspaceId: "catalog-approval" });
+		const createScene = catalog.getDefinitionsForNames(["mcp_godot_create_scene"])[0];
+		const readText = catalog.getDefinitionsForNames(["mcp_godot_read_text_file"])[0];
+		const dynamicWrite = catalog.getDefinitionsForNames([CUSTOM_MCP_TOOLS_SENTINEL])[0];
+
+		assert.ok("approvalReason" in getFunctionToolProperties(createScene!));
+		assert.equal("approvalReason" in getFunctionToolProperties(readText!), false);
+		assert.ok("approvalReason" in getFunctionToolProperties(dynamicWrite!));
+	} finally {
+		clearDynamicMcpToolsForWorkspace("catalog-approval");
+	}
 });
 
 test("workspace runtime filter hides Godot tools without an active workspace", (): void => {

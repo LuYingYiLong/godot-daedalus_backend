@@ -363,14 +363,15 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 				pending.llmToolName,
 				result.fileEditDraft
 			);
-			sendSessionEvent(socket, request.id, session, "agent.tool.approved", {
+			sendSessionEvent(socket, approvalPersistRequestId, session, "agent.tool.approved", {
 				type: "agent.tool.approved",
 				runId: continuationRunId,
 				stepRunId: continuationStepRunId,
 				approvalId: request.params.approvalId,
+				toolCallId: pending.toolCallId,
 				toolName: pending.llmToolName
 			}, resultPersistRequestId);
-			sendSessionEvent(socket, request.id, session, "agent.tool.result", {
+			sendSessionEvent(socket, approvalPersistRequestId, session, "agent.tool.result", {
 				type: "agent.tool.result",
 				runId: continuationRunId,
 				stepRunId: continuationStepRunId,
@@ -396,7 +397,7 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 			session.pendingAiContinuations.delete(request.params.approvalId);
 			const onToolEvent: OnToolEvent = createAgentToolEventForwarder(
 				socket,
-				request.id,
+				pendingContinuation.requestId,
 				session,
 				continuationRunId,
 				continuationStepRunId,
@@ -445,7 +446,7 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 			if (continuationWorkflowState !== undefined) {
 				await continueWorkflowExecution(
 					socket,
-					request.id,
+					pendingContinuation.requestId,
 					session,
 					mcpHost,
 					pendingContinuation.options,
@@ -463,7 +464,7 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 
 			await sendContinuedAgentResult(
 				socket,
-				request.id,
+				pendingContinuation.requestId,
 				session,
 				mcpHost,
 				agentResult,

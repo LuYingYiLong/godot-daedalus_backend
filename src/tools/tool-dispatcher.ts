@@ -9,6 +9,7 @@ import type { FileEditBatchDraft } from "./file-edit-snapshots.js";
 import type { ImageGenerationResult } from "../providers/image-generation.js";
 import type { ToolExecutionContext } from "./tool-catalog.js";
 import { logger } from "../logger.js";
+import { getApprovalReasonFromArgs, stripApprovalReasonArg } from "./approval-reason.js";
 
 export type ToolEvent =
 	| { type: "ai.delta"; text: string }
@@ -90,14 +91,16 @@ async function executeSingleToolCall(
 	}
 
 	const workspaceId: string | undefined = toolContext?.workspaceId ?? mcpHost.getActiveWorkspaceId();
-	const decision = await gateway.evaluate(functionName, argsParsed, toolCall.id, workspaceId);
+	const executionArgs: Record<string, unknown> = stripApprovalReasonArg(argsParsed);
+	const approvalReason: string = getApprovalReasonFromArgs(argsParsed, "");
+	const decision = await gateway.evaluate(functionName, executionArgs, toolCall.id, workspaceId);
 	logger.debug("tool", "policy_evaluated", {
 		toolCallId: toolCall.id,
 		toolName: functionName,
 		step,
 		action: decision.action,
 		reason: "reason" in decision ? decision.reason : undefined,
-		args: argsParsed
+		args: executionArgs
 	});
 
 	if (decision.action === "deny") {
@@ -116,15 +119,16 @@ async function executeSingleToolCall(
 	}
 
 	if (decision.action === "request_approval") {
-		const pending = gateway.requestApproval(functionName, argsParsed, toolCall.id, decision.reason, workspaceId, toolContext?.editorInstanceId, toolContext?.sessionId);
+		const reason: string = approvalReason.length > 0 ? approvalReason : decision.reason;
+		const pending = gateway.requestApproval(functionName, executionArgs, toolCall.id, reason, workspaceId, toolContext?.editorInstanceId, toolContext?.sessionId);
 		logger.info("tool", "approval_required", {
 			toolCallId: toolCall.id,
 			toolName: functionName,
 			step,
 			approvalId: pending.approvalId,
 			workspaceId,
-			reason: decision.reason,
-			args: argsParsed
+			reason,
+			args: executionArgs
 		});
 		onEvent?.({
 			type: "tool.approval_required",
@@ -132,9 +136,9 @@ async function executeSingleToolCall(
 			toolCallId: toolCall.id,
 			toolName: functionName,
 			approvalId: pending.approvalId,
-			reason: decision.reason,
-			args: argsParsed,
-			...describeToolEvent(functionName, argsParsed, workspaceId)
+			reason,
+			args: executionArgs,
+			...describeToolEvent(functionName, executionArgs, workspaceId)
 		});
 
 		throw new ToolApprovalRequiredError(pending);
@@ -146,8 +150,8 @@ async function executeSingleToolCall(
 			step,
 			toolCallId: toolCall.id,
 			toolName: functionName,
-			args: argsParsed,
-			...describeToolEvent(functionName, argsParsed, workspaceId)
+			args: executionArgs,
+			...describeToolEvent(functionName, executionArgs, workspaceId)
 		});
 	}
 
@@ -157,18 +161,18 @@ async function executeSingleToolCall(
 		toolName: functionName,
 		step,
 		workspaceId,
-		args: argsParsed
+		args: executionArgs
 	});
 	try {
 		if (abortSignal?.aborted) {
 			throw new Error("Request cancelled");
 		}
-		const rawResult = await executeLlmToolWithIdempotency(mcpHost, functionName, argsParsed, workspaceId, toolContext?.editorInstanceId, toolContext?.sessionId, abortSignal);
+		const rawResult = await executeLlmToolWithIdempotency(mcpHost, functionName, executionArgs, workspaceId, toolContext?.editorInstanceId, toolContext?.sessionId, abortSignal);
 		const result: IdempotentToolExecutionResult = enricher === undefined
 			? rawResult
 			: await enricher({
 				toolName: functionName,
-				args: argsParsed,
+				args: executionArgs,
 				result: rawResult,
 				onProgress: onEvent === undefined
 					? undefined
@@ -182,7 +186,7 @@ async function executeSingleToolCall(
 						});
 					}
 			});
-		const parsedSummary: ParsedToolResultSummary = parseToolResultSummary(functionName, argsParsed, result.content);
+		const parsedSummary: ParsedToolResultSummary = parseToolResultSummary(functionName, executionArgs, result.content);
 		logger.info("tool", "call_finished", {
 			toolCallId: toolCall.id,
 			toolName: functionName,

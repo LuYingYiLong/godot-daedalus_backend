@@ -49,6 +49,12 @@ export type TimelineToolPart = {
 	events: Record<string, unknown>[];
 };
 
+export type TimelinePlanRecommendedReply = {
+	label: string;
+	text: string;
+	description?: string | undefined;
+};
+
 export type TimelineSummaryStartPart = {
 	type: "summary_start";
 	runId: string;
@@ -68,7 +74,7 @@ export type TimelineStatusPart = {
 	code: string;
 	iconUid: string;
 	planId: string;
-	recommendedReplies?: string[] | undefined;
+	recommendedReplies?: TimelinePlanRecommendedReply[] | undefined;
 };
 
 export type TimelinePlanPart = {
@@ -277,10 +283,28 @@ function getToolCallKey(eventData: Record<string, unknown>, requestId: string): 
 	return requestId.length > 0 ? `${requestId}:${baseKey}` : baseKey;
 }
 
+function toolPartMatchesEvent(part: TimelineToolPart, toolCallKey: string, eventData: Record<string, unknown>): boolean {
+	if (part.tool_call_id === toolCallKey) {
+		return true;
+	}
+
+	const toolCallId: string = asString(eventData.toolCallId);
+	const approvalId: string = asString(eventData.approvalId);
+	return part.events.some((event: Record<string, unknown>): boolean => {
+		if (toolCallId.length > 0 && asString(event.toolCallId) === toolCallId) {
+			return true;
+		}
+		if (approvalId.length > 0 && asString(event.approvalId) === approvalId) {
+			return true;
+		}
+		return false;
+	});
+}
+
 function appendToolPart(parts: TimelineBodyPart[], eventData: Record<string, unknown>, requestId: string): void {
 	const toolCallKey: string = getToolCallKey(eventData, requestId);
 	for (const part of parts) {
-		if (part.type === "tool" && part.tool_call_id === toolCallKey) {
+		if (part.type === "tool" && toolPartMatchesEvent(part, toolCallKey, eventData)) {
 			const eventRecordId: string = asString(eventData._eventRecordId);
 			if (eventRecordId.length > 0 && part.events.some((event: Record<string, unknown>): boolean => event._eventRecordId === eventRecordId)) {
 				return;
@@ -404,6 +428,31 @@ function appendStatusPart(parts: TimelineBodyPart[], statusData: Partial<Timelin
 		planId: statusData.planId ?? "",
 		recommendedReplies: statusData.recommendedReplies
 	});
+}
+
+function parsePlanRecommendedReplies(value: unknown): TimelinePlanRecommendedReply[] {
+	if (!Array.isArray(value)) {
+		return [];
+	}
+
+	const replies: TimelinePlanRecommendedReply[] = [];
+	for (const item of value.slice(0, 3)) {
+		if (!isRecord(item)) {
+			continue;
+		}
+		const label: string = asString(item.label).trim();
+		const text: string = asString(item.text).trim();
+		const description: string = asString(item.description).trim();
+		if (label.length === 0 || text.length === 0) {
+			continue;
+		}
+		replies.push({
+			label,
+			text,
+			description: description.length > 0 ? description : undefined
+		});
+	}
+	return replies;
 }
 
 function createPlanPart(eventData: Record<string, unknown>): TimelinePlanPart | null {
@@ -618,17 +667,13 @@ function buildAssistantBodyParts(
 				parts.push(planPart);
 			}
 		} else if (event.event === "plan.clarification.required") {
-			const repliesValue: unknown = eventData.recommendedReplies;
 			appendStatusPart(parts, {
 				status: "message",
-				title: "需要澄清计划",
+				title: asString(eventData.title),
 				details: asString(eventData.question),
-				code: "plan",
-				iconUid: "uid://d1nq6i1hauij0",
+				code: "plan.clarification.required",
 				planId: asString(eventData.planId),
-				recommendedReplies: Array.isArray(repliesValue)
-					? repliesValue.filter((reply: unknown): reply is string => typeof reply === "string").slice(0, 3)
-					: []
+				recommendedReplies: parsePlanRecommendedReplies(eventData.recommendedReplies)
 			});
 		} else if (event.event === "plan.approved") {
 			appendStatusPart(parts, {

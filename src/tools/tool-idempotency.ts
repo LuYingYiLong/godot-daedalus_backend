@@ -9,6 +9,7 @@ import { getToolPolicy } from "./tool-policy.js";
 import { captureFileEditBatchDraft, type FileEditBatchDraft } from "./file-edit-snapshots.js";
 import { logger } from "../logger.js";
 import type { ImageGenerationResult } from "../providers/image-generation.js";
+import { stripApprovalReasonArg } from "./approval-reason.js";
 
 const TOOL_EXECUTION_DEDUP_TTL_MS: number = 30 * 60 * 1000;
 const MAX_COMPLETED_TOOL_EXECUTIONS: number = 500;
@@ -223,7 +224,8 @@ export function getLlmToolExecutionIdentity(
 	}
 
 	const mapping = resolveToolMapping(llmToolName, workspaceId);
-	const argsHash: string = sha256(stableJson(args));
+	const executionArgs: Record<string, unknown> = stripApprovalReasonArg(args);
+	const argsHash: string = sha256(stableJson(executionArgs));
 	const fingerprintHash: string = sha256(`${scope}\n${mapping.serverId}\n${mapping.toolName}\n${argsHash}`);
 	return {
 		fingerprint: `${mapping.serverId}:${mapping.toolName}:${fingerprintHash}`,

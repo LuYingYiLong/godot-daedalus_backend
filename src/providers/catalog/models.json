@@ -171,6 +171,69 @@
     "ownedBy": "moonshot"
   },
   {
+    "id": "gpt-5.6-sol",
+    "displayName": "GPT-5.6 Sol",
+    "provider": "openai",
+    "endpointType": "openai-responses",
+    "contextWindowTokens": 1050000,
+    "maxOutputTokens": 128000,
+    "capabilities": {
+      "imageInput": true,
+      "reasoning": true,
+      "tools": true,
+      "webSearch": true,
+      "vision": true
+    },
+    "ownedBy": "openai"
+  },
+  {
+    "id": "gpt-5.6-terra",
+    "displayName": "GPT-5.6 Terra",
+    "provider": "openai",
+    "endpointType": "openai-responses",
+    "contextWindowTokens": 1050000,
+    "maxOutputTokens": 128000,
+    "capabilities": {
+      "imageInput": true,
+      "reasoning": true,
+      "tools": true,
+      "webSearch": true,
+      "vision": true
+    },
+    "ownedBy": "openai"
+  },
+  {
+    "id": "gpt-5.6-luna",
+    "displayName": "GPT-5.6 Luna",
+    "provider": "openai",
+    "endpointType": "openai-responses",
+    "contextWindowTokens": 1050000,
+    "maxOutputTokens": 128000,
+    "capabilities": {
+      "imageInput": true,
+      "reasoning": true,
+      "tools": true,
+      "webSearch": true,
+      "vision": true
+    },
+    "ownedBy": "openai"
+  },
+  {
+    "id": "gpt-5.3-codex",
+    "displayName": "GPT-5.3-Codex",
+    "provider": "openai",
+    "endpointType": "openai-responses",
+    "contextWindowTokens": 400000,
+    "maxOutputTokens": 128000,
+    "capabilities": {
+      "imageInput": true,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
+    "ownedBy": "openai"
+  },
+  {
     "id": "gpt-5.5",
     "displayName": "GPT-5.5",
     "provider": "openai",
@@ -183,6 +246,18 @@
       "tools": true,
       "webSearch": true,
       "vision": true
+    },
+    "ownedBy": "openai"
+  },
+  {
+    "id": "gpt-image-2",
+    "displayName": "GPT Image 2",
+    "provider": "openai",
+    "endpointType": "openai-responses",
+    "contextWindowTokens": 32000,
+    "maxOutputTokens": 4096,
+    "capabilities": {
+      "imageGeneration": true
     },
     "ownedBy": "openai"
   },

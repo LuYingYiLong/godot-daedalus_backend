@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { clientRequestSchema } from "../../../src/protocol/schema.js";
 import { createSlashHelpText, listSlashCommands } from "../../../src/server/slash-commands.js";
@@ -11,6 +12,7 @@ test("slash command list exposes the existing backend chat commands", (): void =
 		"/help",
 		"/context",
 		"/approvals",
+		"/test-approval",
 		"/skills",
 		"/skill",
 		"/create-skill",
@@ -44,4 +46,10 @@ test("command.list is accepted by the client request schema", (): void => {
 	});
 
 	assert.equal(parsed.method, "command.list");
+});
+
+test("test approval command includes a clear user-facing reason", (): void => {
+	const source: string = readFileSync(new URL("../../../src/server/slash-commands.ts", import.meta.url), "utf8");
+
+	assert.match(source, /Create a temporary markdown file to test the Studio approval UI\./);
 });

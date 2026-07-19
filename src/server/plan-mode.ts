@@ -310,7 +310,6 @@ export async function createPlanDecision(
 		if (result.decision.decision !== "plan_ready" || !requireToolInspection || result.toolCallCount > 0) {
 			return result.decision;
 		}
-		sendPlanMessageDelta(runtime.socket, runtime.requestId, runtime.session, "我需要先读取最小必要上下文，再给出可执行计划。\n");
 	}
 
 	throw new Error("Plan runner did not call any read/verify tool before producing a plan.");
@@ -426,9 +425,8 @@ export async function createInitialPlan(
 			recommendedReplies: decision.recommendedReplies
 		});
 		markdown = "";
-		assistantMessage = `需要澄清：${decision.question}`;
+		assistantMessage = decision.question;
 		eventName = "plan.clarification.required";
-		sendPlanMessageDelta(socket, requestId, session, `我需要先确认一个关键点，避免计划偏离你的真实目标：\n\n${decision.question}\n`);
 	} else {
 		markdown = decision.planMarkdown;
 		metadata = createPlanMetadata({

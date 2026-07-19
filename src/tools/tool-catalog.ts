@@ -1,5 +1,5 @@
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
-import { BUILTIN_TOOL_DEFINITIONS } from "./builtin-tool-definitions.js";
+import { BUILTIN_TOOL_DEFINITIONS, withApprovalReasonSchema } from "./builtin-tool-definitions.js";
 import {
 	getDynamicMcpToolDefinitions,
 	getDynamicMcpToolMapping,
@@ -217,7 +217,7 @@ export class WorkspaceToolCatalog {
 	getEntries(): ToolCatalogEntry[] {
 		const staticEntries: ToolCatalogEntry[] = BUILTIN_TOOL_DEFINITIONS.map(createStaticEntry);
 		const dynamicEntries: ToolCatalogEntry[] = getDynamicMcpToolDefinitions(this.context.workspaceId)
-			.map((definition: ChatCompletionTool): ToolCatalogEntry => createDynamicEntry(definition, this.context.workspaceId));
+			.map((definition: ChatCompletionTool): ToolCatalogEntry => createDynamicEntry(withApprovalReasonSchema(definition), this.context.workspaceId));
 		return [...staticEntries, ...dynamicEntries];
 	}
 

@@ -34,6 +34,7 @@ test("provider catalog exposes valid built-in providers and model references", (
 	assert.equal(getProviderAdapterFamily("deepseek"), "openai-compatible");
 	assert.equal(getProviderDefaultEndpointType("openai"), "openai-responses");
 	assert.equal(getProviderAdapterFamily("openai"), "openai-responses");
+	assert.equal(getProviderDefinition("openai").modelListMode, "catalog-recommended");
 	assert.equal(getProviderDefaultModel("moonshot"), "kimi-k3");
 	assert.equal(getProviderDefaultEndpointType("moonshot"), "openai-chat-completions");
 	assert.equal(getProviderAdapterFamily("moonshot"), "openai-compatible");
@@ -196,14 +197,23 @@ test("provider catalog exposes valid built-in providers and model references", (
 	assert.equal(qianfanModels.find((model) => model.id === "ernie-4.5-turbo-vl")?.capabilities.imageInput, true);
 	assert.equal(qianfanModels.find((model) => model.id === "ernie-4.5-turbo-vl-32k")?.contextWindowTokens, 32_768);
 	const openaiModels = getProviderFallbackModels("openai");
-	assert.equal(openaiModels.find((model) => model.id === "gpt-5.5")?.capabilities.webSearch, true);
-	assert.equal(openaiModels.find((model) => model.id === "gpt-5.5")?.capabilities.vision, true);
+	assert.equal(openaiModels.find((model) => model.id === "gpt-5.6-sol")?.contextWindowTokens, 1_050_000);
+	assert.equal(openaiModels.find((model) => model.id === "gpt-5.6-sol")?.maxOutputTokens, 128_000);
+	assert.equal(openaiModels.find((model) => model.id === "gpt-5.6-sol")?.capabilities.webSearch, true);
+	assert.equal(openaiModels.find((model) => model.id === "gpt-5.6-sol")?.capabilities.vision, true);
+	assert.equal(openaiModels.find((model) => model.id === "gpt-5.6-terra")?.capabilities.reasoning, true);
+	assert.equal(openaiModels.find((model) => model.id === "gpt-5.6-luna")?.capabilities.tools, true);
+	assert.equal(openaiModels.find((model) => model.id === "gpt-5.3-codex")?.contextWindowTokens, 400_000);
+	assert.equal(openaiModels.find((model) => model.id === "gpt-5.3-codex")?.capabilities.imageInput, true);
+	assert.equal(openaiModels.find((model) => model.id === "gpt-5.3-codex")?.capabilities.tools, true);
+	assert.equal(openaiModels.find((model) => model.id === "gpt-image-2")?.capabilities.imageGeneration, true);
+	assert.equal(openaiModels.find((model) => model.id === "gpt-image-2")?.capabilities.imageEdit, undefined);
 	assert.equal(getCatalogModels().length >= providerIds.length, true);
 });
 
 test("provider model list fallback returns normalized capabilities", async (): Promise<void> => {
 	const result = await listProviderModels("openai", undefined, undefined);
-	const model = result.models.find((item) => item.id === "gpt-5.5");
+	const model = result.models.find((item) => item.id === "gpt-5.6-sol");
 	const zhipuResult = await listProviderModels("zhipu", undefined, undefined);
 	const dashscopeResult = await listProviderModels("dashscope", undefined, undefined);
 	const volcengineResult = await listProviderModels("volcengine", undefined, undefined);
@@ -219,6 +229,8 @@ test("provider model list fallback returns normalized capabilities", async (): P
 	assert.equal(model?.capabilities.tools, true);
 	assert.equal(model?.capabilities.webSearch, true);
 	assert.equal(model?.capabilities.vision, true);
+	assert.equal(result.models.find((item) => item.id === "gpt-5.3-codex")?.capabilities.tools, true);
+	assert.equal(result.models.find((item) => item.id === "gpt-image-2")?.capabilities.imageGeneration, true);
 	assert.equal(zhipuResult.models.find((item) => item.id === "glm-image")?.capabilities.imageGeneration, true);
 	assert.equal(zhipuResult.models.find((item) => item.id === "glm-5.2")?.capabilities.webSearch, true);
 	assert.equal(zhipuResult.models.find((item) => item.id === "glm-image")?.capabilities.imageEdit, undefined);

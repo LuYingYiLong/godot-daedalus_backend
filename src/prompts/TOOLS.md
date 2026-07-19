@@ -21,6 +21,7 @@ Agent 模式：
 
 - 可以按 workflow、tool budget、tool policy 和审批策略使用 read、verify、propose、write、destructive 工具。
 - 高风险工具仍必须遵守审批、幂等和事件恢复边界。
+- 调用 write/destructive 工具时，如果工具 schema 提供 `approvalReason`，必须填写一句面向用户的具体原因，说明为什么需要执行以及会产生什么影响。
 - 自定义 MCP 只能在工具策略允许时开放。
 
 Ask 模式：

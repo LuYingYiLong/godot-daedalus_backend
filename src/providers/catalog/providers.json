@@ -41,8 +41,9 @@
     "id": "openai",
     "displayName": "OpenAI",
     "authType": "api-key",
-    "defaultModel": "gpt-5.5",
+    "defaultModel": "gpt-5.6-sol",
     "defaultEndpointType": "openai-responses",
+    "modelListMode": "catalog-recommended",
     "endpointConfigs": {
       "openai-responses": {
         "baseUrl": "https://api.openai.com/v1",

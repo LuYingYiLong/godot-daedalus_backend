@@ -231,6 +231,23 @@ test("fixed workflow planner does not upgrade explicit read-only requests to imp
 	}), null);
 });
 
+test("fixed workflow planner routes explicit approval test requests to a write approval phase", (): void => {
+	const plan = planWorkflow({
+		message: "帮我随便拉起一个审批",
+		mode: "agent",
+		options: {
+			workflow: "auto"
+		}
+	});
+
+	assert.notEqual(plan, null);
+	assert.equal(plan?.phases.length, 1);
+	assert.equal(plan?.phases[0]?.toolGroup, "write");
+	assert.equal(plan?.phases[0]?.requireToolCallOnFirstStep, true);
+	assert.deepEqual(plan?.phases[0]?.allowedTools, ["mcp_godot_create_text_file"]);
+	assert.match(plan?.phases[0]?.instruction ?? "", /approvalReason/u);
+});
+
 test("Ask current project fact requests use a read-only fact plan with required first tool call", (): void => {
 	const plan = createReadOnlyFactWorkflowPlan({
 		message: "项目里多少脚本并列出路径",

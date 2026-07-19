@@ -1,6 +1,10 @@
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
 import { CUSTOM_MCP_TOOLS_SENTINEL } from "./tool-sentinels.js";
 import { getDynamicMcpToolDefinitions, isDynamicMcpToolName } from "./dynamic-mcp-tools.js";
+import { getToolPolicy } from "./tool-policy.js";
+import { APPROVAL_REASON_ARG, APPROVAL_REASON_SCHEMA_PROPERTY } from "./approval-reason.js";
+
+type ChatCompletionFunctionTool = Extract<ChatCompletionTool, { type: "function" }>;
 
 function createSceneToolDefinition(
 	name: string,
@@ -20,6 +24,53 @@ function createSceneToolDefinition(
 			}
 		}
 	};
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isFunctionTool(tool: ChatCompletionTool): tool is ChatCompletionFunctionTool {
+	return tool.type === "function";
+}
+
+export function withApprovalReasonSchema(tool: ChatCompletionTool): ChatCompletionTool {
+	if (!isFunctionTool(tool)) {
+		return tool;
+	}
+
+	const policy = getToolPolicy(tool.function.name);
+	if (policy?.risk !== "write" && policy?.risk !== "destructive") {
+		return tool;
+	}
+
+	const parameters: unknown = tool.function.parameters;
+	if (!isRecord(parameters)) {
+		return tool;
+	}
+
+	const properties: Record<string, unknown> = isRecord(parameters.properties) ? parameters.properties : {};
+	if (APPROVAL_REASON_ARG in properties) {
+		return tool;
+	}
+
+	return {
+		...tool,
+		function: {
+			...tool.function,
+			parameters: {
+				...parameters,
+				properties: {
+					...properties,
+					[APPROVAL_REASON_ARG]: APPROVAL_REASON_SCHEMA_PROPERTY
+				}
+			}
+		}
+	};
+}
+
+export function withApprovalReasonSchemas(tools: ChatCompletionTool[]): ChatCompletionTool[] {
+	return tools.map(withApprovalReasonSchema);
 }
 
 const SKILL_TOOL_DEFINITIONS: ChatCompletionTool[] = [
@@ -305,7 +356,7 @@ const SCENE_TOOL_DEFINITIONS: ChatCompletionTool[] = [
 	)
 ];
 
-export const BUILTIN_TOOL_DEFINITIONS: ChatCompletionTool[] = [
+const BASE_BUILTIN_TOOL_DEFINITIONS: ChatCompletionTool[] = [
 	...SKILL_TOOL_DEFINITIONS,
 	...IMAGE_GENERATION_TOOL_DEFINITIONS,
 	...WEB_SEARCH_TOOL_DEFINITIONS,
@@ -1426,8 +1477,10 @@ export const BUILTIN_TOOL_DEFINITIONS: ChatCompletionTool[] = [
 	}
 ];
 
+export const BUILTIN_TOOL_DEFINITIONS: ChatCompletionTool[] = withApprovalReasonSchemas(BASE_BUILTIN_TOOL_DEFINITIONS);
+
 export function getToolDefinitions(workspaceId?: string | undefined): ChatCompletionTool[] {
-	return [...BUILTIN_TOOL_DEFINITIONS, ...getDynamicMcpToolDefinitions(workspaceId)];
+	return withApprovalReasonSchemas([...BUILTIN_TOOL_DEFINITIONS, ...getDynamicMcpToolDefinitions(workspaceId)]);
 }
 
 export function getToolDefinitionsForNames(toolNames: readonly string[], workspaceId?: string | undefined): ChatCompletionTool[] {

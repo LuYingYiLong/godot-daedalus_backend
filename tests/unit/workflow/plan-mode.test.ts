@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createApprovedPlanExecutionParams, createPlanDecision, createPlannerSystemPrompt, createPlanVisibleDeltaFilter } from "../../../src/server/plan-mode.js";
 import { createPlanMetadata } from "../../../src/server/plan-store.js";
@@ -61,6 +62,20 @@ test("plan visible delta filter forwards preludes but suppresses final json", ()
 	assert.equal(filter.push("\n"), "");
 	assert.equal(filter.push("{\"decision\":\"plan_ready\""), "");
 	assert.equal(filter.push(",\"title\":\"测试\"}"), "");
+});
+
+test("plan mode does not inject hardcoded visible status prose", async (): Promise<void> => {
+	const planModeSource: string = await readFile(new URL("../../../src/server/plan-mode.ts", import.meta.url), "utf8");
+	const planHandlersSource: string = await readFile(new URL("../../../src/server/handlers/plan-handlers.ts", import.meta.url), "utf8");
+	const source: string = `${planModeSource}\n${planHandlersSource}`;
+
+	assert.equal(source.includes("我需要先确认一个关键点"), false);
+	assert.equal(source.includes("我需要先读取最小必要上下文"), false);
+	assert.equal(source.includes("我还需要继续确认一个关键点"), false);
+	assert.equal(source.includes("我正在吸收你的澄清"), false);
+	assert.equal(source.includes("我正在根据你的反馈修订计划"), false);
+	assert.equal(source.includes("我已根据你的澄清生成计划"), false);
+	assert.equal(source.includes("我已根据你的反馈修订计划"), false);
 });
 
 test("plan events are persisted for timeline recovery", (): void => {

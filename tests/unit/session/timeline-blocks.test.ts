@@ -56,9 +56,20 @@ test("canonical timeline merges plan clarification request events into original 
 		[
 			event("event-clarify", "request-plan", "plan.clarification.required", "2026-07-09T00:00:01.000Z", {
 				planId: "plan-a",
+				title: "目标形态",
 				requestId: "request-plan",
 				question: "请选择 CLI 还是 Godot 场景。",
-				recommendedReplies: ["CLI", "Godot 场景"]
+				recommendedReplies: [
+					{
+						label: "CLI",
+						text: "先做 CLI 版本。",
+						description: "适合快速验证规则。"
+					},
+					{
+						label: "Godot 场景",
+						text: "先做 Godot 场景版本。"
+					}
+				]
 			}),
 			event("event-thinking", "plan-clarify-1", "agent.thinking.delta", "2026-07-09T00:00:02.000Z", {
 				text: "读取项目结构。"
@@ -87,6 +98,23 @@ test("canonical timeline merges plan clarification request events into original 
 	const assistant = assistantBlock(result.blocks[1]);
 	assert.equal(assistant.requestId, "request-plan");
 	assert.deepEqual(assistant.bodyParts.map((part) => part.type), ["markdown", "status", "thinking", "tool", "plan"]);
+	const statusPart = assistant.bodyParts.find((part) => part.type === "status");
+	assert.equal(statusPart?.type, "status");
+	assert.equal(statusPart?.code, "plan.clarification.required");
+	assert.equal(statusPart?.title, "目标形态");
+	assert.equal(statusPart?.details, "请选择 CLI 还是 Godot 场景。");
+	assert.deepEqual(statusPart?.recommendedReplies, [
+		{
+			label: "CLI",
+			text: "先做 CLI 版本。",
+			description: "适合快速验证规则。"
+		},
+		{
+			label: "Godot 场景",
+			text: "先做 Godot 场景版本。",
+			description: undefined
+		}
+	]);
 	assert.equal(assistant.bodyParts.find((part) => part.type === "tool")?.type, "tool");
 	const planPart = assistant.bodyParts.find((part) => part.type === "plan");
 	assert.equal(planPart?.type, "plan");
@@ -172,6 +200,50 @@ test("canonical timeline keeps plan execution as independent blocks with tools a
 			{ id: "phase-write", title: "实现修改", status: "completed" }
 		]
 	});
+});
+
+test("canonical timeline merges approval lifecycle events into one tool part", (): void => {
+	const stored: StoredSession = session(
+		[
+			{
+				role: "user",
+				requestId: "request-approval",
+				content: "触发审批",
+				createdAt: "2026-07-09T00:02:00.000Z"
+			},
+			{
+				role: "assistant",
+				requestId: "request-approval",
+				content: "完成。",
+				createdAt: "2026-07-09T00:02:30.000Z"
+			}
+		],
+		[
+			event("event-approval-required", "request-approval", "agent.tool.approval_required", "2026-07-09T00:02:01.000Z", {
+				toolCallId: "tool-write",
+				approvalId: "approval-a",
+				toolName: "mcp_godot_create_text_file"
+			}),
+			event("event-approved", "request-approval", "agent.tool.approved", "2026-07-09T00:02:02.000Z", {
+				approvalId: "approval-a",
+				toolName: "mcp_godot_create_text_file"
+			}),
+			event("event-result", "request-approval", "agent.tool.result", "2026-07-09T00:02:03.000Z", {
+				toolCallId: "tool-write",
+				toolName: "mcp_godot_create_text_file"
+			})
+		]
+	);
+
+	const assistant = assistantBlock(buildCanonicalTimelineBlocks(stored).blocks[1]);
+	const toolParts = assistant.bodyParts.filter((part) => part.type === "tool");
+
+	assert.equal(toolParts.length, 1);
+	assert.deepEqual(toolParts[0]?.events.map((toolEvent) => toolEvent.type), [
+		"tool.approval_required",
+		"tool.approved",
+		"tool.result"
+	]);
 });
 
 test("canonical timeline keeps workflow todo after done until dismissed", (): void => {
