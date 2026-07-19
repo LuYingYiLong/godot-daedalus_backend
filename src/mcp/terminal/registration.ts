@@ -4,21 +4,24 @@ import { z } from "zod";
 import { terminalJobStore } from "./job-store.js";
 import { runCommandWait, startCommandJob } from "./process-runner.js";
 import {
-	ALLOWED_WORKING_ROOTS,
 	BACKEND_DIR,
 	COMMAND_PRESETS,
 	COMMAND_TIMEOUT_MS,
 	DEFAULT_JOB_TIMEOUT_MS,
 	GODOT_EXECUTABLE,
 	GODOT_PROJECT,
+	createAllowedWorkingRoots,
 	createGodotResourceCommand,
 	describePresetCommand,
 	findPreset,
 	isPathInsideRoot,
+	materializePreset,
 	normalizeTimeoutMs,
 	normalizeWakeAfterMs,
 	resolveWorkingDirectory
 } from "./presets.js";
+import { findWorkspace } from "../../workspace/registry.js";
+import type { WorkspaceConfig } from "../../workspace/types.js";
 import type { CommandPreset, PresetRunInput, TerminalCommandResult, TerminalJobRecord } from "./types.js";
 import { logger } from "../../logger.js";
 
@@ -31,13 +34,13 @@ function asJsonTextResult(value: unknown): { content: Array<{ type: "text"; text
 	};
 }
 
-function createMissingGodotProjectResult(presetName: string): { content: Array<{ type: "text"; text: string }> } {
+function createMissingGodotProjectResult(presetName: string, context?: { godotProjectPath?: string | undefined; godotExecutablePath?: string | undefined }): { content: Array<{ type: "text"; text: string }> } {
 	return asJsonTextResult({
 		preset: presetName,
 		ok: false,
 		error: "GODOT_PROJECT_PATH is not configured for the terminal MCP server. Configure the Godot project path in the client and restart or reconnect the backend workspace before running Godot presets.",
-		godotProjectPath: GODOT_PROJECT || null,
-		godotExecutablePath: GODOT_EXECUTABLE
+		godotProjectPath: (context?.godotProjectPath ?? GODOT_PROJECT) || null,
+		godotExecutablePath: context?.godotExecutablePath ?? GODOT_EXECUTABLE
 	});
 }
 
@@ -107,8 +110,43 @@ function createJobStartedResult(record: TerminalJobRecord): Record<string, unkno
 	};
 }
 
+type TerminalInternalInput = {
+	__daedalusWorkspaceId?: string | undefined;
+};
+
+function resolveTerminalContext(input: TerminalInternalInput): {
+	workspaceId?: string | undefined;
+	workspace?: WorkspaceConfig | undefined;
+	godotProjectPath: string;
+	godotExecutablePath: string;
+} {
+	const workspaceId: string | undefined = input.__daedalusWorkspaceId;
+	const workspace: WorkspaceConfig | undefined = workspaceId === undefined
+		? undefined
+		: findWorkspace(workspaceId);
+
+	if (workspaceId !== undefined && workspace === undefined) {
+		return {
+			workspaceId,
+			godotProjectPath: "",
+			godotExecutablePath: GODOT_EXECUTABLE
+		};
+	}
+
+	return {
+		workspaceId,
+		workspace,
+		godotProjectPath: workspace?.rootPath ?? GODOT_PROJECT,
+		godotExecutablePath: workspace?.godotExecutablePath ?? GODOT_EXECUTABLE
+	};
+}
+
 async function runPreset(input: PresetRunInput, allowedRisks: readonly string[]): Promise<Record<string, unknown>> {
-	const preset: CommandPreset = findPreset(input.presetName);
+	const context = resolveTerminalContext(input as PresetRunInput & TerminalInternalInput);
+	const preset: CommandPreset = materializePreset(findPreset(input.presetName), {
+		godotProjectPath: context.godotProjectPath,
+		godotExecutablePath: context.godotExecutablePath
+	});
 	const startedAtMs: number = Date.now();
 
 	if (!allowedRisks.includes(preset.risk)) {
@@ -126,17 +164,21 @@ async function runPreset(input: PresetRunInput, allowedRisks: readonly string[])
 		};
 	}
 
-	if (preset.requiresGodotProject && GODOT_PROJECT.length === 0) {
+	if (preset.requiresGodotProject && context.godotProjectPath.length === 0) {
 		logger.warn("terminal", "godot_project_missing", {
 			preset: input.presetName,
-			godotExecutablePath: GODOT_EXECUTABLE
+			workspaceId: context.workspace?.id ?? context.workspaceId,
+			godotExecutablePath: context.godotExecutablePath
 		});
-		return JSON.parse(createMissingGodotProjectResult(input.presetName).content[0]!.text) as Record<string, unknown>;
+		return JSON.parse(createMissingGodotProjectResult(input.presetName, context).content[0]!.text) as Record<string, unknown>;
 	}
 
 	let cwd: string;
 	try {
-		cwd = resolveWorkingDirectory(input.workingDirectory, preset);
+		cwd = resolveWorkingDirectory(input.workingDirectory, preset, {
+			godotProjectPath: context.godotProjectPath,
+			godotExecutablePath: context.godotExecutablePath
+		});
 	} catch (error: unknown) {
 		logger.warn("terminal", "working_directory_rejected", {
 			preset: input.presetName,
@@ -152,7 +194,10 @@ async function runPreset(input: PresetRunInput, allowedRisks: readonly string[])
 
 	let command: string[];
 	try {
-		command = createGodotResourceCommand(preset, input.resourcePath);
+		command = createGodotResourceCommand(preset, input.resourcePath, {
+			godotProjectPath: context.godotProjectPath,
+			godotExecutablePath: context.godotExecutablePath
+		});
 	} catch (error: unknown) {
 		logger.warn("terminal", "preset_arguments_invalid", {
 			preset: input.presetName,
@@ -164,8 +209,8 @@ async function runPreset(input: PresetRunInput, allowedRisks: readonly string[])
 			ok: false,
 			error: error instanceof Error ? error.message : "Invalid preset arguments",
 			resourcePath: input.resourcePath ?? null,
-			godotProjectPath: preset.requiresGodotProject ? GODOT_PROJECT || null : undefined,
-			godotExecutablePath: preset.requiresGodotProject ? GODOT_EXECUTABLE : undefined
+			godotProjectPath: preset.requiresGodotProject ? context.godotProjectPath || null : undefined,
+			godotExecutablePath: preset.requiresGodotProject ? context.godotExecutablePath : undefined
 		};
 	}
 
@@ -179,8 +224,8 @@ async function runPreset(input: PresetRunInput, allowedRisks: readonly string[])
 			wakeAfterMs,
 			tailLines: input.tailLines,
 			resourcePath: input.resourcePath ?? null,
-			godotProjectPath: preset.requiresGodotProject ? GODOT_PROJECT || null : undefined,
-			godotExecutablePath: preset.requiresGodotProject ? GODOT_EXECUTABLE : undefined
+			godotProjectPath: preset.requiresGodotProject ? context.godotProjectPath || null : undefined,
+			godotExecutablePath: preset.requiresGodotProject ? context.godotExecutablePath : undefined
 		});
 		logger.info("terminal", "job_started", {
 			preset: input.presetName,
@@ -210,8 +255,8 @@ async function runPreset(input: PresetRunInput, allowedRisks: readonly string[])
 		cwd,
 		timeoutMs,
 		resourcePath: input.resourcePath ?? null,
-		godotProjectPath: preset.requiresGodotProject ? GODOT_PROJECT || null : undefined,
-		godotExecutablePath: preset.requiresGodotProject ? GODOT_EXECUTABLE : undefined
+		godotProjectPath: preset.requiresGodotProject ? context.godotProjectPath || null : undefined,
+		godotExecutablePath: preset.requiresGodotProject ? context.godotExecutablePath : undefined
 	});
 	logger.info("terminal", "preset_finished", {
 		preset: input.presetName,
@@ -237,7 +282,7 @@ const presetRunSchema = z.object({
 	wakeAfterMs: z.number().int().positive().optional().describe("job 模式下请求 backend 在指定毫秒后唤醒 AI。"),
 	timeoutMs: z.number().int().positive().optional().describe("命令超时毫秒。wait 默认 30000，job 默认 30 分钟。"),
 	tailLines: z.number().int().positive().optional().describe("job tail 行数。")
-});
+}).passthrough();
 
 export function registerTerminalTools(server: McpServer): void {
 	server.registerTool(
@@ -245,21 +290,32 @@ export function registerTerminalTools(server: McpServer): void {
 		{
 			title: "Get Terminal Capabilities",
 			description: "返回当前终端 MCP 支持的所有预设命令列表及其风险等级。",
-			inputSchema: z.object({})
+			inputSchema: z.object({}).passthrough()
 		},
-		async () => asJsonTextResult({
-			presets: COMMAND_PRESETS.map((preset: CommandPreset) => ({
-				name: preset.name,
-				description: preset.description,
-				workingDirectory: preset.workingDirectory,
-				risk: preset.risk,
-				resourcePathMode: preset.resourcePathMode ?? "none",
-				godotProjectPath: preset.requiresGodotProject ? GODOT_PROJECT || null : undefined,
-				godotExecutablePath: preset.requiresGodotProject ? GODOT_EXECUTABLE : undefined,
-				command: preset.requiresGodotProject ? describePresetCommand(preset.command) : undefined,
-				defaultTimeoutMs: preset.defaultTimeoutMs ?? COMMAND_TIMEOUT_MS
-			}))
-		})
+		async (input: TerminalInternalInput) => {
+			const context = resolveTerminalContext(input);
+			return asJsonTextResult({
+				presets: COMMAND_PRESETS.map((preset: CommandPreset) => ({
+					name: preset.name,
+					description: preset.description,
+					workingDirectory: materializePreset(preset, {
+						godotProjectPath: context.godotProjectPath,
+						godotExecutablePath: context.godotExecutablePath
+					}).workingDirectory,
+					risk: preset.risk,
+					resourcePathMode: preset.resourcePathMode ?? "none",
+					godotProjectPath: preset.requiresGodotProject ? context.godotProjectPath || null : undefined,
+					godotExecutablePath: preset.requiresGodotProject ? context.godotExecutablePath : undefined,
+					command: preset.requiresGodotProject
+						? describePresetCommand(materializePreset(preset, {
+							godotProjectPath: context.godotProjectPath,
+							godotExecutablePath: context.godotExecutablePath
+						}).command)
+						: undefined,
+					defaultTimeoutMs: preset.defaultTimeoutMs ?? COMMAND_TIMEOUT_MS
+				}))
+			});
+		}
 	);
 
 	server.registerTool(
@@ -342,9 +398,10 @@ export function registerTerminalTools(server: McpServer): void {
 			description: "通过 Godot headless 模式调用 scene_operator.gd 执行场景操作。操作通过审批后实际写入磁盘。",
 			inputSchema: z.object({
 				operationJson: z.string().min(1).describe("JSON 格式的场景操作，包含 operation 字段和对应参数")
-			})
+			}).passthrough()
 		},
-		async ({ operationJson }) => {
+		async (input: { operationJson: string } & TerminalInternalInput) => {
+			const { operationJson } = input;
 			let parsed: unknown;
 			try {
 				parsed = JSON.parse(operationJson);
@@ -362,16 +419,26 @@ export function registerTerminalTools(server: McpServer): void {
 			}
 
 			const scriptPath: string = "res://addons/godot_daedalus/tools/scene_operator.gd";
+			const context = resolveTerminalContext(input);
+			const godotProject: string = context.godotProjectPath;
+			const godotExecutable: string = context.godotExecutablePath;
+			if (godotProject.length === 0) {
+				return createMissingGodotProjectResult("godot.scene_script", context);
+			}
 			const command: string[] = [
-				GODOT_EXECUTABLE,
+				godotExecutable,
 				"--headless",
 				"--disable-crash-handler",
-				"--path", GODOT_PROJECT,
+				"--path", godotProject,
 				"--script", scriptPath,
 				"--", operationJson
 			];
-			const cwd: string = GODOT_PROJECT.length > 0 ? path.resolve(GODOT_PROJECT) : BACKEND_DIR;
-			if (!isPathInsideRoot(cwd, ALLOWED_WORKING_ROOTS[0] ?? BACKEND_DIR) && !(ALLOWED_WORKING_ROOTS.length > 1 && isPathInsideRoot(cwd, ALLOWED_WORKING_ROOTS[1]!))) {
+			const cwd: string = path.resolve(godotProject);
+			const allowedWorkingRoots: string[] = createAllowedWorkingRoots({
+				godotProjectPath: godotProject,
+				godotExecutablePath: godotExecutable
+			});
+			if (!allowedWorkingRoots.some((allowedRoot: string): boolean => isPathInsideRoot(cwd, allowedRoot))) {
 				return asJsonTextResult({ ok: false, error: "Godot project path is outside allowed roots" });
 			}
 
@@ -386,8 +453,8 @@ export function registerTerminalTools(server: McpServer): void {
 				command,
 				cwd,
 				timeoutMs: COMMAND_TIMEOUT_MS,
-				godotProjectPath: GODOT_PROJECT || null,
-				godotExecutablePath: GODOT_EXECUTABLE
+				godotProjectPath: godotProject || null,
+				godotExecutablePath: godotExecutable
 			});
 			const parsedEvents: unknown[] = parseJsonObjectsFromOutput(result.stdout);
 			const parsedOutput: unknown = selectGodotOperationResult(parsedEvents);

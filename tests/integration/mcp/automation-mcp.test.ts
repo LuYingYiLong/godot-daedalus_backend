@@ -12,7 +12,7 @@ import {
 	selectMatchingApproval,
 	type ApprovalCandidate
 } from "../../../src/mcp/automation/security.js";
-import { buildMcpServerConfigs } from "../../../src/mcp/mcp-config.js";
+import { buildGlobalMcpServerConfigs, buildMcpServerConfigs } from "../../../src/mcp/mcp-config.js";
 import { getToolDefinitions } from "../../../src/tools/builtin-tool-definitions.js";
 import { resolveToolMapping } from "../../../src/tools/tool-mapping.js";
 
@@ -52,6 +52,19 @@ test("automation MCP manifest is explicit and not exposed through product MCP/to
 			resolveToolMapping(name);
 		}, /Unknown tool/);
 	}
+});
+
+test("terminal MCP is a global internal server instead of a workspace server", (): void => {
+	const globalServerIds = buildGlobalMcpServerConfigs().map((server): string => server.id);
+	const workspaceServerIds = buildMcpServerConfigs({
+		id: "workspace-terminal-test",
+		name: "workspace-terminal-test",
+		kind: "godot",
+		rootPath: process.cwd()
+	}).map((server): string => server.id);
+
+	assert.ok(globalServerIds.includes("terminal"));
+	assert.ok(!workspaceServerIds.includes("terminal"));
 });
 
 test("automation MCP config requires explicit enable flag and supports backend overrides", (): void => {

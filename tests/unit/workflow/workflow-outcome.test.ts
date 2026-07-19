@@ -268,7 +268,7 @@ test("verify phase treats LSP unavailable plus check-only pass as completed", ()
 	assert.deepEqual(outcome.verifiedArtifacts, ["res://scripts/game.gd"]);
 });
 
-test("verify phase with only LSP unavailable is blocked instead of needs_fix", (): void => {
+test("verify phase with only LSP unavailable completes as non-blocking environment gap", (): void => {
 	const observations: WorkflowToolObservation[] = applyEvents([{
 		type: "tool.result",
 		step: 0,
@@ -285,10 +285,11 @@ test("verify phase with only LSP unavailable is blocked instead of needs_fix", (
 	}]);
 	const outcome = createWorkflowPhaseOutcome(createPhase("verify", "verify"), "phase-run-1", "LSP 不可用。", observations);
 
-	assert.equal(outcome.status, "blocked");
-	assert.equal(outcome.failedChecks[0]?.code, "validation_environment_unavailable");
+	assert.equal(outcome.status, "completed");
+	assert.deepEqual(outcome.failedChecks, []);
 	assert.deepEqual(outcome.requiredFixes, []);
-	assert.match(outcome.blockedReason ?? "", /验证环境不可用/);
+	assert.equal(outcome.blockedReason, undefined);
+	assert.match(outcome.evidence.join("\n"), /godot_diagnostics_unavailable/);
 });
 
 test("summarize gate blocks unresolved failed outcome until a later completed outcome", (): void => {

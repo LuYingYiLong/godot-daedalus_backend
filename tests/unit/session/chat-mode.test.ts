@@ -224,6 +224,35 @@ test("agent workflow phase prompt does not let stage tools masquerade as ask mod
 	assert.match(prompt, /不要因为当前阶段只有只读工具或没有写工具就声称当前是 Ask 模式/);
 });
 
+test("workflow phase prompt reserves final delivery for summarize phase", (): void => {
+	const writePhase: WorkflowPhase = {
+		id: "implement",
+		title: "实现功能",
+		toolGroup: "write",
+		toolBudget: "project_edit",
+		allowedTools: ["mcp_godot_create_text_file"],
+		instruction: "创建测试文件。",
+		acceptanceCriteria: ["文件已创建。"]
+	};
+	const summarizePhase: WorkflowPhase = {
+		id: "summarize",
+		title: "总结交付",
+		toolGroup: "summarize",
+		toolBudget: "simple",
+		allowedTools: [],
+		instruction: "总结完成内容和验证状态。",
+		acceptanceCriteria: ["已总结交付。"]
+	};
+
+	const writePrompt: string = createPhasePrompt(writePhase, "", "", "agent");
+	const summarizePrompt: string = createPhasePrompt(summarizePhase, "", "", "agent");
+
+	assert.match(writePrompt, /当前不是最终总结阶段/);
+	assert.match(writePrompt, /不要输出完整交付总结/);
+	assert.match(summarizePrompt, /当前是专门的最终总结阶段/);
+	assert.match(summarizePrompt, /不要调用工具/);
+});
+
 test("runtime mode self-diagnosis from old assistant history is excluded from LLM context", (): void => {
 	const pollutedAssistantMessage: ChatMessage = {
 		role: "assistant",

@@ -279,6 +279,9 @@ test("canonical timeline keeps plan execution as independent blocks with tools a
 				todos: [
 					{ id: "phase-write", title: "实现修改", status: "completed" }
 				]
+			}),
+			event("event-done", "plan-exec-1", "agent.run.done", "2026-07-09T00:01:05.000Z", {
+				status: "completed"
 			})
 		]
 	);
@@ -300,6 +303,42 @@ test("canonical timeline keeps plan execution as independent blocks with tools a
 			{ id: "phase-write", title: "实现修改", status: "completed" }
 		]
 	});
+});
+
+test("canonical timeline delays inline diff until assistant run is terminal", (): void => {
+	const fileEditBatch = {
+		batchId: "batch-pending",
+		editedFiles: [{
+			path: "res://scripts/pending.gd",
+			absolutePath: "D:/project/scripts/pending.gd",
+			workspaceRoot: "D:/project",
+			additions: 1,
+			deletions: 0,
+			existsAfter: true,
+			undoable: true
+		}]
+	};
+	const stored: StoredSession = session(
+		[
+			{
+				role: "user",
+				requestId: "request-pending",
+				content: "创建文件",
+				createdAt: "2026-07-09T00:01:00.000Z"
+			}
+		],
+		[
+			event("event-delta", "request-pending", "agent.message.delta", "2026-07-09T00:01:01.000Z", { text: "正在创建文件。" }),
+			event("event-tool-result", "request-pending", "agent.tool.result", "2026-07-09T00:01:02.000Z", {
+				toolCallId: "tool-write",
+				toolName: "mcp_godot_create_text_file",
+				fileEditBatch
+			})
+		]
+	);
+
+	const assistant = assistantBlock(buildCanonicalTimelineBlocks(stored).blocks[1]);
+	assert.deepEqual(assistant.bodyParts.map((part) => part.type), ["markdown", "tool"]);
 });
 
 test("canonical timeline merges approval lifecycle events into one tool part", (): void => {

@@ -112,6 +112,7 @@ function formatConversationMode(mode: string | undefined): string {
 
 export function createPhasePrompt(phase: WorkflowPhase, skillPrompt: string, mcpSystemContext: string, conversationMode?: string | undefined): string {
 	const toolGroupRules: string[] = createPhaseToolGroupRules(phase);
+	const completionRules: string[] = createPhaseCompletionRules(phase);
 	const modeLabel: string = formatConversationMode(conversationMode);
 	return [
 		"## 工作流阶段约束",
@@ -120,9 +121,10 @@ export function createPhasePrompt(phase: WorkflowPhase, skillPrompt: string, mcp
 		`- 当前阶段：${phase.title}（${phase.id}）`,
 		`- 阶段目标：${phase.instruction}`,
 		`- 验收标准：${formatAcceptanceCriteria(phase.acceptanceCriteria)}`,
-		"- 只完成当前阶段，不要提前总结整个任务。",
+		"- 只完成当前阶段，不要跳过后续阶段。",
 		"- 如果需要写入或执行审批工具，按现有审批流程暂停。",
 		...toolGroupRules,
+		...completionRules,
 		"- 当前阶段实际可用工具：",
 		...phase.allowedTools.map((toolName: string): string => `  - ${toolName}`),
 		"",
@@ -157,6 +159,22 @@ function createPhaseToolGroupRules(phase: WorkflowPhase): string[] {
 	}
 
 	return [];
+}
+
+function createPhaseCompletionRules(phase: WorkflowPhase): string[] {
+	if (phase.toolGroup === "summarize") {
+		return [
+			"- 当前是专门的最终总结阶段：不要调用工具，只基于用户需求和上一阶段结果交付最终答复。",
+			"- 总结应说明已完成的改动、验证结果、未覆盖或受环境限制的事项，以及用户接下来可采取的动作。",
+			"- 不要把准备继续读取、准备调用工具或准备修改文件写成最终结论；如果资料不足，明确说明限制。"
+		];
+	}
+
+	return [
+		"- 当前不是最终总结阶段：不要输出完整交付总结、使用说明或阶段性收尾长文。",
+		"- 阶段末尾只保留一两句事实性进展：完成了什么、发现了什么、是否需要后续阶段处理。",
+		"- 不要说“最终”“总结如下”“已全部完成”等会让用户误以为长任务结束的措辞。"
+	];
 }
 
 export function appendPhaseOutput(outputs: WorkflowPhaseOutput[], _phase: WorkflowPhase, output: WorkflowPhaseOutput): WorkflowPhaseOutput[] {

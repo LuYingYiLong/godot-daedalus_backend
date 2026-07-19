@@ -1,4 +1,4 @@
-import { buildMcpServerConfigs } from "./mcp-config.js";
+import { buildGlobalMcpServerConfigs, buildMcpServerConfigs, TERMINAL_MCP_SERVER_ID } from "./mcp-config.js";
 import { buildCustomMcpServerConfigs } from "./custom-mcp-config-store.js";
 import { GODOT_DIAGNOSTICS_SERVER_ID, GodotDiagnosticsBridge } from "./godot/bridges/diagnostics-bridge.js";
 import { GODOT_EDITOR_SERVER_ID, GodotEditorBridge } from "./godot/bridges/editor-bridge.js";
@@ -66,10 +66,13 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
 export class McpHost {
 	private workspaceSessions: Map<string, Map<string, McpSession>> = new Map();
 	private workspaceCustomTools: Map<string, Map<string, DynamicMcpToolSource[]>> = new Map();
+	private globalInternalSessions: Map<string, McpSession> = new Map();
 	private globalCustomSessions: Map<string, McpSession> = new Map();
 	private globalCustomTools: Map<string, DynamicMcpToolSource[]> = new Map();
 	private customServerStatuses: Map<string, CustomMcpServerRuntimeStatus> = new Map();
 	private workspaceInitializations: Map<string, Promise<void>> = new Map();
+	private globalInternalInitialization?: Promise<void> | undefined;
+	private globalInternalInitialized: boolean = false;
 	private globalCustomInitialization?: Promise<void> | undefined;
 	private globalCustomInitialized: boolean = false;
 	private activeWorkspaceId?: string | undefined;
@@ -77,6 +80,7 @@ export class McpHost {
 	private readonly diagnosticsBridge: GodotDiagnosticsBridge = new GodotDiagnosticsBridge();
 
 	async connectAll(): Promise<void> {
+		await this.ensureGlobalInternalServers();
 		await this.ensureGlobalCustomServers();
 
 		if (process.env.MCP_AUTO_CONNECT !== "1") {
@@ -251,6 +255,48 @@ export class McpHost {
 		replaceGlobalDynamicMcpTools(Array.from(this.globalCustomTools.values()).flat());
 	}
 
+	async ensureGlobalInternalServers(): Promise<void> {
+		if (this.globalInternalInitialized) {
+			return;
+		}
+		if (this.globalInternalInitialization !== undefined) {
+			await this.globalInternalInitialization;
+			return;
+		}
+
+		this.globalInternalInitialization = this.initializeGlobalInternalServers();
+		try {
+			await this.globalInternalInitialization;
+		} finally {
+			this.globalInternalInitialization = undefined;
+		}
+	}
+
+	private async initializeGlobalInternalServers(): Promise<void> {
+		const sessions: Map<string, McpSession> = new Map();
+
+		try {
+			for (const config of buildGlobalMcpServerConfigs()) {
+				const session: McpSession = new McpSession(config);
+				await this.connectSession(config, session);
+				sessions.set(config.id, session);
+				logger.info("mcp", "global_internal_session_connected", {
+					serverId: config.id,
+					serverName: config.name
+				});
+			}
+		} catch (error: unknown) {
+			for (const session of sessions.values()) {
+				await session.close().catch((): void => undefined);
+			}
+
+			throw error;
+		}
+
+		this.globalInternalSessions = sessions;
+		this.globalInternalInitialized = true;
+	}
+
 	async ensureGlobalCustomServers(): Promise<void> {
 		if (this.globalCustomInitialized) {
 			return;
@@ -406,6 +452,11 @@ export class McpHost {
 	}
 
 	getSession(id: string, workspaceId?: string | undefined): McpSession {
+		const globalInternalSession: McpSession | undefined = this.globalInternalSessions.get(id);
+		if (globalInternalSession !== undefined) {
+			return globalInternalSession;
+		}
+
 		const globalCustomSession: McpSession | undefined = this.globalCustomSessions.get(id);
 		if (globalCustomSession !== undefined) {
 			return globalCustomSession;
@@ -422,10 +473,11 @@ export class McpHost {
 	}
 
 	getConnectedServerIds(workspaceId?: string | undefined): string[] {
+		const globalInternalServerIds: string[] = Array.from(this.globalInternalSessions.keys());
 		const globalCustomServerIds: string[] = Array.from(this.globalCustomSessions.keys());
 		const resolvedWorkspaceId: string | undefined = workspaceId ?? getCurrentMcpWorkspaceId() ?? this.activeWorkspaceId;
 		if (!resolvedWorkspaceId) {
-			const serverIds: string[] = [...globalCustomServerIds];
+			const serverIds: string[] = [...globalInternalServerIds, ...globalCustomServerIds];
 			if (this.editorBridge.isOnline()) {
 				serverIds.push(GODOT_EDITOR_SERVER_ID);
 			}
@@ -434,14 +486,14 @@ export class McpHost {
 
 		const sessions: Map<string, McpSession> | undefined = this.workspaceSessions.get(resolvedWorkspaceId);
 		if (!sessions) {
-			const serverIds: string[] = [...globalCustomServerIds];
+			const serverIds: string[] = [...globalInternalServerIds, ...globalCustomServerIds];
 			if (this.editorBridge.isOnline(resolvedWorkspaceId)) {
 				serverIds.push(GODOT_EDITOR_SERVER_ID);
 			}
 			return serverIds.sort();
 		}
 
-		const serverIds: string[] = [...globalCustomServerIds, ...Array.from(sessions.keys())];
+		const serverIds: string[] = [...globalInternalServerIds, ...globalCustomServerIds, ...Array.from(sessions.keys())];
 		serverIds.push(GODOT_DIAGNOSTICS_SERVER_ID);
 		if (this.editorBridge.isOnline(resolvedWorkspaceId)) {
 			serverIds.push(GODOT_EDITOR_SERVER_ID);
@@ -472,7 +524,23 @@ export class McpHost {
 			.map(([_key, status]: [string, CustomMcpServerRuntimeStatus]): CustomMcpServerRuntimeStatus => status);
 	}
 
+	private createTerminalArgs(args: Record<string, unknown>, workspaceId?: string | undefined): Record<string, unknown> {
+		const resolvedWorkspaceId: string | undefined = workspaceId ?? getCurrentMcpWorkspaceId() ?? this.activeWorkspaceId;
+		if (resolvedWorkspaceId === undefined) {
+			return args;
+		}
+
+		return {
+			...args,
+			__daedalusWorkspaceId: resolvedWorkspaceId
+		};
+	}
+
 	async listTools(serverId: string, workspaceId?: string | undefined) {
+		if (serverId === TERMINAL_MCP_SERVER_ID) {
+			await this.ensureGlobalInternalServers();
+		}
+
 		if (serverId === GODOT_EDITOR_SERVER_ID) {
 			return this.editorBridge.listTools();
 		}
@@ -491,6 +559,11 @@ export class McpHost {
 		workspaceId?: string | undefined,
 		editorInstanceId?: string | undefined
 	) {
+		if (serverId === TERMINAL_MCP_SERVER_ID) {
+			await this.ensureGlobalInternalServers();
+			return this.getSession(serverId, workspaceId).callTool(name, this.createTerminalArgs(args, workspaceId));
+		}
+
 		if (serverId === GODOT_EDITOR_SERVER_ID) {
 			return this.editorBridge.callTool(name, args, workspaceId, editorInstanceId);
 		}
@@ -504,6 +577,10 @@ export class McpHost {
 	}
 
 	async listResources(serverId: string, workspaceId?: string | undefined) {
+		if (serverId === TERMINAL_MCP_SERVER_ID) {
+			await this.ensureGlobalInternalServers();
+		}
+
 		if (serverId === GODOT_EDITOR_SERVER_ID) {
 			return this.editorBridge.listResources();
 		}
@@ -517,6 +594,10 @@ export class McpHost {
 	}
 
 	async readResource(serverId: string, uri: string, workspaceId?: string | undefined) {
+		if (serverId === TERMINAL_MCP_SERVER_ID) {
+			await this.ensureGlobalInternalServers();
+		}
+
 		if (serverId === GODOT_EDITOR_SERVER_ID) {
 			return this.editorBridge.readResource(uri);
 		}
@@ -530,6 +611,10 @@ export class McpHost {
 	}
 
 	async closeAll(): Promise<void> {
+		for (const session of this.globalInternalSessions.values()) {
+			await session.close();
+		}
+
 		for (const session of this.globalCustomSessions.values()) {
 			await session.close();
 		}
@@ -540,6 +625,7 @@ export class McpHost {
 			}
 		}
 
+		this.globalInternalSessions.clear();
 		this.globalCustomSessions.clear();
 		this.globalCustomTools.clear();
 		this.workspaceSessions.clear();
@@ -547,6 +633,7 @@ export class McpHost {
 		this.customServerStatuses.clear();
 		clearGlobalDynamicMcpTools();
 		this.activeWorkspaceId = undefined;
+		this.globalInternalInitialized = false;
 		this.globalCustomInitialized = false;
 		this.diagnosticsBridge.clearWorkspace();
 	}

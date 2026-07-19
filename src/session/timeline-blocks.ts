@@ -667,6 +667,24 @@ function createFailedMessageStatus(message: StoredMessage): Partial<TimelineStat
 	};
 }
 
+function eventCompletesAssistantBlock(eventName: string): boolean {
+	return eventName === "agent.message.done"
+		|| eventName === "agent.run.done"
+		|| eventName === "workflow.done"
+		|| eventName === "ai.done"
+		|| eventName === "agent.run.error"
+		|| eventName === "workflow.error"
+		|| eventName === "agent.run.cancelled"
+		|| eventName === "ai.cancelled";
+}
+
+function shouldAppendInlineDiff(events: StoredSessionEvent[], assistantMessage?: StoredMessage | undefined): boolean {
+	if (assistantMessage !== undefined) {
+		return true;
+	}
+	return events.some((event: StoredSessionEvent): boolean => eventCompletesAssistantBlock(event.event));
+}
+
 function buildAssistantBodyParts(
 	sessionId: string,
 	events: StoredSessionEvent[],
@@ -749,9 +767,11 @@ function buildAssistantBodyParts(
 		}
 	}
 
-	const inlineDiffPart: TimelineInlineDiffPart | null = createInlineDiffPart(sessionId, fileEditBatches);
-	if (inlineDiffPart !== null) {
-		parts.push(inlineDiffPart);
+	if (shouldAppendInlineDiff(events, assistantMessage)) {
+		const inlineDiffPart: TimelineInlineDiffPart | null = createInlineDiffPart(sessionId, fileEditBatches);
+		if (inlineDiffPart !== null) {
+			parts.push(inlineDiffPart);
+		}
 	}
 
 	return parts;

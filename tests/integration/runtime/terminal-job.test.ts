@@ -9,6 +9,7 @@ import { startCommandJob, runCommandWait } from "../../../src/mcp/terminal/proce
 import { terminalJobStore } from "../../../src/mcp/terminal/job-store.js";
 import type { CommandPreset, TerminalJobRecord } from "../../../src/mcp/terminal/types.js";
 import { parseToolResultSummary } from "../../../src/tools/tool-result-parser.js";
+import { createRuntimeWorkspace, upsertRuntimeWorkspace } from "../../../src/workspace/registry.js";
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<{ content: Array<{ text: string }> }>;
 
@@ -68,6 +69,20 @@ function sleep(ms: number): Promise<void> {
 	});
 }
 
+async function waitForTerminalJob(jobId: string, expectedStatus: TerminalJobRecord["status"], timeoutMs: number = 3000): Promise<TerminalJobRecord | null> {
+	const deadline: number = Date.now() + timeoutMs;
+	let lastRecord: TerminalJobRecord | null = null;
+	while (Date.now() < deadline) {
+		lastRecord = await terminalJobStore.get(jobId);
+		if (lastRecord?.status === expectedStatus) {
+			return lastRecord;
+		}
+		await sleep(50);
+	}
+
+	return lastRecord;
+}
+
 test("terminal wait mode preserves immediate command result shape", async (): Promise<void> => {
 	await withAppData(async (): Promise<void> => {
 		const { preset, command } = nodePreset("console.log('wait-ok')");
@@ -99,9 +114,7 @@ test("terminal job mode returns job id and later completed status", async (): Pr
 
 		assert.equal(started.status, "running");
 		assert.match(started.jobId, /^terminal-job-/);
-		await sleep(250);
-
-		const record: TerminalJobRecord | null = await terminalJobStore.get(started.jobId);
+		const record: TerminalJobRecord | null = await waitForTerminalJob(started.jobId, "completed");
 		assert.notEqual(record, null);
 		assert.equal(record?.status, "completed");
 		assert.equal(record?.exitCode, 0);
@@ -190,4 +203,27 @@ test("terminal preset wrappers accept only their risk boundary", async (): Promi
 	} finally {
 		await rm(outsideRoot, { recursive: true, force: true });
 	}
+});
+
+test("terminal capabilities use injected workspace context", async (): Promise<void> => {
+	await withAppData(async (): Promise<void> => {
+		const server: FakeMcpServer = createFakeTerminalServer();
+		registerTerminalTools(server as never);
+		const workspaceRoot: string = await mkdtemp(join(tmpdir(), "terminal-workspace-"));
+		const workspace = upsertRuntimeWorkspace(createRuntimeWorkspace(workspaceRoot, "godot-test"));
+
+		try {
+			const capabilities: Record<string, unknown> = await callTerminalTool(server, "get_terminal_capabilities", {
+				__daedalusWorkspaceId: workspace.id
+			});
+			const presets = capabilities.presets as Array<Record<string, unknown>>;
+			const godotPreset = presets.find((preset: Record<string, unknown>): boolean => preset.name === "godot.check_only");
+
+			assert.equal(godotPreset?.godotProjectPath, workspace.rootPath);
+			assert.equal(godotPreset?.godotExecutablePath, "godot-test");
+			assert.match(String(godotPreset?.command), /godot-test/);
+		} finally {
+			await rm(workspaceRoot, { recursive: true, force: true });
+		}
+	});
 });

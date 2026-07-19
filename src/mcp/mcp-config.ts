@@ -4,25 +4,39 @@ import type { WorkspaceConfig } from "../workspace/types.js";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
+export const TERMINAL_MCP_SERVER_ID: string = "terminal";
+
 const defaultWs = getDefaultWorkspace();
 const DEFAULT_GODOT_PROJECT_PATH: string | undefined = process.env.GODOT_PROJECT_PATH ?? defaultWs?.rootPath;
 const DEFAULT_GODOT_EXECUTABLE_PATH: string | undefined = process.env.GODOT_EXECUTABLE_PATH ?? defaultWs?.godotExecutablePath;
 
+export function buildGlobalMcpServerConfigs(): McpServerConfig[] {
+	const terminalEnv: Record<string, string> = {
+		BACKEND_DIR: process.cwd()
+	};
+
+	if (DEFAULT_GODOT_PROJECT_PATH !== undefined) {
+		terminalEnv.GODOT_PROJECT_PATH = DEFAULT_GODOT_PROJECT_PATH;
+	}
+	if (DEFAULT_GODOT_EXECUTABLE_PATH !== undefined) {
+		terminalEnv.GODOT_EXECUTABLE_PATH = DEFAULT_GODOT_EXECUTABLE_PATH;
+	}
+
+	return [{
+		id: TERMINAL_MCP_SERVER_ID,
+		name: "Terminal MCP",
+		transport: "stdio",
+		command: "npx",
+		args: ["tsx", "src/mcp/terminal/server.ts"],
+		env: terminalEnv
+	}];
+}
+
 export function buildMcpServerConfigs(workspace?: WorkspaceConfig): McpServerConfig[] {
 	const projectPath: string | undefined = workspace?.rootPath ?? DEFAULT_GODOT_PROJECT_PATH;
-	const godotPath: string | undefined = workspace?.godotExecutablePath ?? DEFAULT_GODOT_EXECUTABLE_PATH;
 
 	if (!projectPath) {
 		return [];
-	}
-
-	const terminalEnv: Record<string, string> = {
-		BACKEND_DIR: process.cwd(),
-		GODOT_PROJECT_PATH: projectPath
-	};
-
-	if (godotPath) {
-		terminalEnv.GODOT_EXECUTABLE_PATH = godotPath;
 	}
 
 	const configs: McpServerConfig[] = [];
@@ -52,13 +66,5 @@ export function buildMcpServerConfigs(workspace?: WorkspaceConfig): McpServerCon
 		}
 	});
 
-	configs.push({
-		id: "terminal",
-		name: "Terminal MCP",
-		transport: "stdio",
-		command: "npx",
-		args: ["tsx", "src/mcp/terminal/server.ts"],
-		env: terminalEnv
-	});
 	return configs;
 }

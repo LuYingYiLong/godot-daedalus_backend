@@ -12,14 +12,39 @@ export const BACKEND_DIR: string = process.env.BACKEND_DIR ?? process.cwd();
 export const GODOT_EXECUTABLE: string = process.env.GODOT_EXECUTABLE_PATH ?? "godot";
 export const GODOT_PROJECT: string = process.env.GODOT_PROJECT_PATH ?? "";
 
+export type TerminalPresetContext = {
+	backendDir?: string | undefined;
+	godotProjectPath?: string | undefined;
+	godotExecutablePath?: string | undefined;
+};
+
+type ResolvedTerminalPresetContext = {
+	backendDir: string;
+	godotProjectPath: string;
+	godotExecutablePath: string;
+};
+
 const NPM_TYPECHECK_COMMAND: string[] = process.platform === "win32"
 	? ["cmd.exe", "/d", "/s", "/c", "npm", "run", "typecheck"]
 	: ["npm", "run", "typecheck"];
 
-export const ALLOWED_WORKING_ROOTS: string[] = [
-	path.resolve(BACKEND_DIR),
-	...(GODOT_PROJECT.length > 0 ? [path.resolve(GODOT_PROJECT)] : [])
-];
+function resolveContext(context?: TerminalPresetContext | undefined): ResolvedTerminalPresetContext {
+	return {
+		backendDir: context?.backendDir ?? BACKEND_DIR,
+		godotProjectPath: context?.godotProjectPath ?? GODOT_PROJECT,
+		godotExecutablePath: context?.godotExecutablePath ?? GODOT_EXECUTABLE
+	};
+}
+
+export function createAllowedWorkingRoots(context?: TerminalPresetContext | undefined): string[] {
+	const resolvedContext = resolveContext(context);
+	return [
+		path.resolve(resolvedContext.backendDir),
+		...(resolvedContext.godotProjectPath.length > 0 ? [path.resolve(resolvedContext.godotProjectPath)] : [])
+	];
+}
+
+export const ALLOWED_WORKING_ROOTS: string[] = createAllowedWorkingRoots();
 
 export const COMMAND_PRESETS: CommandPreset[] = [
 	{
@@ -87,11 +112,31 @@ export function findPreset(name: string): CommandPreset {
 	return preset;
 }
 
-export function resolveWorkingDirectory(workingDirectory: string | undefined, preset: CommandPreset): string {
+export function materializePreset(preset: CommandPreset, context?: TerminalPresetContext | undefined): CommandPreset {
+	if (preset.requiresGodotProject !== true) {
+		return preset;
+	}
+
+	const resolvedContext = resolveContext(context);
+	return {
+		...preset,
+		command: [
+			resolvedContext.godotExecutablePath,
+			"--headless",
+			"--disable-crash-handler",
+			"--path", resolvedContext.godotProjectPath,
+			"--check-only",
+			"--quit"
+		],
+		workingDirectory: resolvedContext.godotProjectPath || resolvedContext.backendDir
+	};
+}
+
+export function resolveWorkingDirectory(workingDirectory: string | undefined, preset: CommandPreset, context?: TerminalPresetContext | undefined): string {
 	const requestedPath: string = workingDirectory ?? preset.workingDirectory;
 	const resolvedPath: string = path.resolve(requestedPath);
 
-	for (const allowedRoot of ALLOWED_WORKING_ROOTS) {
+	for (const allowedRoot of createAllowedWorkingRoots(context)) {
 		if (isPathInsideRoot(resolvedPath, allowedRoot)) {
 			return resolvedPath;
 		}
@@ -100,17 +145,19 @@ export function resolveWorkingDirectory(workingDirectory: string | undefined, pr
 	throw new Error(`Working directory is outside allowed roots: ${resolvedPath}`);
 }
 
-function toProjectRelativePath(resourcePath: string): string {
+function toProjectRelativePath(resourcePath: string, context?: TerminalPresetContext | undefined): string {
 	const trimmedPath: string = resourcePath.trim();
 	if (trimmedPath.length === 0) {
 		throw new Error("resourcePath cannot be empty");
 	}
 
-	if (GODOT_PROJECT.length === 0) {
+	const resolvedContext = resolveContext(context);
+	const godotProject: string = resolvedContext.godotProjectPath;
+	if (godotProject.length === 0) {
 		throw new Error("Cannot resolve resourcePath without GODOT_PROJECT_PATH");
 	}
 
-	const projectRoot: string = path.resolve(GODOT_PROJECT);
+	const projectRoot: string = path.resolve(godotProject);
 	if (trimmedPath.startsWith("res://")) {
 		const relativePath: string = trimmedPath.slice("res://".length).replaceAll("\\", "/");
 		const absolutePath: string = path.resolve(projectRoot, relativePath);
@@ -143,12 +190,15 @@ function toResPath(relativePath: string): string {
 	return `res://${relativePath.replace(/^\/+/u, "")}`;
 }
 
-export function createGodotResourceCommand(preset: CommandPreset, resourcePath: string | undefined): string[] {
+export function createGodotResourceCommand(preset: CommandPreset, resourcePath: string | undefined, context?: TerminalPresetContext | undefined): string[] {
 	if (!preset.requiresGodotProject) {
 		return preset.command;
 	}
 
-	if (GODOT_PROJECT.length === 0) {
+	const resolvedContext = resolveContext(context);
+	const godotProject: string = resolvedContext.godotProjectPath;
+	const godotExecutable: string = resolvedContext.godotExecutablePath;
+	if (godotProject.length === 0) {
 		return preset.command;
 	}
 
@@ -161,16 +211,16 @@ export function createGodotResourceCommand(preset: CommandPreset, resourcePath: 
 		return preset.command;
 	}
 
-	const relativePath: string = toProjectRelativePath(trimmedResourcePath);
+	const relativePath: string = toProjectRelativePath(trimmedResourcePath, context);
 	const extension: string = path.extname(relativePath).toLowerCase();
 	const resPath: string = toResPath(relativePath);
 
 	if (extension === ".gd") {
 		return [
-			GODOT_EXECUTABLE,
+			godotExecutable,
 			"--headless",
 			"--disable-crash-handler",
-			"--path", GODOT_PROJECT,
+			"--path", godotProject,
 			"--script", resPath,
 			"--check-only"
 		];
@@ -178,10 +228,10 @@ export function createGodotResourceCommand(preset: CommandPreset, resourcePath: 
 
 	if (extension === ".tscn" || extension === ".scn") {
 		return [
-			GODOT_EXECUTABLE,
+			godotExecutable,
 			"--headless",
 			"--disable-crash-handler",
-			"--path", GODOT_PROJECT,
+			"--path", godotProject,
 			resPath,
 			"--quit-after", "1"
 		];

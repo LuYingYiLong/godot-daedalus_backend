@@ -180,6 +180,12 @@ function hasSuccessfulVerificationObservation(observations: WorkflowToolObservat
 	return observations.some(isSuccessfulVerificationObservation);
 }
 
+function hasOptionalDiagnosticsEnvironmentIssue(observations: WorkflowToolObservation[]): boolean {
+	return observations.some((observation: WorkflowToolObservation): boolean => (
+		isDiagnosticsObservation(observation) && isEnvironmentIssueObservation(observation)
+	));
+}
+
 function normalizedRecord(value: Record<string, unknown> | undefined): string {
 	if (value === undefined) {
 		return "{}";
@@ -355,7 +361,7 @@ function createOutcomeStatus(
 		if (failedChecks.length > 0) {
 			return "needs_fix";
 		}
-		if (!hasSuccessfulVerificationObservation(observations)) {
+		if (!hasSuccessfulVerificationObservation(observations) && !hasOptionalDiagnosticsEnvironmentIssue(observations)) {
 			return "blocked";
 		}
 	}
@@ -527,6 +533,13 @@ export function applyDeterministicVerificationGate(
 			gdArtifacts.join(", ")
 		));
 	}
+	if (gdArtifacts.length > 0 && !hasGodotCheckOnly(verificationObservations) && hasGodotCheckOnlyEnvironmentIssue(verificationObservations)) {
+		gateFailures.push(createGateFailure(
+			"validation_environment_unavailable",
+			"Godot check-only 验证环境不可用，无法判定 GDScript 写入结果。",
+			gdArtifacts.join(", ")
+		));
+	}
 	if (sceneArtifacts.length > 0 && !hasSceneValidation(verificationObservations)) {
 		gateFailures.push(createGateFailure(
 			"scene_validation_required",
@@ -540,12 +553,15 @@ export function applyDeterministicVerificationGate(
 	}
 
 	const failedChecks: WorkflowFailedCheck[] = [...outcome.failedChecks, ...gateFailures];
+	const environmentBlocked: boolean = gateFailures.some((failure: WorkflowFailedCheck): boolean => failure.code === "validation_environment_unavailable");
+	const summary: string = gateFailures.map((failure: WorkflowFailedCheck): string => failure.message).join("\n");
 	return {
 		...outcome,
-		status: "needs_fix",
-		summary: gateFailures.map((failure: WorkflowFailedCheck): string => failure.message).join("\n"),
+		status: environmentBlocked ? "blocked" : "needs_fix",
+		summary,
 		failedChecks,
-		requiredFixes: createRequiredFixes(failedChecks)
+		requiredFixes: createRequiredFixes(failedChecks),
+		blockedReason: environmentBlocked ? summary : outcome.blockedReason
 	};
 }
 
