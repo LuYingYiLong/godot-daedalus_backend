@@ -6,7 +6,7 @@ import type {
 import type { AiChatParams, ChatMessage } from "../protocol/types.js";
 import type { McpHost } from "../mcp/mcp-host.js";
 import { createWorkspaceToolCatalog, type ToolExecutionContext } from "../tools/tool-catalog.js";
-import { resolveToolBudget, MAX_TOTAL_TOOL_RESULT_CHARS } from "../tools/llm-tool-budget.js";
+import { MAX_TOTAL_TOOL_RESULT_CHARS } from "../tools/llm-tool-budget.js";
 import { dispatchToolCalls, ToolApprovalRequiredError, type OnToolEvent, type ToolResultEnricher } from "../tools/tool-dispatcher.js";
 import { ApprovalGateway } from "../tools/approval-gateway.js";
 import type { ApprovedToolResult, AnthropicMessagesAgentContinuation, ProviderAgentResult } from "./agent-types.js";
@@ -25,6 +25,15 @@ import {
 	type AnthropicToolResultBlock,
 	type AnthropicToolUseBlock
 } from "./anthropic-compatible-client.js";
+import {
+	createToolBudgetRequiredResult,
+	getContinuationMaxSteps,
+	getContinuationToolResultCharLimit,
+	getContinuedMaxSteps,
+	getContinuedToolResultCharLimit,
+	getInitialMaxToolSteps,
+	shouldPauseForToolBudget
+} from "./agent-tool-budget.js";
 
 const FINALIZE_AFTER_TOOL_LIMIT_PROMPT: string =
 	"工具调用阶段已经达到后端限制。请停止请求更多工具，基于目前已经获得的工具结果直接回答用户。"
@@ -52,13 +61,13 @@ function createAnthropicToolResultBlock(result: ChatCompletionToolMessageParam):
 	};
 }
 
-function createApprovedToolResultBlock(result: ApprovedToolResult, totalToolResultChars: number): {
+function createApprovedToolResultBlock(result: ApprovedToolResult, totalToolResultChars: number, maxTotalToolResultChars: number): {
 	block: AnthropicToolResultBlock;
 	totalToolResultChars: number;
 	limitReached: boolean;
 	reason?: string | undefined;
 } {
-	const budgetedResult = fitToolResultContent(result.content, totalToolResultChars);
+	const budgetedResult = fitToolResultContent(result.content, totalToolResultChars, maxTotalToolResultChars);
 	const created: {
 		block: AnthropicToolResultBlock;
 		totalToolResultChars: number;
@@ -180,6 +189,7 @@ async function runAgentLoop(
 	startStep: number,
 	maxSteps: number,
 	initialToolResultChars: number,
+	maxTotalToolResultChars: number,
 	streamAssistant: boolean,
 	onEvent?: OnToolEvent,
 	abortSignal?: AbortSignal | undefined,
@@ -238,7 +248,9 @@ async function runAgentLoop(
 						systemPrompt,
 						messages: continuationMessages,
 						nextStep: step + 1,
-						totalToolResultChars
+						totalToolResultChars,
+						maxSteps,
+						toolResultCharLimit: maxTotalToolResultChars
 					}
 				};
 			}
@@ -248,20 +260,39 @@ async function runAgentLoop(
 		const resultBlocks: AnthropicToolResultBlock[] = [];
 		let toolResultLimitReason: string | null = null;
 		for (const result of toolResults) {
-			const budgetedResult = fitToolResultContent(extractToolResultText(result), totalToolResultChars);
+			const budgetedResult = fitToolResultContent(extractToolResultText(result), totalToolResultChars, maxTotalToolResultChars);
 			totalToolResultChars += budgetedResult.chars;
 			resultBlocks.push(createAnthropicToolResultBlock({
 				...result,
 				content: budgetedResult.content
 			}));
 			if (budgetedResult.limitReached) {
-				toolResultLimitReason = budgetedResult.reason ?? createToolResultLimitReason(totalToolResultChars);
+				toolResultLimitReason = budgetedResult.reason ?? createToolResultLimitReason(totalToolResultChars, maxTotalToolResultChars);
 			}
 		}
 		messages.push(createToolResultMessage(resultBlocks));
 
-		if (toolResultLimitReason !== null || totalToolResultChars >= MAX_TOTAL_TOOL_RESULT_CHARS) {
-			const reason: string = toolResultLimitReason ?? createToolResultLimitReason(totalToolResultChars);
+		if (toolResultLimitReason !== null || totalToolResultChars >= maxTotalToolResultChars) {
+			const reason: string = toolResultLimitReason ?? createToolResultLimitReason(totalToolResultChars, maxTotalToolResultChars);
+			if (shouldPauseForToolBudget(gateway)) {
+				return createToolBudgetRequiredResult({
+					limitKind: "tool_result_chars",
+					reason,
+					usedSteps: step + 1,
+					maxSteps,
+					totalToolResultChars,
+					toolResultCharLimit: maxTotalToolResultChars,
+					continuation: {
+						kind: "anthropic_messages",
+						systemPrompt,
+						messages: [...messages],
+						nextStep: step + 1,
+						totalToolResultChars,
+						maxSteps,
+						toolResultCharLimit: maxTotalToolResultChars
+					}
+				});
+			}
 			const finalText: string = await createFinalAnswer(params, options, messages, systemPrompt, reason, abortSignal);
 			if (streamAssistant) {
 				onEvent?.({ type: "ai.delta", text: finalText });
@@ -270,12 +301,33 @@ async function runAgentLoop(
 		}
 	}
 
+	const stepLimitReason: string = `工具调用达到最大步数 ${maxSteps}，当前工具结果总量为 ${totalToolResultChars} 字符`;
+	if (shouldPauseForToolBudget(gateway)) {
+		return createToolBudgetRequiredResult({
+			limitKind: "steps",
+			reason: stepLimitReason,
+			usedSteps: maxSteps,
+			maxSteps,
+			totalToolResultChars,
+			toolResultCharLimit: maxTotalToolResultChars,
+			continuation: {
+				kind: "anthropic_messages",
+				systemPrompt,
+				messages: [...messages],
+				nextStep: maxSteps,
+				totalToolResultChars,
+				maxSteps,
+				toolResultCharLimit: maxTotalToolResultChars
+			}
+		});
+	}
+
 	const finalText: string = await createFinalAnswer(
 		params,
 		options,
 		messages,
 		systemPrompt,
-		`工具调用达到最大步数 ${maxSteps}，当前工具结果总量为 ${totalToolResultChars} 字符`,
+		stepLimitReason,
 		abortSignal
 	);
 	if (streamAssistant) {
@@ -292,10 +344,7 @@ function getTools(allowedToolNames: readonly string[] | undefined, toolContext: 
 }
 
 function getMaxSteps(params: AiChatParams): number {
-	return resolveToolBudget(
-		(params.options as Record<string, unknown> | undefined)?.["toolBudget"] as string | undefined,
-		params.skillRefs?.[0]
-	);
+	return getInitialMaxToolSteps(params);
 }
 
 export async function runAnthropicCompatibleAgent(
@@ -322,6 +371,7 @@ export async function runAnthropicCompatibleAgent(
 		0,
 		getMaxSteps(params),
 		0,
+		MAX_TOTAL_TOOL_RESULT_CHARS,
 		false,
 		onEvent,
 		abortSignal,
@@ -354,6 +404,7 @@ export async function runAnthropicCompatibleAgentStreaming(
 		0,
 		getMaxSteps(params),
 		0,
+		MAX_TOTAL_TOOL_RESULT_CHARS,
 		true,
 		onEvent,
 		abortSignal,
@@ -376,19 +427,38 @@ async function continueAnthropicCompatibleAgentInternal(
 	toolContext: ToolExecutionContext | undefined,
 	streamAssistant: boolean
 ): Promise<AnthropicCompatibleAgentResult> {
-	const approvedResult = createApprovedToolResultBlock(approvedToolResult, continuation.totalToolResultChars);
+	const maxTotalToolResultChars: number = getContinuationToolResultCharLimit(continuation);
+	const approvedResult = createApprovedToolResultBlock(approvedToolResult, continuation.totalToolResultChars, maxTotalToolResultChars);
 	const messages: AnthropicMessageParam[] = [
 		...continuation.messages,
 		createToolResultMessage([approvedResult.block])
 	];
 
-	if (approvedResult.limitReached || approvedResult.totalToolResultChars >= MAX_TOTAL_TOOL_RESULT_CHARS) {
+	if (approvedResult.limitReached || approvedResult.totalToolResultChars >= maxTotalToolResultChars) {
+		const reason: string = approvedResult.reason ?? createToolResultLimitReason(approvedResult.totalToolResultChars, maxTotalToolResultChars);
+		if (shouldPauseForToolBudget(gateway)) {
+			return createToolBudgetRequiredResult({
+				limitKind: "tool_result_chars",
+				reason,
+				usedSteps: continuation.nextStep,
+				maxSteps: getContinuationMaxSteps(params, continuation),
+				totalToolResultChars: approvedResult.totalToolResultChars,
+				toolResultCharLimit: maxTotalToolResultChars,
+				continuation: {
+					...continuation,
+					messages,
+					totalToolResultChars: approvedResult.totalToolResultChars,
+					maxSteps: getContinuationMaxSteps(params, continuation),
+					toolResultCharLimit: maxTotalToolResultChars
+				}
+			});
+		}
 		const finalText: string = await createFinalAnswer(
 			params,
 			options,
 			messages,
 			continuation.systemPrompt,
-			approvedResult.reason ?? createToolResultLimitReason(approvedResult.totalToolResultChars),
+			reason,
 			abortSignal
 		);
 		if (streamAssistant) {
@@ -406,8 +476,9 @@ async function continueAnthropicCompatibleAgentInternal(
 		gateway,
 		getTools(allowedToolNames, toolContext),
 		continuation.nextStep,
-		getMaxSteps(params),
+		getContinuationMaxSteps(params, continuation),
 		approvedResult.totalToolResultChars,
+		maxTotalToolResultChars,
 		streamAssistant,
 		onEvent,
 		abortSignal,
@@ -446,4 +517,116 @@ export async function continueAnthropicCompatibleAgentStreaming(
 	toolContext?: ToolExecutionContext | undefined
 ): Promise<AnthropicCompatibleAgentResult> {
 	return continueAnthropicCompatibleAgentInternal(params, options, continuation, approvedToolResult, mcpHost, gateway, allowedToolNames, onEvent, abortSignal, toolResultEnricher, toolContext, true);
+}
+
+async function continueAnthropicCompatibleAgentAfterToolBudgetInternal(
+	params: AiChatParams,
+	options: ProviderChatOptions,
+	continuation: AnthropicMessagesAgentContinuation,
+	mcpHost: McpHost,
+	gateway: ApprovalGateway,
+	allowedToolNames: readonly string[] | undefined,
+	onEvent: OnToolEvent | undefined,
+	abortSignal: AbortSignal | undefined,
+	toolResultEnricher: ToolResultEnricher | undefined,
+	toolContext: ToolExecutionContext | undefined,
+	streamAssistant: boolean
+): Promise<AnthropicCompatibleAgentResult> {
+	return runAgentLoop(
+		params,
+		options,
+		[...continuation.messages],
+		continuation.systemPrompt,
+		mcpHost,
+		gateway,
+		getTools(allowedToolNames, toolContext),
+		continuation.nextStep,
+		getContinuedMaxSteps(params, continuation),
+		continuation.totalToolResultChars,
+		getContinuedToolResultCharLimit(continuation),
+		streamAssistant,
+		onEvent,
+		abortSignal,
+		toolResultEnricher,
+		toolContext
+	);
+}
+
+export async function continueAnthropicCompatibleAgentAfterToolBudget(
+	params: AiChatParams,
+	options: ProviderChatOptions,
+	continuation: AnthropicMessagesAgentContinuation,
+	mcpHost: McpHost,
+	gateway: ApprovalGateway,
+	allowedToolNames?: readonly string[] | undefined,
+	onEvent?: OnToolEvent,
+	abortSignal?: AbortSignal | undefined,
+	toolResultEnricher?: ToolResultEnricher | undefined,
+	toolContext?: ToolExecutionContext | undefined
+): Promise<AnthropicCompatibleAgentResult> {
+	return continueAnthropicCompatibleAgentAfterToolBudgetInternal(params, options, continuation, mcpHost, gateway, allowedToolNames, onEvent, abortSignal, toolResultEnricher, toolContext, false);
+}
+
+export async function continueAnthropicCompatibleAgentAfterToolBudgetStreaming(
+	params: AiChatParams,
+	options: ProviderChatOptions,
+	continuation: AnthropicMessagesAgentContinuation,
+	mcpHost: McpHost,
+	gateway: ApprovalGateway,
+	allowedToolNames?: readonly string[] | undefined,
+	onEvent?: OnToolEvent,
+	abortSignal?: AbortSignal | undefined,
+	toolResultEnricher?: ToolResultEnricher | undefined,
+	toolContext?: ToolExecutionContext | undefined
+): Promise<AnthropicCompatibleAgentResult> {
+	return continueAnthropicCompatibleAgentAfterToolBudgetInternal(params, options, continuation, mcpHost, gateway, allowedToolNames, onEvent, abortSignal, toolResultEnricher, toolContext, true);
+}
+
+async function finalizeAnthropicCompatibleAgentAfterToolBudgetInternal(
+	params: AiChatParams,
+	options: ProviderChatOptions,
+	continuation: AnthropicMessagesAgentContinuation,
+	reason: string,
+	onEvent: OnToolEvent | undefined,
+	abortSignal: AbortSignal | undefined,
+	streamAssistant: boolean
+): Promise<AnthropicCompatibleAgentResult> {
+	const finalText: string = await createFinalAnswer(
+		params,
+		options,
+		[...continuation.messages],
+		continuation.systemPrompt,
+		reason,
+		abortSignal
+	);
+	if (streamAssistant) {
+		onEvent?.({ type: "ai.delta", text: finalText });
+	}
+	return { status: "completed", text: finalText };
+}
+
+export async function finalizeAnthropicCompatibleAgentAfterToolBudget(
+	params: AiChatParams,
+	options: ProviderChatOptions,
+	continuation: AnthropicMessagesAgentContinuation,
+	_allowedToolNames: readonly string[] | undefined,
+	reason: string,
+	onEvent?: OnToolEvent,
+	abortSignal?: AbortSignal | undefined,
+	_toolContext?: ToolExecutionContext | undefined
+): Promise<AnthropicCompatibleAgentResult> {
+	return finalizeAnthropicCompatibleAgentAfterToolBudgetInternal(params, options, continuation, reason, onEvent, abortSignal, false);
+}
+
+export async function finalizeAnthropicCompatibleAgentAfterToolBudgetStreaming(
+	params: AiChatParams,
+	options: ProviderChatOptions,
+	continuation: AnthropicMessagesAgentContinuation,
+	_allowedToolNames: readonly string[] | undefined,
+	reason: string,
+	onEvent?: OnToolEvent,
+	abortSignal?: AbortSignal | undefined,
+	_toolContext?: ToolExecutionContext | undefined
+): Promise<AnthropicCompatibleAgentResult> {
+	return finalizeAnthropicCompatibleAgentAfterToolBudgetInternal(params, options, continuation, reason, onEvent, abortSignal, true);
 }

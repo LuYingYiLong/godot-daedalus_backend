@@ -7,7 +7,11 @@ import {
 } from "./provider-chat-completions-client.js";
 import {
 	continueOpenAICompatibleAgent,
+	continueOpenAICompatibleAgentAfterToolBudget,
+	continueOpenAICompatibleAgentAfterToolBudgetStreaming,
 	continueOpenAICompatibleAgentStreaming,
+	finalizeOpenAICompatibleAgentAfterToolBudget,
+	finalizeOpenAICompatibleAgentAfterToolBudgetStreaming,
 	runOpenAICompatibleAgent,
 	runOpenAICompatibleAgentStreaming
 } from "./openai-compatible-agent.js";
@@ -26,6 +30,14 @@ export const openAICompatibleAdapter: ProviderAdapter = {
 		continueOpenAICompatibleAgent(params, options, asChatCompletionsContinuation(continuation), approvedToolResult, mcpHost, gateway, allowedToolNames, onEvent, abortSignal, undefined, toolContext),
 	continueAgentStreaming: (params, options, continuation, approvedToolResult, mcpHost, gateway, allowedToolNames, onEvent, abortSignal, toolContext) =>
 		continueOpenAICompatibleAgentStreaming(params, options, asChatCompletionsContinuation(continuation), approvedToolResult, mcpHost, gateway, allowedToolNames, onEvent, abortSignal, undefined, toolContext),
+	continueAgentAfterToolBudget: (params, options, continuation, mcpHost, gateway, allowedToolNames, onEvent, abortSignal, toolContext) =>
+		continueOpenAICompatibleAgentAfterToolBudget(params, options, asChatCompletionsContinuation(continuation), mcpHost, gateway, allowedToolNames, onEvent, abortSignal, undefined, toolContext),
+	continueAgentAfterToolBudgetStreaming: (params, options, continuation, mcpHost, gateway, allowedToolNames, onEvent, abortSignal, toolContext) =>
+		continueOpenAICompatibleAgentAfterToolBudgetStreaming(params, options, asChatCompletionsContinuation(continuation), mcpHost, gateway, allowedToolNames, onEvent, abortSignal, undefined, toolContext),
+	finalizeAgentAfterToolBudget: (params, options, continuation, allowedToolNames, reason, onEvent, abortSignal, toolContext) =>
+		finalizeOpenAICompatibleAgentAfterToolBudget(params, options, asChatCompletionsContinuation(continuation), allowedToolNames, reason, onEvent, abortSignal, toolContext),
+	finalizeAgentAfterToolBudgetStreaming: (params, options, continuation, allowedToolNames, reason, onEvent, abortSignal, toolContext) =>
+		finalizeOpenAICompatibleAgentAfterToolBudgetStreaming(params, options, asChatCompletionsContinuation(continuation), allowedToolNames, reason, onEvent, abortSignal, toolContext),
 	listModels: async (options: ProviderChatOptions): Promise<ProviderModelInfo[]> => fetchOpenAICompatibleModels(options),
 	estimateMessagesTokens: (options: ProviderChatOptions, messages: ChatCompletionMessageParam[], abortSignal?: AbortSignal | undefined): Promise<number | null> =>
 		estimateOpenAICompatibleMessagesTokens(options, messages, abortSignal)

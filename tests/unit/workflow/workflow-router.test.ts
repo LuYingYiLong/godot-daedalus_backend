@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
+	applyProjectContextRouteOverride,
 	applyWorkflowRouteSafety,
 	createFallbackWorkflowRoute,
 	normalizeWorkflowRouteDecision,
@@ -71,6 +72,58 @@ test("workflow router normalizes direct and tool answers without workflow todos"
 	}).execution, "tool_answer");
 });
 
+test("workflow router upgrades project-specific advice to hidden read-only tool answer", (): void => {
+	const decision = applyProjectContextRouteOverride({
+		execution: "direct_answer",
+		reason: "User asks for menu suggestions.",
+		requiresTools: false,
+		requiresWrite: false,
+		planningHint: ""
+	}, {
+		message: "我修好了，你觉得Daedalus-studio的标题栏的菜单栏可以添加什么，先不动文件",
+		mode: "agent"
+	}, {
+		workspaceSummary: [
+			"id=runtime-e51fa33500",
+			"name=Daedalus Studio",
+			"kind=electron",
+			"rootPath=D:\\daedalus-studio"
+		].join("\n"),
+		editorSummary: "editorInstanceId=none",
+		additionalContextSummary: "No additional context."
+	});
+
+	assert.equal(decision.execution, "tool_answer");
+	assert.equal(decision.requiresTools, true);
+	assert.equal(decision.requiresWrite, false);
+	assert.equal(decision.safetyOverride, "project_context_read");
+});
+
+test("workflow router respects explicit requests to avoid reading project files", (): void => {
+	const decision = applyProjectContextRouteOverride({
+		execution: "direct_answer",
+		reason: "User asks for generic suggestions.",
+		requiresTools: false,
+		requiresWrite: false,
+		planningHint: ""
+	}, {
+		message: "不要看代码，只凭经验说标题栏菜单栏可以添加什么",
+		mode: "agent"
+	}, {
+		workspaceSummary: [
+			"id=runtime-e51fa33500",
+			"name=Daedalus Studio",
+			"kind=electron",
+			"rootPath=D:\\daedalus-studio"
+		].join("\n"),
+		editorSummary: "editorInstanceId=none",
+		additionalContextSummary: "No additional context."
+	});
+
+	assert.equal(decision.execution, "direct_answer");
+	assert.equal(decision.requiresTools, false);
+});
+
 test("workflow router fallback treats short edit confirmations as workflow", (): void => {
 	const decision = createFallbackWorkflowRoute({
 		message: "帮我改一下",
@@ -91,6 +144,17 @@ test("chat orchestrator has a hidden answer path that does not emit workflow tod
 	assert.ok(workflowStart > hiddenAnswerStart);
 	assert.equal(source.slice(hiddenAnswerStart, workflowStart).includes("sendWorkflowTodoSnapshot"), false);
 	assert.equal(source.includes("workflow_route_decided"), true);
+});
+
+test("chat orchestrator constrains hidden read-only tool answers", async (): Promise<void> => {
+	const source: string = await readFile(new URL("../../../src/server/chat-orchestrator.ts", import.meta.url), "utf8");
+
+	assert.equal(source.includes("function createHiddenAnswerChatParams"), true);
+	assert.equal(source.includes('toolBudget: params.options?.toolBudget ?? "simple"'), true);
+	assert.equal(source.includes("function createHiddenAnswerSystemPrompt"), true);
+	assert.equal(source.includes("隐藏只读回答收束规则"), true);
+	assert.equal(source.includes("达到工具预算后必须停止并直接回答"), true);
+	assert.equal(source.includes("routeDecision,"), true);
 });
 
 test("chat orchestrator emits run started before workflow routing", async (): Promise<void> => {

@@ -3,8 +3,8 @@ export const DEFAULT_TOOL_STEPS: number = 10;
 export type ToolBudgetLevel = "simple" | "normal" | "codegen" | "project_edit";
 
 const TOOL_BUDGET_MAP: Record<ToolBudgetLevel, number> = {
-	simple: 4,
-	normal: 10,
+	simple: 6,
+	normal: 12,
 	codegen: 20,
 	project_edit: 30
 };
@@ -40,3 +40,5 @@ export function resolveToolBudget(
 
 export const MAX_TOOL_RESULT_CHARS: number = 12000;
 export const MAX_TOTAL_TOOL_RESULT_CHARS: number = 48000;
+export const TOOL_BUDGET_CONTINUE_STEPS: number = 10;
+export const TOOL_RESULT_CONTINUE_CHARS: number = MAX_TOTAL_TOOL_RESULT_CHARS;

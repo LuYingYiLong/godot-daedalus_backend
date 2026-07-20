@@ -12,6 +12,7 @@ import { appendChatTurnToSession } from "../token-budget.js";
 import { consumePendingGuideSection } from "../pending-guides.js";
 import { sendSessionEvent } from "../session-events.js";
 import { createPendingAiContinuation, registerPendingApprovalContinuation, sendAgentPaused } from "../approval-continuation.js";
+import { createPendingToolBudget, registerPendingToolBudget, sendToolBudgetRequired } from "../tool-budget-continuation.js";
 import { reviseLlmWorkflowPlan } from "../../workflow/llm-planner.js";
 import { WorkflowExecutionError } from "./workflow-error.js";
 import { MAX_WORKFLOW_AUTO_REPAIR_ROUNDS } from "./limits.js";
@@ -148,13 +149,15 @@ export async function continueWorkflowExecution(
 	initialAgentResult?: ProviderAgentResult | undefined,
 	persistRequestId: string = requestId,
 	abortSignal?: AbortSignal | undefined,
-	initialToolObservations: WorkflowToolObservation[] = []
+	initialToolObservations: WorkflowToolObservation[] = [],
+	initialPhaseRunResult?: WorkflowPhaseRunResult | undefined
 ): Promise<void> {
 	let state: WorkflowRunState = workflowState;
 	let plan: WorkflowPlan = state.plan;
 	let phaseOutputs = state.phaseOutputs;
 	let agentResultOverride: ProviderAgentResult | undefined = initialAgentResult;
 	let agentResultOverrideToolObservations: WorkflowToolObservation[] = initialToolObservations;
+	let phaseRunResultOverride: WorkflowPhaseRunResult | undefined = initialPhaseRunResult;
 	const streamFinal: boolean = state.originalParams.options?.stream === true;
 	const planningContext: string = state.planningContext ?? "";
 
@@ -227,7 +230,13 @@ export async function continueWorkflowExecution(
 		let phaseToolStats: WorkflowPhaseToolStats = createEmptyWorkflowPhaseToolStats();
 		let phaseToolObservations: WorkflowToolObservation[] = [];
 		try {
-			if (agentResultOverride !== undefined) {
+			if (phaseRunResultOverride !== undefined) {
+				agentResult = phaseRunResultOverride.agentResult;
+				phaseToolStats = phaseRunResultOverride.toolStats;
+				phaseToolObservations = phaseRunResultOverride.toolObservations;
+				state = appendCapturedAttachments(state, phaseRunResultOverride.capturedAttachments);
+				phaseRunResultOverride = undefined;
+			} else if (agentResultOverride !== undefined) {
 				agentResult = agentResultOverride;
 				phaseToolStats.approvalEvents = 1;
 				phaseToolStats.writeToolEvents = 1;
@@ -341,6 +350,44 @@ export async function continueWorkflowExecution(
 			}, persistRequestId);
 			sendWorkflowTodoSnapshot(socket, requestId, session, plan, persistRequestId, phaseOutputs, phaseRunId);
 			sendAgentPaused(socket, requestId, session, plan.id, agentResult, persistRequestId);
+			return;
+		}
+
+		if (agentResult.status === "tool_budget_required") {
+			const budgetOutcome: WorkflowPhaseOutput = {
+				...createWorkflowPhaseOutcome(phase, phaseRunId, "", phaseToolObservations),
+				status: "approval_required",
+				summary: "工具调用预算已达到上限，等待用户决定是否继续。",
+				requiredFixes: ["用户需要决定是否追加工具调用预算。"],
+				blockedReason: agentResult.reason
+			};
+			const budgetCommand = scheduleWorkflowApproval({ ...state, plan, phaseIndex: index, phaseOutputs }, phase, budgetOutcome, phaseRunId);
+			state = budgetCommand.state;
+			plan = state.plan;
+			phaseOutputs = state.phaseOutputs;
+			const pausedState: WorkflowRunState = state;
+			const pendingBudget = createPendingToolBudget({
+				agentResult,
+				chatParams: phaseParams,
+				options,
+				allowedToolNames: runtimePhase.allowedTools,
+				userMessage: pausedState.originalParams.message,
+				requestId: persistRequestId,
+				userCreatedAt,
+				stream: streamPhase,
+				workflowState: pausedState,
+				workflowPhaseToolStats: phaseToolStats,
+				workflowToolObservations: phaseToolObservations
+			});
+			registerPendingToolBudget(session, pendingBudget);
+			sendWorkflowEvent(socket, requestId, session, "workflow.phase.outcome", {
+				workflowId: plan.id,
+				phaseId: phase.id,
+				phaseRunId,
+				outcome: budgetCommand.outcome
+			}, persistRequestId);
+			sendWorkflowTodoSnapshot(socket, requestId, session, plan, persistRequestId, phaseOutputs, phaseRunId);
+			sendToolBudgetRequired(socket, requestId, session, plan.id, pendingBudget, persistRequestId);
 			return;
 		}
 

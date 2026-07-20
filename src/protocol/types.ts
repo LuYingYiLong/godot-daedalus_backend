@@ -67,6 +67,8 @@ export type ServerEvent = {
 		| "agent.tool.approved"
 		| "agent.tool.rejected"
 		| "agent.run.paused"
+		| "agent.run.tool_budget_required"
+		| "agent.run.tool_budget.resolved"
 		| "agent.run.done"
 		| "agent.run.error"
 		| "agent.run.cancelled"

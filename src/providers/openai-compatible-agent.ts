@@ -19,7 +19,7 @@ import {
 } from "../providers/deepseek-client.js";
 import type { McpHost } from "../mcp/mcp-host.js";
 import { createWorkspaceToolCatalog, type ToolExecutionContext } from "../tools/tool-catalog.js";
-import { resolveToolBudget, MAX_TOTAL_TOOL_RESULT_CHARS } from "../tools/llm-tool-budget.js";
+import { MAX_TOTAL_TOOL_RESULT_CHARS } from "../tools/llm-tool-budget.js";
 import { dispatchToolCalls, ToolApprovalRequiredError, type OnToolEvent, type ToolResultEnricher } from "../tools/tool-dispatcher.js";
 import { ApprovalGateway } from "../tools/approval-gateway.js";
 import { containsDsmlToolCalls } from "./deepseek-dsml-tools.js";
@@ -27,6 +27,15 @@ import { containsLooseToolCalls, isKnownLooseToolTagName, isPotentialLooseToolTa
 import type { ApprovedToolResult, ChatCompletionsAgentContinuation, ProviderAgentResult } from "./agent-types.js";
 import { createToolResultLimitFallback, createToolResultLimitReason, fitToolResultContent } from "./tool-result-budget.js";
 import { getProviderEndpointConfig } from "./provider-registry.js";
+import {
+	createToolBudgetRequiredResult,
+	getContinuationMaxSteps,
+	getContinuationToolResultCharLimit,
+	getContinuedMaxSteps,
+	getContinuedToolResultCharLimit,
+	getInitialMaxToolSteps,
+	shouldPauseForToolBudget
+} from "./agent-tool-budget.js";
 
 const FINALIZE_AFTER_TOOL_LIMIT_PROMPT: string =
 	"工具调用阶段已经达到后端限制。请停止请求更多工具，基于目前已经获得的工具结果直接回答用户。"
@@ -978,6 +987,7 @@ async function runAgentLoop(
 	startStep: number,
 	maxSteps: number,
 	initialToolResultChars: number,
+	maxTotalToolResultChars: number,
 	streamAssistant: boolean,
 	onEvent?: OnToolEvent,
 	abortSignal?: AbortSignal | undefined,
@@ -1137,7 +1147,9 @@ async function runAgentLoop(
 						kind: "chat_completions",
 						messages: continuationMessages,
 						nextStep: step + 1,
-						totalToolResultChars
+						totalToolResultChars,
+						maxSteps,
+						toolResultCharLimit: maxTotalToolResultChars
 					}
 				};
 			}
@@ -1148,7 +1160,7 @@ async function runAgentLoop(
 		let toolResultLimitReason: string | null = null;
 		for (const result of toolResults) {
 			const contentText: string = extractTextContent(result.content);
-			const budgetedResult = fitToolResultContent(contentText, totalToolResultChars);
+			const budgetedResult = fitToolResultContent(contentText, totalToolResultChars, maxTotalToolResultChars);
 			totalToolResultChars += budgetedResult.chars;
 			messages.push({
 				...result,
@@ -1159,8 +1171,26 @@ async function runAgentLoop(
 			}
 		}
 
-		if (toolResultLimitReason !== null || totalToolResultChars >= MAX_TOTAL_TOOL_RESULT_CHARS) {
-			const reason: string = toolResultLimitReason ?? createToolResultLimitReason(totalToolResultChars);
+		if (toolResultLimitReason !== null || totalToolResultChars >= maxTotalToolResultChars) {
+			const reason: string = toolResultLimitReason ?? createToolResultLimitReason(totalToolResultChars, maxTotalToolResultChars);
+			if (shouldPauseForToolBudget(gateway)) {
+				return createToolBudgetRequiredResult({
+					limitKind: "tool_result_chars",
+					reason,
+					usedSteps: step + 1,
+					maxSteps,
+					totalToolResultChars,
+					toolResultCharLimit: maxTotalToolResultChars,
+					continuation: {
+						kind: "chat_completions",
+						messages: [...messages],
+						nextStep: step + 1,
+						totalToolResultChars,
+						maxSteps,
+						toolResultCharLimit: maxTotalToolResultChars
+					}
+				});
+			}
 			const finalText: string = await createFinalAnswer(
 				client,
 				params,
@@ -1181,12 +1211,32 @@ async function runAgentLoop(
 		}
 	}
 
+	const stepLimitReason: string = `工具调用达到最大步数 ${maxSteps}，当前工具结果总量为 ${totalToolResultChars} 字符`;
+	if (shouldPauseForToolBudget(gateway)) {
+		return createToolBudgetRequiredResult({
+			limitKind: "steps",
+			reason: stepLimitReason,
+			usedSteps: maxSteps,
+			maxSteps,
+			totalToolResultChars,
+			toolResultCharLimit: maxTotalToolResultChars,
+			continuation: {
+				kind: "chat_completions",
+				messages: [...messages],
+				nextStep: maxSteps,
+				totalToolResultChars,
+				maxSteps,
+				toolResultCharLimit: maxTotalToolResultChars
+			}
+		});
+	}
+
 	const finalText: string = await createFinalAnswer(
 		client,
 		params,
 		options,
 		messages,
-		`工具调用达到最大步数 ${maxSteps}，当前工具结果总量为 ${totalToolResultChars} 字符`,
+		stepLimitReason,
 		abortSignal,
 		aliasContext
 	);
@@ -1219,14 +1269,11 @@ export async function runOpenAICompatibleAgent(
 		? toolCatalog.getDefinitionsForNames(allowedToolNames)
 		: toolCatalog.getDefinitions();
 
-	const maxSteps: number = resolveToolBudget(
-		(params.options as Record<string, unknown> | undefined)?.["toolBudget"] as string | undefined,
-		params.skillRefs?.[0]
-	);
+	const maxSteps: number = getInitialMaxToolSteps(params);
 
 	const messages: ChatCompletionMessageParam[] = createMessages(params, history, systemPrompt);
 
-	return runAgentLoop(client, params, options, messages, mcpHost, gateway, tools, 0, maxSteps, 0, false, onEvent, abortSignal, toolResultEnricher, toolContext);
+	return runAgentLoop(client, params, options, messages, mcpHost, gateway, tools, 0, maxSteps, 0, MAX_TOTAL_TOOL_RESULT_CHARS, false, onEvent, abortSignal, toolResultEnricher, toolContext);
 }
 
 export async function runOpenAICompatibleAgentStreaming(
@@ -1248,14 +1295,11 @@ export async function runOpenAICompatibleAgentStreaming(
 		? toolCatalog.getDefinitionsForNames(allowedToolNames)
 		: toolCatalog.getDefinitions();
 
-	const maxSteps: number = resolveToolBudget(
-		(params.options as Record<string, unknown> | undefined)?.["toolBudget"] as string | undefined,
-		params.skillRefs?.[0]
-	);
+	const maxSteps: number = getInitialMaxToolSteps(params);
 
 	const messages: ChatCompletionMessageParam[] = createMessages(params, history, systemPrompt);
 
-	return runAgentLoop(client, params, options, messages, mcpHost, gateway, tools, 0, maxSteps, 0, true, onEvent, abortSignal, toolResultEnricher, toolContext);
+	return runAgentLoop(client, params, options, messages, mcpHost, gateway, tools, 0, maxSteps, 0, MAX_TOTAL_TOOL_RESULT_CHARS, true, onEvent, abortSignal, toolResultEnricher, toolContext);
 }
 
 export async function continueOpenAICompatibleAgent(
@@ -1278,7 +1322,8 @@ export async function continueOpenAICompatibleAgent(
 		: toolCatalog.getDefinitions();
 	const aliasContext: ToolNameAliasContext = createToolNameAliasContext(options, tools);
 	const messages: ChatCompletionMessageParam[] = [...continuation.messages];
-	const budgetedResult = fitToolResultContent(approvedToolResult.content, continuation.totalToolResultChars);
+	const maxTotalToolResultChars: number = getContinuationToolResultCharLimit(continuation);
+	const budgetedResult = fitToolResultContent(approvedToolResult.content, continuation.totalToolResultChars, maxTotalToolResultChars);
 	const toolMessage: ChatCompletionToolMessageParam = {
 		role: "tool",
 		tool_call_id: approvedToolResult.toolCallId,
@@ -1288,7 +1333,25 @@ export async function continueOpenAICompatibleAgent(
 
 	messages.push(toolMessage);
 
-	if (budgetedResult.limitReached || totalToolResultChars >= MAX_TOTAL_TOOL_RESULT_CHARS) {
+	if (budgetedResult.limitReached || totalToolResultChars >= maxTotalToolResultChars) {
+		const reason: string = budgetedResult.reason ?? createToolResultLimitReason(totalToolResultChars, maxTotalToolResultChars);
+		if (shouldPauseForToolBudget(gateway)) {
+			return createToolBudgetRequiredResult({
+				limitKind: "tool_result_chars",
+				reason,
+				usedSteps: continuation.nextStep,
+				maxSteps: getContinuationMaxSteps(params, continuation),
+				totalToolResultChars,
+				toolResultCharLimit: maxTotalToolResultChars,
+				continuation: {
+					...continuation,
+					messages: [...messages],
+					totalToolResultChars,
+					maxSteps: getContinuationMaxSteps(params, continuation),
+					toolResultCharLimit: maxTotalToolResultChars
+				}
+			});
+		}
 		return {
 			status: "completed",
 			text: await createFinalAnswer(
@@ -1296,17 +1359,14 @@ export async function continueOpenAICompatibleAgent(
 				params,
 				options,
 				messages,
-				budgetedResult.reason ?? createToolResultLimitReason(totalToolResultChars),
+				reason,
 				abortSignal,
 				aliasContext
 			)
 		};
 	}
 
-	const maxSteps: number = resolveToolBudget(
-		(params.options as Record<string, unknown> | undefined)?.["toolBudget"] as string | undefined,
-		params.skillRefs?.[0]
-	);
+	const maxSteps: number = getContinuationMaxSteps(params, continuation);
 
 	return runAgentLoop(
 		client,
@@ -1319,6 +1379,7 @@ export async function continueOpenAICompatibleAgent(
 		continuation.nextStep,
 		maxSteps,
 		totalToolResultChars,
+		maxTotalToolResultChars,
 		false,
 		onEvent,
 		abortSignal,
@@ -1347,7 +1408,8 @@ export async function continueOpenAICompatibleAgentStreaming(
 		: toolCatalog.getDefinitions();
 	const aliasContext: ToolNameAliasContext = createToolNameAliasContext(options, tools);
 	const messages: ChatCompletionMessageParam[] = [...continuation.messages];
-	const budgetedResult = fitToolResultContent(approvedToolResult.content, continuation.totalToolResultChars);
+	const maxTotalToolResultChars: number = getContinuationToolResultCharLimit(continuation);
+	const budgetedResult = fitToolResultContent(approvedToolResult.content, continuation.totalToolResultChars, maxTotalToolResultChars);
 	const toolMessage: ChatCompletionToolMessageParam = {
 		role: "tool",
 		tool_call_id: approvedToolResult.toolCallId,
@@ -1357,13 +1419,31 @@ export async function continueOpenAICompatibleAgentStreaming(
 
 	messages.push(toolMessage);
 
-	if (budgetedResult.limitReached || totalToolResultChars >= MAX_TOTAL_TOOL_RESULT_CHARS) {
+	if (budgetedResult.limitReached || totalToolResultChars >= maxTotalToolResultChars) {
+		const reason: string = budgetedResult.reason ?? createToolResultLimitReason(totalToolResultChars, maxTotalToolResultChars);
+		if (shouldPauseForToolBudget(gateway)) {
+			return createToolBudgetRequiredResult({
+				limitKind: "tool_result_chars",
+				reason,
+				usedSteps: continuation.nextStep,
+				maxSteps: getContinuationMaxSteps(params, continuation),
+				totalToolResultChars,
+				toolResultCharLimit: maxTotalToolResultChars,
+				continuation: {
+					...continuation,
+					messages: [...messages],
+					totalToolResultChars,
+					maxSteps: getContinuationMaxSteps(params, continuation),
+					toolResultCharLimit: maxTotalToolResultChars
+				}
+			});
+		}
 		const finalText: string = await createFinalAnswer(
 			client,
 			params,
 			options,
 			messages,
-			budgetedResult.reason ?? createToolResultLimitReason(totalToolResultChars),
+			reason,
 			abortSignal,
 			aliasContext
 		);
@@ -1375,10 +1455,7 @@ export async function continueOpenAICompatibleAgentStreaming(
 		};
 	}
 
-	const maxSteps: number = resolveToolBudget(
-		(params.options as Record<string, unknown> | undefined)?.["toolBudget"] as string | undefined,
-		params.skillRefs?.[0]
-	);
+	const maxSteps: number = getContinuationMaxSteps(params, continuation);
 
 	return runAgentLoop(
 		client,
@@ -1391,10 +1468,140 @@ export async function continueOpenAICompatibleAgentStreaming(
 		continuation.nextStep,
 		maxSteps,
 		totalToolResultChars,
+		maxTotalToolResultChars,
 		true,
 		onEvent,
 		abortSignal,
 		toolResultEnricher,
 		toolContext
 	);
+}
+
+async function continueOpenAICompatibleAgentAfterToolBudgetInternal(
+	params: AiChatParams,
+	options: DeepSeekChatOptions,
+	continuation: OpenAICompatibleAgentContinuation,
+	mcpHost: McpHost,
+	gateway: ApprovalGateway,
+	allowedToolNames: readonly string[] | undefined,
+	onEvent: OnToolEvent | undefined,
+	abortSignal: AbortSignal | undefined,
+	toolResultEnricher: ToolResultEnricher | undefined,
+	toolContext: ToolExecutionContext | undefined,
+	streamAssistant: boolean
+): Promise<OpenAICompatibleAgentResult> {
+	const client: OpenAI = createDeepSeekClient(options);
+	const toolCatalog = createWorkspaceToolCatalog(toolContext);
+	const tools = allowedToolNames !== undefined
+		? toolCatalog.getDefinitionsForNames(allowedToolNames)
+		: toolCatalog.getDefinitions();
+	return runAgentLoop(
+		client,
+		params,
+		options,
+		[...continuation.messages],
+		mcpHost,
+		gateway,
+		tools,
+		continuation.nextStep,
+		getContinuedMaxSteps(params, continuation),
+		continuation.totalToolResultChars,
+		getContinuedToolResultCharLimit(continuation),
+		streamAssistant,
+		onEvent,
+		abortSignal,
+		toolResultEnricher,
+		toolContext
+	);
+}
+
+export async function continueOpenAICompatibleAgentAfterToolBudget(
+	params: AiChatParams,
+	options: DeepSeekChatOptions,
+	continuation: OpenAICompatibleAgentContinuation,
+	mcpHost: McpHost,
+	gateway: ApprovalGateway,
+	allowedToolNames?: readonly string[] | undefined,
+	onEvent?: OnToolEvent,
+	abortSignal?: AbortSignal | undefined,
+	toolResultEnricher?: ToolResultEnricher | undefined,
+	toolContext?: ToolExecutionContext | undefined
+): Promise<OpenAICompatibleAgentResult> {
+	return continueOpenAICompatibleAgentAfterToolBudgetInternal(params, options, continuation, mcpHost, gateway, allowedToolNames, onEvent, abortSignal, toolResultEnricher, toolContext, false);
+}
+
+export async function continueOpenAICompatibleAgentAfterToolBudgetStreaming(
+	params: AiChatParams,
+	options: DeepSeekChatOptions,
+	continuation: OpenAICompatibleAgentContinuation,
+	mcpHost: McpHost,
+	gateway: ApprovalGateway,
+	allowedToolNames?: readonly string[] | undefined,
+	onEvent?: OnToolEvent,
+	abortSignal?: AbortSignal | undefined,
+	toolResultEnricher?: ToolResultEnricher | undefined,
+	toolContext?: ToolExecutionContext | undefined
+): Promise<OpenAICompatibleAgentResult> {
+	return continueOpenAICompatibleAgentAfterToolBudgetInternal(params, options, continuation, mcpHost, gateway, allowedToolNames, onEvent, abortSignal, toolResultEnricher, toolContext, true);
+}
+
+async function finalizeOpenAICompatibleAgentAfterToolBudgetInternal(
+	params: AiChatParams,
+	options: DeepSeekChatOptions,
+	continuation: OpenAICompatibleAgentContinuation,
+	allowedToolNames: readonly string[] | undefined,
+	reason: string,
+	onEvent: OnToolEvent | undefined,
+	abortSignal: AbortSignal | undefined,
+	toolContext: ToolExecutionContext | undefined,
+	streamAssistant: boolean
+): Promise<OpenAICompatibleAgentResult> {
+	const client: OpenAI = createDeepSeekClient(options);
+	const toolCatalog = createWorkspaceToolCatalog(toolContext);
+	const tools = allowedToolNames !== undefined
+		? toolCatalog.getDefinitionsForNames(allowedToolNames)
+		: toolCatalog.getDefinitions();
+	const aliasContext: ToolNameAliasContext = createToolNameAliasContext(options, tools);
+	const finalText: string = await createFinalAnswer(
+		client,
+		params,
+		options,
+		[...continuation.messages],
+		reason,
+		abortSignal,
+		aliasContext
+	);
+	if (streamAssistant) {
+		onEvent?.({ type: "ai.delta", text: finalText });
+	}
+	return {
+		status: "completed",
+		text: finalText
+	};
+}
+
+export async function finalizeOpenAICompatibleAgentAfterToolBudget(
+	params: AiChatParams,
+	options: DeepSeekChatOptions,
+	continuation: OpenAICompatibleAgentContinuation,
+	allowedToolNames: readonly string[] | undefined,
+	reason: string,
+	onEvent?: OnToolEvent,
+	abortSignal?: AbortSignal | undefined,
+	toolContext?: ToolExecutionContext | undefined
+): Promise<OpenAICompatibleAgentResult> {
+	return finalizeOpenAICompatibleAgentAfterToolBudgetInternal(params, options, continuation, allowedToolNames, reason, onEvent, abortSignal, toolContext, false);
+}
+
+export async function finalizeOpenAICompatibleAgentAfterToolBudgetStreaming(
+	params: AiChatParams,
+	options: DeepSeekChatOptions,
+	continuation: OpenAICompatibleAgentContinuation,
+	allowedToolNames: readonly string[] | undefined,
+	reason: string,
+	onEvent?: OnToolEvent,
+	abortSignal?: AbortSignal | undefined,
+	toolContext?: ToolExecutionContext | undefined
+): Promise<OpenAICompatibleAgentResult> {
+	return finalizeOpenAICompatibleAgentAfterToolBudgetInternal(params, options, continuation, allowedToolNames, reason, onEvent, abortSignal, toolContext, true);
 }

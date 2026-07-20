@@ -7,6 +7,8 @@ export type ChatCompletionsAgentContinuation = {
 	messages: ChatCompletionMessageParam[];
 	nextStep: number;
 	totalToolResultChars: number;
+	maxSteps?: number | undefined;
+	toolResultCharLimit?: number | undefined;
 };
 
 export type ResponsesAgentContinuation = {
@@ -15,6 +17,8 @@ export type ResponsesAgentContinuation = {
 	inputItems: ResponseInputItem[];
 	nextStep: number;
 	totalToolResultChars: number;
+	maxSteps?: number | undefined;
+	toolResultCharLimit?: number | undefined;
 };
 
 export type AnthropicMessagesAgentContinuation = {
@@ -23,9 +27,13 @@ export type AnthropicMessagesAgentContinuation = {
 	messages: AnthropicMessageParam[];
 	nextStep: number;
 	totalToolResultChars: number;
+	maxSteps?: number | undefined;
+	toolResultCharLimit?: number | undefined;
 };
 
 export type AgentContinuation = ChatCompletionsAgentContinuation | ResponsesAgentContinuation | AnthropicMessagesAgentContinuation;
+
+export type ToolBudgetLimitKind = "steps" | "tool_result_chars";
 
 export type ProviderAgentResult =
 	| { status: "completed"; text: string }
@@ -35,6 +43,18 @@ export type ProviderAgentResult =
 		approvalId: string;
 		toolName: string;
 		reason: string;
+		continuation: AgentContinuation;
+	}
+	| {
+		status: "tool_budget_required";
+		budgetId: string;
+		limitKind: ToolBudgetLimitKind;
+		reason: string;
+		usedSteps: number;
+		maxSteps: number;
+		totalToolResultChars: number;
+		toolResultCharLimit: number;
+		additionalSteps: number;
 		continuation: AgentContinuation;
 	};
 

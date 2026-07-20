@@ -541,6 +541,9 @@ async function runPlanAgentDecision(
 	if (agentResult.status === "approval_required") {
 		throw new Error(`Plan runner requested approval for ${agentResult.toolName}, which is not allowed.`);
 	}
+	if (agentResult.status === "tool_budget_required") {
+		throw new Error(agentResult.reason);
+	}
 	if (agentResult.status === "protocol_violation") {
 		throw new Error(agentResult.reason);
 	}

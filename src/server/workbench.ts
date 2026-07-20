@@ -2,6 +2,8 @@ import type WebSocket from "ws";
 import type { AdditionalContextItem, ProviderId } from "../protocol/types.js";
 import { getProviderDefaultModel, getProviderDisplayName } from "../providers/provider-registry.js";
 import type { PendingApproval } from "../tools/approval-gateway.js";
+import type { PendingToolBudget } from "../session/pending-tool-budget.js";
+import { serializePendingToolBudget } from "../session/pending-tool-budget.js";
 import { resolveModelProfile } from "../tokens/model-profiles.js";
 import type {
 	ClientSession,
@@ -177,12 +179,25 @@ function serializePendingApproval(session: ClientSession): Record<string, unknow
 	};
 }
 
+function getFirstPendingToolBudget(session: ClientSession): PendingToolBudget | undefined {
+	return session.pendingToolBudgets.values().next().value as PendingToolBudget | undefined;
+}
+
 function deriveActiveRun(session: ClientSession): WorkbenchActiveRun {
 	if (session.approvalGateway.listPending().length > 0) {
 		return {
 			...session.workbenchActiveRun,
 			status: "approval",
 			requestId: session.workbenchActiveRun.requestId ?? session.activeRunRequestId
+		};
+	}
+	const pendingToolBudget: PendingToolBudget | undefined = getFirstPendingToolBudget(session);
+	if (pendingToolBudget !== undefined) {
+		return {
+			...session.workbenchActiveRun,
+			status: "paused",
+			statusCode: "tool_budget",
+			requestId: pendingToolBudget.requestId
 		};
 	}
 	if (session.activeRunRequestId !== undefined) {
@@ -228,6 +243,7 @@ function applyWorkbenchModelSelection(
 }
 
 export function serializeWorkbench(session: ClientSession): Record<string, unknown> {
+	const pendingToolBudget: PendingToolBudget | undefined = getFirstPendingToolBudget(session);
 	return {
 		revision: session.workbenchRevision,
 		sessionId: session.sessionId ?? null,
@@ -244,6 +260,7 @@ export function serializeWorkbench(session: ClientSession): Record<string, unkno
 		pendingGuides: session.pendingGuides.map(serializePendingGuide),
 		activeRun: deriveActiveRun(session),
 		pendingApproval: serializePendingApproval(session),
+		pendingToolBudget: pendingToolBudget === undefined ? null : serializePendingToolBudget(pendingToolBudget),
 		nextStepHints: {
 			...session.workbenchNextStepHints,
 			hints: session.workbenchNextStepHints.hints.map((hint: WorkbenchNextStepHint): WorkbenchNextStepHint => ({ ...hint }))

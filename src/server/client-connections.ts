@@ -227,6 +227,16 @@ export function findSessionWithPendingApproval(approvalId: string): ClientSessio
 	return undefined;
 }
 
+export function findSessionWithPendingToolBudget(budgetId: string): ClientSession | undefined {
+	for (const record of socketConnections.values()) {
+		if (record.session.pendingToolBudgets.has(budgetId)) {
+			return record.session;
+		}
+	}
+
+	return undefined;
+}
+
 export function beginSessionRun(sessionId: string | undefined, requestId: string): { ok: true } | { ok: false; activeRequestId: string } {
 	if (sessionId === undefined) {
 		return { ok: true };

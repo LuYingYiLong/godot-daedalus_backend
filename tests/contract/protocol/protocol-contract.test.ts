@@ -12,6 +12,8 @@ const BACKEND_ONLY_OR_STUDIO_RPC_METHODS: Set<string> = new Set([
 	"backend.update.install",
 	"generalSettings.get",
 	"generalSettings.update",
+	"ai.toolBudget.continue",
+	"ai.toolBudget.stop",
 	"session.context.estimate",
 	"session.integrity.check",
 	"session.model.set",
@@ -120,6 +122,26 @@ test("workspace.git.diff.get accepts workspace id", (): void => {
 		method: "workspace.git.diff.get",
 		params: {
 			workspaceId: "workspace-a"
+		}
+	}).success, true);
+});
+
+test("tool budget decision requests are accepted", (): void => {
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "tool-budget-continue",
+		method: "ai.toolBudget.continue",
+		params: {
+			budgetId: "tool-budget-a"
+		}
+	}).success, true);
+
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "tool-budget-stop",
+		method: "ai.toolBudget.stop",
+		params: {
+			budgetId: "tool-budget-a"
 		}
 	}).success, true);
 });

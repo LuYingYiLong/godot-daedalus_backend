@@ -1,6 +1,7 @@
 import type { AdditionalContextItem, AiChatParams, ChatMessage, ModelProfile, ProviderId } from "../protocol/types.js";
 import type { SessionMetadata } from "../session/session-store.js";
 import type { PendingAiContinuation } from "../session/pending-continuation.js";
+import type { PendingToolBudget } from "../session/pending-tool-budget.js";
 import { ApprovalGateway } from "../tools/approval-gateway.js";
 import { getDefaultModelProfile, resolveModelProfile } from "../tokens/model-profiles.js";
 import { getProviderDefaultModel, isProviderId } from "../providers/provider-registry.js";
@@ -82,6 +83,7 @@ export type ClientSession = {
 	summaryMessage?: ChatMessage | undefined;
 	summaryCoveredMessageCount?: number | undefined;
 	pendingAiContinuations: Map<string, PendingAiContinuation>;
+	pendingToolBudgets: Map<string, PendingToolBudget>;
 	aiDeltaEventBuffers: Map<string, ThinkingEventBuffer>;
 	thinkingEventBuffers: Map<string, ThinkingEventBuffer>;
 	activeAbortControllers: Map<string, AbortController>;
@@ -109,6 +111,7 @@ export function createClientSession(defaultWorkspace: WorkspaceConfig | undefine
 		approvalGateway: new ApprovalGateway(),
 		activeWorkspace: defaultWorkspace,
 		pendingAiContinuations: new Map(),
+		pendingToolBudgets: new Map(),
 		aiDeltaEventBuffers: new Map(),
 		thinkingEventBuffers: new Map(),
 		activeAbortControllers: new Map(),
@@ -142,6 +145,7 @@ export function clearActiveSession(session: ClientSession): void {
 	session.fullSessionLoadPromise = undefined;
 	session.summaryMessage = undefined;
 	session.summaryCoveredMessageCount = undefined;
+	session.pendingToolBudgets.clear();
 	session.pendingGuides = [];
 	session.queuedMessages = [];
 	session.messageQueueNextId = 0;

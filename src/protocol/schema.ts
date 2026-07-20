@@ -359,6 +359,22 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 	z.object({
 		type: z.literal("request"),
 		id: z.string(),
+		method: z.literal("ai.toolBudget.continue"),
+		params: z.object({
+			budgetId: z.string().min(1),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("ai.toolBudget.stop"),
+		params: z.object({
+			budgetId: z.string().min(1),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
 		method: z.literal("prompt.list"),
 		params: z.object({}).optional(),
 	}),

@@ -14,6 +14,8 @@ import { McpHost } from "../mcp/mcp-host.js";
 import type { ClientSession, PendingAiContinuation } from "./client-session.js";
 import { appendChatTurnToSession } from "./token-budget.js";
 import { sendSessionEvent } from "./session-events.js";
+import { sendJson } from "./send-json.js";
+import { createPendingToolBudget, registerPendingToolBudget, sendToolBudgetRequired } from "./tool-budget-continuation.js";
 
 export function createPendingAiContinuation(
 	params: AiChatParams,
@@ -306,6 +308,22 @@ export async function sendContinuedAgentResult(
 		sendAgentPaused(socket, requestId, session, pendingContinuation.workflowState?.plan.id ?? pendingContinuation.requestId, agentResult, pendingContinuation.requestId);
 		return;
 	}
+	if (agentResult.status === "tool_budget_required") {
+		const pendingBudget = createPendingToolBudget({
+			agentResult,
+			chatParams: pendingContinuation.params,
+			options: pendingContinuation.options,
+			allowedToolNames: pendingContinuation.allowedToolNames,
+			userMessage: pendingContinuation.userMessage,
+			requestId: pendingContinuation.requestId,
+			userCreatedAt: pendingContinuation.userCreatedAt,
+			stream: pendingContinuation.stream,
+			workflowState: pendingContinuation.workflowState
+		});
+		registerPendingToolBudget(session, pendingBudget);
+		sendToolBudgetRequired(socket, requestId, session, pendingContinuation.workflowState?.plan.id ?? pendingContinuation.requestId, pendingBudget, pendingContinuation.requestId);
+		return;
+	}
 
 	const text: string = agentResult.text;
 	const runId: string = pendingContinuation.workflowState?.plan.id ?? pendingContinuation.requestId;
@@ -341,4 +359,17 @@ export async function sendContinuedAgentResult(
 			mcpServers: mcpHost.getConnectedServerIds()
 		}
 	}, pendingContinuation.requestId);
+	sendJson(socket, {
+		type: "response",
+		id: pendingContinuation.requestId,
+		ok: true,
+		result: {
+			text,
+			context: {
+				historyMessagesStored: session.messages.length,
+				historyBudgetTokens,
+				mcpServers: mcpHost.getConnectedServerIds()
+			}
+		}
+	});
 }

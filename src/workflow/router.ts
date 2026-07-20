@@ -79,7 +79,7 @@ export async function routeWorkflowExecution(
 		createRouteSystemPrompt(),
 		abortSignal
 	);
-	return normalizeWorkflowRouteDecision(parseWorkflowRouteDecision(text), params);
+	return applyProjectContextRouteOverride(normalizeWorkflowRouteDecision(parseWorkflowRouteDecision(text), params), params, context);
 }
 
 export function createFallbackWorkflowRoute(params: AiChatParams, reason: string = "Workflow router failed."): WorkflowRouteDecision {
@@ -105,6 +105,28 @@ export function normalizeWorkflowRouteDecision(raw: RawWorkflowRouteDecision, pa
 		planningHint: raw.planningHint?.trim() ?? ""
 	};
 	return applyWorkflowRouteSafety(decision, params);
+}
+
+export function applyProjectContextRouteOverride(
+	decision: WorkflowRouteDecision,
+	params: AiChatParams,
+	context: WorkflowRouteContext
+): WorkflowRouteDecision {
+	if (decision.execution !== "direct_answer" || decision.requiresWrite || explicitlyAvoidsProjectReads(params.message)) {
+		return decision;
+	}
+	if (!requiresCurrentProjectRead(params.message, context)) {
+		return decision;
+	}
+
+	return {
+		...decision,
+		execution: "tool_answer",
+		requiresTools: true,
+		requiresWrite: false,
+		safetyOverride: "project_context_read",
+		reason: `${decision.reason} Current project context requires read-only tools.`
+	};
 }
 
 export function applyWorkflowRouteSafety(decision: WorkflowRouteDecision, params: AiChatParams): WorkflowRouteDecision {
@@ -164,6 +186,10 @@ function hasWriteIntent(message: string): boolean {
 	].some((keyword: string): boolean => normalized.includes(keyword));
 }
 
+function includesAny(text: string, terms: readonly string[]): boolean {
+	return terms.some((term: string): boolean => text.includes(term));
+}
+
 function createRouterParams(message: string): AiChatParams {
 	return {
 		message,
@@ -188,6 +214,8 @@ function createRouteSystemPrompt(): string {
 		"规则：",
 		"- 简单动态事实查询，例如当前 workspace、文件数量、状态、路径，选 tool_answer。",
 		"- 代码解释、概念说明、方案讨论，选 direct_answer，除非必须读取当前文件。",
+		"- 涉及当前项目、仓库、工作区、已有 UI、组件、文件、代码结构或实现细节的问题，选 tool_answer，即使用户只是要建议或明确先不修改文件。",
+		"- “先不动文件/不要修改”只禁止写入，不禁止读取；不能因此选 direct_answer。",
 		"- 创建、修改、修复、生成项目内容，选 workflow。",
 		"- 用户明确只读/不要修改时 requiresWrite 必须为 false。",
 		"- 不要因为存在 workspace/editor 上下文就自动选 workflow。"
@@ -215,4 +243,101 @@ function createRouteUserMessage(params: AiChatParams, context: WorkflowRouteCont
 
 function limitRoutingHistory(history: ChatMessage[]): ChatMessage[] {
 	return history.slice(-4);
+}
+
+function requiresCurrentProjectRead(message: string, context: WorkflowRouteContext): boolean {
+	if (context.workspaceSummary === "No active workspace.") {
+		return false;
+	}
+
+	const normalizedMessage: string = normalizeRouteText(message);
+	if (getWorkspaceReferenceCandidates(context).some((candidate: string): boolean => normalizedMessage.includes(candidate))) {
+		return true;
+	}
+
+	const lowerMessage: string = message.toLowerCase();
+	return includesAny(lowerMessage, [
+		"当前",
+		"现有",
+		"已有",
+		"这个项目",
+		"这个仓库",
+		"项目里",
+		"代码里",
+		"实现",
+		"结构",
+		"标题栏",
+		"菜单栏",
+		"组件",
+		"页面",
+		"hook",
+		"ipc",
+		"rpc",
+		"renderer",
+		"preload"
+	]) && includesAny(lowerMessage, [
+		"项目",
+		"仓库",
+		"workspace",
+		"工作区",
+		"代码",
+		"文件",
+		"实现",
+		"结构",
+		"ui",
+		"界面",
+		"标题栏",
+		"菜单栏",
+		"组件",
+		"页面",
+		"前端",
+		"后端",
+		"electron",
+		"react",
+		"antd"
+	]);
+}
+
+function explicitlyAvoidsProjectReads(message: string): boolean {
+	const lowerMessage: string = message.toLowerCase();
+	return includesAny(lowerMessage, [
+		"不要读取",
+		"不用读取",
+		"无需读取",
+		"不要查文件",
+		"不用查文件",
+		"不要看文件",
+		"不用看文件",
+		"不要看代码",
+		"不用看代码",
+		"别看代码",
+		"只凭经验",
+		"泛泛说",
+		"do not read",
+		"don't read",
+		"without reading",
+		"without inspecting"
+	]);
+}
+
+function getWorkspaceReferenceCandidates(context: WorkflowRouteContext): string[] {
+	const name: string | null = getRouteContextField(context.workspaceSummary, "name");
+	const rootPath: string | null = getRouteContextField(context.workspaceSummary, "rootPath");
+	const rootName: string | null = rootPath === null ? null : rootPath.split(/[\\/]/u).filter(Boolean).at(-1) ?? null;
+	return [name, rootName]
+		.map((value: string | null): string => normalizeRouteText(value ?? ""))
+		.filter((value: string): boolean => value.length >= 3);
+}
+
+function getRouteContextField(summary: string, field: string): string | null {
+	const match: RegExpMatchArray | null = summary.match(new RegExp(`(?:^|\\n)${field}=([^\\n]*)`, "u"));
+	return match?.[1]?.trim() ?? null;
+}
+
+function normalizeRouteText(text: string): string {
+	return text
+		.normalize("NFKC")
+		.toLowerCase()
+		.replaceAll(/[^a-z0-9\u4e00-\u9fff]+/gu, "-")
+		.replaceAll(/^-+|-+$/gu, "");
 }

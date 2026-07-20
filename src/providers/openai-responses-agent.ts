@@ -15,7 +15,7 @@ import type { McpHost } from "../mcp/mcp-host.js";
 import { ApprovalGateway } from "../tools/approval-gateway.js";
 import { dispatchToolCalls, ToolApprovalRequiredError, type OnToolEvent, type ToolResultEnricher } from "../tools/tool-dispatcher.js";
 import { createWorkspaceToolCatalog, type ToolExecutionContext } from "../tools/tool-catalog.js";
-import { MAX_TOTAL_TOOL_RESULT_CHARS, resolveToolBudget } from "../tools/llm-tool-budget.js";
+import { MAX_TOTAL_TOOL_RESULT_CHARS } from "../tools/llm-tool-budget.js";
 import type { ApprovedToolResult, ProviderAgentResult, ResponsesAgentContinuation } from "./agent-types.js";
 import type { ProviderChatOptions } from "./deepseek-client.js";
 import {
@@ -25,6 +25,15 @@ import {
 	resolveOpenAIResponsesModel
 } from "./openai-responses-client.js";
 import { createToolResultLimitFallback, createToolResultLimitReason, fitToolResultContent } from "./tool-result-budget.js";
+import {
+	createToolBudgetRequiredResult,
+	getContinuationMaxSteps,
+	getContinuationToolResultCharLimit,
+	getContinuedMaxSteps,
+	getContinuedToolResultCharLimit,
+	getInitialMaxToolSteps,
+	shouldPauseForToolBudget
+} from "./agent-tool-budget.js";
 
 const FINALIZE_AFTER_TOOL_LIMIT_PROMPT: string =
 	"工具调用阶段已经达到后端限制。请停止请求更多工具，基于目前已经获得的工具结果直接回答用户。"
@@ -116,14 +125,15 @@ function appendResponseOutputItems(inputItems: ResponseInputItem[], outputItems:
 function appendToolResultItems(
 	inputItems: ResponseInputItem[],
 	toolResults: Awaited<ReturnType<typeof dispatchToolCalls>>,
-	currentTotalChars: number
+	currentTotalChars: number,
+	maxTotalChars: number
 ): AppendToolResultItemsResult {
 	let addedChars: number = 0;
 	let limitReached: boolean = false;
 	let reason: string | null = null;
 	for (const result of toolResults) {
 		const content: string = typeof result.content === "string" ? result.content : JSON.stringify(result.content);
-		const budgetedResult = fitToolResultContent(content, currentTotalChars + addedChars);
+		const budgetedResult = fitToolResultContent(content, currentTotalChars + addedChars, maxTotalChars);
 		addedChars += budgetedResult.chars;
 		inputItems.push({
 			type: "function_call_output",
@@ -132,7 +142,7 @@ function appendToolResultItems(
 		} as ResponseInputItem);
 		if (budgetedResult.limitReached) {
 			limitReached = true;
-			reason = budgetedResult.reason ?? createToolResultLimitReason(currentTotalChars + addedChars);
+			reason = budgetedResult.reason ?? createToolResultLimitReason(currentTotalChars + addedChars, maxTotalChars);
 		}
 	}
 	return {
@@ -254,6 +264,7 @@ async function runResponsesAgentLoop(
 	startStep: number,
 	maxSteps: number,
 	initialToolResultChars: number,
+	maxTotalToolResultChars: number,
 	streamAssistant: boolean,
 	onEvent?: OnToolEvent,
 	abortSignal?: AbortSignal | undefined,
@@ -297,10 +308,29 @@ async function runResponsesAgentLoop(
 
 		try {
 			const toolResults = await dispatchToolCalls(mcpHost, toolCalls, step, gateway, onEvent, toolResultEnricher, toolContext, abortSignal);
-			const appendResult: AppendToolResultItemsResult = appendToolResultItems(inputItems, toolResults, totalToolResultChars);
+			const appendResult: AppendToolResultItemsResult = appendToolResultItems(inputItems, toolResults, totalToolResultChars, maxTotalToolResultChars);
 			totalToolResultChars += appendResult.addedChars;
-			if (appendResult.limitReached || totalToolResultChars >= MAX_TOTAL_TOOL_RESULT_CHARS) {
-				const reason: string = appendResult.reason ?? createToolResultLimitReason(totalToolResultChars);
+			if (appendResult.limitReached || totalToolResultChars >= maxTotalToolResultChars) {
+				const reason: string = appendResult.reason ?? createToolResultLimitReason(totalToolResultChars, maxTotalToolResultChars);
+				if (shouldPauseForToolBudget(gateway)) {
+					return createToolBudgetRequiredResult({
+						limitKind: "tool_result_chars",
+						reason,
+						usedSteps: step + 1,
+						maxSteps,
+						totalToolResultChars,
+						toolResultCharLimit: maxTotalToolResultChars,
+						continuation: {
+							kind: "responses",
+							instructions,
+							inputItems: [...inputItems],
+							nextStep: step + 1,
+							totalToolResultChars,
+							maxSteps,
+							toolResultCharLimit: maxTotalToolResultChars
+						}
+					});
+				}
 				const finalText: string = await createFinalAnswer(
 					params,
 					options,
@@ -327,7 +357,9 @@ async function runResponsesAgentLoop(
 						instructions,
 						inputItems: continuationInputItems,
 						nextStep: step + 1,
-						totalToolResultChars
+						totalToolResultChars,
+						maxSteps,
+						toolResultCharLimit: maxTotalToolResultChars
 					}
 				};
 			}
@@ -335,13 +367,33 @@ async function runResponsesAgentLoop(
 			throw error;
 		}
 
-		if (totalToolResultChars >= MAX_TOTAL_TOOL_RESULT_CHARS) {
+		if (totalToolResultChars >= maxTotalToolResultChars) {
+			const reason: string = createToolResultLimitReason(totalToolResultChars, maxTotalToolResultChars);
+			if (shouldPauseForToolBudget(gateway)) {
+				return createToolBudgetRequiredResult({
+					limitKind: "tool_result_chars",
+					reason,
+					usedSteps: step + 1,
+					maxSteps,
+					totalToolResultChars,
+					toolResultCharLimit: maxTotalToolResultChars,
+					continuation: {
+						kind: "responses",
+						instructions,
+						inputItems: [...inputItems],
+						nextStep: step + 1,
+						totalToolResultChars,
+						maxSteps,
+						toolResultCharLimit: maxTotalToolResultChars
+					}
+				});
+			}
 			const finalText: string = await createFinalAnswer(
 				params,
 				options,
 				instructions,
 				inputItems,
-				createToolResultLimitReason(totalToolResultChars),
+				reason,
 				abortSignal
 			);
 			if (streamAssistant) {
@@ -351,12 +403,33 @@ async function runResponsesAgentLoop(
 		}
 	}
 
+	const stepLimitReason: string = `工具调用达到最大步数 ${maxSteps}，当前工具结果总量为 ${totalToolResultChars} 字符`;
+	if (shouldPauseForToolBudget(gateway)) {
+		return createToolBudgetRequiredResult({
+			limitKind: "steps",
+			reason: stepLimitReason,
+			usedSteps: maxSteps,
+			maxSteps,
+			totalToolResultChars,
+			toolResultCharLimit: maxTotalToolResultChars,
+			continuation: {
+				kind: "responses",
+				instructions,
+				inputItems: [...inputItems],
+				nextStep: maxSteps,
+				totalToolResultChars,
+				maxSteps,
+				toolResultCharLimit: maxTotalToolResultChars
+			}
+		});
+	}
+
 	const finalText: string = await createFinalAnswer(
 		params,
 		options,
 		instructions,
 		inputItems,
-		`工具调用达到最大步数 ${maxSteps}，当前工具结果总量为 ${totalToolResultChars} 字符`,
+		stepLimitReason,
 		abortSignal
 	);
 	if (streamAssistant) {
@@ -382,10 +455,7 @@ export async function runOpenAIResponsesAgent(
 	const tools = allowedToolNames !== undefined
 		? toolCatalog.getDefinitionsForNames(allowedToolNames)
 		: toolCatalog.getDefinitions();
-	const maxSteps: number = resolveToolBudget(
-		(params.options as Record<string, unknown> | undefined)?.["toolBudget"] as string | undefined,
-		params.skillRefs?.[0]
-	);
+	const maxSteps: number = getInitialMaxToolSteps(params);
 
 	return runResponsesAgentLoop(
 		params,
@@ -398,6 +468,7 @@ export async function runOpenAIResponsesAgent(
 		0,
 		maxSteps,
 		0,
+		MAX_TOTAL_TOOL_RESULT_CHARS,
 		false,
 		onEvent,
 		abortSignal,
@@ -423,10 +494,7 @@ export async function runOpenAIResponsesAgentStreaming(
 	const tools = allowedToolNames !== undefined
 		? toolCatalog.getDefinitionsForNames(allowedToolNames)
 		: toolCatalog.getDefinitions();
-	const maxSteps: number = resolveToolBudget(
-		(params.options as Record<string, unknown> | undefined)?.["toolBudget"] as string | undefined,
-		params.skillRefs?.[0]
-	);
+	const maxSteps: number = getInitialMaxToolSteps(params);
 
 	return runResponsesAgentLoop(
 		params,
@@ -439,6 +507,7 @@ export async function runOpenAIResponsesAgentStreaming(
 		0,
 		maxSteps,
 		0,
+		MAX_TOTAL_TOOL_RESULT_CHARS,
 		true,
 		onEvent,
 		abortSignal,
@@ -465,7 +534,8 @@ export async function continueOpenAIResponsesAgent(
 		? toolCatalog.getDefinitionsForNames(allowedToolNames)
 		: toolCatalog.getDefinitions();
 	const inputItems: ResponseInputItem[] = [...continuation.inputItems];
-	const budgetedResult = fitToolResultContent(approvedToolResult.content, continuation.totalToolResultChars);
+	const maxTotalToolResultChars: number = getContinuationToolResultCharLimit(continuation);
+	const budgetedResult = fitToolResultContent(approvedToolResult.content, continuation.totalToolResultChars, maxTotalToolResultChars);
 	const totalToolResultChars: number = continuation.totalToolResultChars + budgetedResult.chars;
 	inputItems.push({
 		type: "function_call_output",
@@ -473,7 +543,25 @@ export async function continueOpenAIResponsesAgent(
 		output: budgetedResult.content
 	} as ResponseInputItem);
 
-	if (budgetedResult.limitReached || totalToolResultChars >= MAX_TOTAL_TOOL_RESULT_CHARS) {
+	if (budgetedResult.limitReached || totalToolResultChars >= maxTotalToolResultChars) {
+		const reason: string = budgetedResult.reason ?? createToolResultLimitReason(totalToolResultChars, maxTotalToolResultChars);
+		if (shouldPauseForToolBudget(gateway)) {
+			return createToolBudgetRequiredResult({
+				limitKind: "tool_result_chars",
+				reason,
+				usedSteps: continuation.nextStep,
+				maxSteps: getContinuationMaxSteps(params, continuation),
+				totalToolResultChars,
+				toolResultCharLimit: maxTotalToolResultChars,
+				continuation: {
+					...continuation,
+					inputItems: [...inputItems],
+					totalToolResultChars,
+					maxSteps: getContinuationMaxSteps(params, continuation),
+					toolResultCharLimit: maxTotalToolResultChars
+				}
+			});
+		}
 		return {
 			status: "completed",
 			text: await createFinalAnswer(
@@ -481,16 +569,13 @@ export async function continueOpenAIResponsesAgent(
 				options,
 				continuation.instructions,
 				inputItems,
-				budgetedResult.reason ?? createToolResultLimitReason(totalToolResultChars),
+				reason,
 				abortSignal
 			)
 		};
 	}
 
-	const maxSteps: number = resolveToolBudget(
-		(params.options as Record<string, unknown> | undefined)?.["toolBudget"] as string | undefined,
-		params.skillRefs?.[0]
-	);
+	const maxSteps: number = getContinuationMaxSteps(params, continuation);
 	return runResponsesAgentLoop(
 		params,
 		options,
@@ -502,6 +587,7 @@ export async function continueOpenAIResponsesAgent(
 		continuation.nextStep,
 		maxSteps,
 		totalToolResultChars,
+		maxTotalToolResultChars,
 		false,
 		onEvent,
 		abortSignal,
@@ -528,7 +614,8 @@ export async function continueOpenAIResponsesAgentStreaming(
 		? toolCatalog.getDefinitionsForNames(allowedToolNames)
 		: toolCatalog.getDefinitions();
 	const inputItems: ResponseInputItem[] = [...continuation.inputItems];
-	const budgetedResult = fitToolResultContent(approvedToolResult.content, continuation.totalToolResultChars);
+	const maxTotalToolResultChars: number = getContinuationToolResultCharLimit(continuation);
+	const budgetedResult = fitToolResultContent(approvedToolResult.content, continuation.totalToolResultChars, maxTotalToolResultChars);
 	const totalToolResultChars: number = continuation.totalToolResultChars + budgetedResult.chars;
 	inputItems.push({
 		type: "function_call_output",
@@ -536,23 +623,38 @@ export async function continueOpenAIResponsesAgentStreaming(
 		output: budgetedResult.content
 	} as ResponseInputItem);
 
-	if (budgetedResult.limitReached || totalToolResultChars >= MAX_TOTAL_TOOL_RESULT_CHARS) {
+	if (budgetedResult.limitReached || totalToolResultChars >= maxTotalToolResultChars) {
+		const reason: string = budgetedResult.reason ?? createToolResultLimitReason(totalToolResultChars, maxTotalToolResultChars);
+		if (shouldPauseForToolBudget(gateway)) {
+			return createToolBudgetRequiredResult({
+				limitKind: "tool_result_chars",
+				reason,
+				usedSteps: continuation.nextStep,
+				maxSteps: getContinuationMaxSteps(params, continuation),
+				totalToolResultChars,
+				toolResultCharLimit: maxTotalToolResultChars,
+				continuation: {
+					...continuation,
+					inputItems: [...inputItems],
+					totalToolResultChars,
+					maxSteps: getContinuationMaxSteps(params, continuation),
+					toolResultCharLimit: maxTotalToolResultChars
+				}
+			});
+		}
 		const finalText: string = await createFinalAnswer(
 			params,
 			options,
 			continuation.instructions,
 			inputItems,
-			budgetedResult.reason ?? createToolResultLimitReason(totalToolResultChars),
+			reason,
 			abortSignal
 		);
 		onEvent?.({ type: "ai.delta", text: finalText });
 		return { status: "completed", text: finalText };
 	}
 
-	const maxSteps: number = resolveToolBudget(
-		(params.options as Record<string, unknown> | undefined)?.["toolBudget"] as string | undefined,
-		params.skillRefs?.[0]
-	);
+	const maxSteps: number = getContinuationMaxSteps(params, continuation);
 	return runResponsesAgentLoop(
 		params,
 		options,
@@ -564,10 +666,127 @@ export async function continueOpenAIResponsesAgentStreaming(
 		continuation.nextStep,
 		maxSteps,
 		totalToolResultChars,
+		maxTotalToolResultChars,
 		true,
 		onEvent,
 		abortSignal,
 		toolResultEnricher,
 		toolContext
 	);
+}
+
+async function continueOpenAIResponsesAgentAfterToolBudgetInternal(
+	params: AiChatParams,
+	options: ProviderChatOptions,
+	continuation: ResponsesAgentContinuation,
+	mcpHost: McpHost,
+	gateway: ApprovalGateway,
+	allowedToolNames: readonly string[] | undefined,
+	onEvent: OnToolEvent | undefined,
+	abortSignal: AbortSignal | undefined,
+	toolResultEnricher: ToolResultEnricher | undefined,
+	toolContext: ToolExecutionContext | undefined,
+	streamAssistant: boolean
+): Promise<ProviderAgentResult> {
+	const toolCatalog = createWorkspaceToolCatalog(toolContext);
+	const tools = allowedToolNames !== undefined
+		? toolCatalog.getDefinitionsForNames(allowedToolNames)
+		: toolCatalog.getDefinitions();
+	return runResponsesAgentLoop(
+		params,
+		options,
+		continuation.instructions,
+		[...continuation.inputItems],
+		mcpHost,
+		gateway,
+		tools,
+		continuation.nextStep,
+		getContinuedMaxSteps(params, continuation),
+		continuation.totalToolResultChars,
+		getContinuedToolResultCharLimit(continuation),
+		streamAssistant,
+		onEvent,
+		abortSignal,
+		toolResultEnricher,
+		toolContext
+	);
+}
+
+export async function continueOpenAIResponsesAgentAfterToolBudget(
+	params: AiChatParams,
+	options: ProviderChatOptions,
+	continuation: ResponsesAgentContinuation,
+	mcpHost: McpHost,
+	gateway: ApprovalGateway,
+	allowedToolNames?: readonly string[] | undefined,
+	onEvent?: OnToolEvent,
+	abortSignal?: AbortSignal | undefined,
+	toolResultEnricher?: ToolResultEnricher | undefined,
+	toolContext?: ToolExecutionContext | undefined
+): Promise<ProviderAgentResult> {
+	return continueOpenAIResponsesAgentAfterToolBudgetInternal(params, options, continuation, mcpHost, gateway, allowedToolNames, onEvent, abortSignal, toolResultEnricher, toolContext, false);
+}
+
+export async function continueOpenAIResponsesAgentAfterToolBudgetStreaming(
+	params: AiChatParams,
+	options: ProviderChatOptions,
+	continuation: ResponsesAgentContinuation,
+	mcpHost: McpHost,
+	gateway: ApprovalGateway,
+	allowedToolNames?: readonly string[] | undefined,
+	onEvent?: OnToolEvent,
+	abortSignal?: AbortSignal | undefined,
+	toolResultEnricher?: ToolResultEnricher | undefined,
+	toolContext?: ToolExecutionContext | undefined
+): Promise<ProviderAgentResult> {
+	return continueOpenAIResponsesAgentAfterToolBudgetInternal(params, options, continuation, mcpHost, gateway, allowedToolNames, onEvent, abortSignal, toolResultEnricher, toolContext, true);
+}
+
+async function finalizeOpenAIResponsesAgentAfterToolBudgetInternal(
+	params: AiChatParams,
+	options: ProviderChatOptions,
+	continuation: ResponsesAgentContinuation,
+	reason: string,
+	onEvent: OnToolEvent | undefined,
+	abortSignal: AbortSignal | undefined,
+	streamAssistant: boolean
+): Promise<ProviderAgentResult> {
+	const finalText: string = await createFinalAnswer(
+		params,
+		options,
+		continuation.instructions,
+		[...continuation.inputItems],
+		reason,
+		abortSignal
+	);
+	if (streamAssistant) {
+		onEvent?.({ type: "ai.delta", text: finalText });
+	}
+	return { status: "completed", text: finalText };
+}
+
+export async function finalizeOpenAIResponsesAgentAfterToolBudget(
+	params: AiChatParams,
+	options: ProviderChatOptions,
+	continuation: ResponsesAgentContinuation,
+	_allowedToolNames: readonly string[] | undefined,
+	reason: string,
+	onEvent?: OnToolEvent,
+	abortSignal?: AbortSignal | undefined,
+	_toolContext?: ToolExecutionContext | undefined
+): Promise<ProviderAgentResult> {
+	return finalizeOpenAIResponsesAgentAfterToolBudgetInternal(params, options, continuation, reason, onEvent, abortSignal, false);
+}
+
+export async function finalizeOpenAIResponsesAgentAfterToolBudgetStreaming(
+	params: AiChatParams,
+	options: ProviderChatOptions,
+	continuation: ResponsesAgentContinuation,
+	_allowedToolNames: readonly string[] | undefined,
+	reason: string,
+	onEvent?: OnToolEvent,
+	abortSignal?: AbortSignal | undefined,
+	_toolContext?: ToolExecutionContext | undefined
+): Promise<ProviderAgentResult> {
+	return finalizeOpenAIResponsesAgentAfterToolBudgetInternal(params, options, continuation, reason, onEvent, abortSignal, true);
 }

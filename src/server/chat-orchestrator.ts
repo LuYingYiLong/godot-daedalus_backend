@@ -5,7 +5,14 @@ import type { OnToolEvent, ToolEvent } from "../tools/tool-dispatcher.js";
 import { parseToolResultSummary } from "../tools/tool-result-parser.js";
 import { chatWithDeepSeek, createDeepSeekClient, resolveChatModel, type ProviderChatOptions } from "../providers/deepseek-client.js";
 import type { ProviderAgentResult } from "../providers/agent-types.js";
-import { runProviderAgentStreaming } from "../providers/provider-agent.js";
+import {
+	continueProviderAgentAfterToolBudget,
+	continueProviderAgentAfterToolBudgetStreaming,
+	finalizeProviderAgentAfterToolBudget,
+	finalizeProviderAgentAfterToolBudgetStreaming,
+	runProviderAgentStreaming
+} from "../providers/provider-agent.js";
+import type { PendingToolBudget, PendingToolBudgetPhaseStats } from "../session/pending-tool-budget.js";
 import { McpHost } from "../mcp/mcp-host.js";
 import type { CustomMcpServerRuntimeStatus } from "../mcp/mcp-host.js";
 import {
@@ -164,13 +171,14 @@ import {
 	sendAgentPaused,
 	sendContinuedAgentResult
 } from "./approval-continuation.js";
+import { cancelPendingToolBudgetsForRequest, createPendingToolBudget, createToolBudgetStopReason, registerPendingToolBudget, sendToolBudgetRequired } from "./tool-budget-continuation.js";
 import { createAgentToolEventForwarder, createEmptyWorkflowPhaseToolStats, updateWorkflowPhaseToolStats, shouldRequireWorkflowWriteTool, didWorkflowWritePhaseExecute, isWorkflowProposalPhase, createWorkflowWriteGuardRetryMessage } from "./workflow/tool-events.js";
 import { sendWorkflowEvent, mapWorkflowEventToAgentEvent, convertWorkflowSnapshotToAgentSnapshot, sendWorkflowTodoSnapshot } from "./workflow/events.js";
 import { runWorkflowPhase, createWorkflowPhasePrompt } from "./workflow/phase-runner.js";
 import { createWorkflowPendingContinuation, continueWorkflowExecution } from "./workflow/continuation.js";
 import { startWorkflowExecution } from "./workflow/executor.js";
 import { ensureProviderConfigured } from "../application/provider-session-service.js";
-import { beginSessionRun, finishSessionRun, getActiveSessionRunController, registerSessionRunController } from "./client-connections.js";
+import { beginSessionRun, findSessionWithPendingToolBudget, finishSessionRun, getActiveSessionRunController, registerSessionRunController } from "./client-connections.js";
 import { logger } from "../logger.js";
 import { createInitialPlan } from "./plan-mode.js";
 import { createPlanGetResult, type StoredPlan } from "./plan-store.js";
@@ -333,6 +341,37 @@ function resolveHiddenAnswerToolNames(
 	return filterReadOnlyAnswerToolNames(sourceToolNames, session.activeWorkspace?.id);
 }
 
+function createHiddenAnswerChatParams(params: AiChatParams, routeDecision: WorkflowRouteDecision): AiChatParams {
+	if (routeDecision.execution !== "tool_answer" || routeDecision.requiresWrite) {
+		return params;
+	}
+
+	return {
+		...params,
+		options: {
+			...(params.options ?? {}),
+			toolBudget: params.options?.toolBudget ?? "simple"
+		}
+	};
+}
+
+function createHiddenAnswerSystemPrompt(fullSystemPrompt: string, routeDecision: WorkflowRouteDecision): string {
+	if (routeDecision.execution !== "tool_answer" || routeDecision.requiresWrite) {
+		return fullSystemPrompt;
+	}
+
+	return [
+		fullSystemPrompt,
+		[
+			"## 隐藏只读回答收束规则",
+			"- 当前执行形态是隐藏的只读 tool answer，不是多阶段 workflow。",
+			"- 只调用必要的 read/verify 工具；通常 1-3 次，达到工具预算后必须停止并直接回答。",
+			"- 优先用搜索结果和小文件定位事实；避免穷举目录或读取大型入口文件，除非用户明确要求。",
+			"- 已经获取足够事实后，直接给出结论和建议，不要继续探索。"
+		].join("\n")
+	].join("\n\n");
+}
+
 async function createWorkflowPlanForRoute(
 	params: AiChatParams,
 	options: ProviderChatOptions,
@@ -383,6 +422,7 @@ async function runHiddenAnswerExecution(params: {
 	mcpHost: McpHost;
 	options: ProviderChatOptions;
 	chatParams: AiChatParams;
+	routeDecision: WorkflowRouteDecision;
 	history: ChatMessage[];
 	historyBudgetTokens: number;
 	fullSystemPrompt: string;
@@ -392,6 +432,8 @@ async function runHiddenAnswerExecution(params: {
 }): Promise<void> {
 	const runId: string = params.requestId;
 	const stepRunId: string = `${params.requestId}:answer`;
+	const chatParams: AiChatParams = createHiddenAnswerChatParams(params.chatParams, params.routeDecision);
+	const fullSystemPrompt: string = createHiddenAnswerSystemPrompt(params.fullSystemPrompt, params.routeDecision);
 	const forwardToolEvent: OnToolEvent = createAgentToolEventForwarder(
 		params.socket,
 		params.requestId,
@@ -402,10 +444,10 @@ async function runHiddenAnswerExecution(params: {
 		params.mcpHost
 	);
 	const agentResult: ProviderAgentResult = await runProviderAgentStreaming(
-		params.chatParams,
+		chatParams,
 		params.options,
 		params.history,
-		params.fullSystemPrompt,
+		fullSystemPrompt,
 		params.mcpHost,
 		params.session.approvalGateway,
 		params.allowedToolNames,
@@ -422,6 +464,21 @@ async function runHiddenAnswerExecution(params: {
 	if (agentResult.status === "approval_required") {
 		throw new Error("Hidden answer execution unexpectedly requested approval.");
 	}
+	if (agentResult.status === "tool_budget_required") {
+		const pendingBudget = createPendingToolBudget({
+			agentResult,
+			chatParams,
+			options: params.options,
+			allowedToolNames: params.allowedToolNames,
+			userMessage: chatParams.message,
+			requestId: params.requestId,
+			userCreatedAt: params.userCreatedAt,
+			stream: true
+		});
+		registerPendingToolBudget(params.session, pendingBudget);
+		sendToolBudgetRequired(params.socket, params.requestId, params.session, runId, pendingBudget);
+		return;
+	}
 	if (agentResult.status === "protocol_violation") {
 		throw new Error(agentResult.reason);
 	}
@@ -429,12 +486,12 @@ async function runHiddenAnswerExecution(params: {
 	await appendChatTurnToSession(
 		params.session,
 		params.history,
-		params.chatParams.message,
+		chatParams.message,
 		agentResult.text,
 		params.requestId,
 		params.userCreatedAt,
 		undefined,
-		params.chatParams.additionalContext
+		chatParams.additionalContext
 	);
 	sendSessionEvent(params.socket, params.requestId, params.session, "agent.message.done", {
 		runId,
@@ -618,6 +675,237 @@ function createSessionInfoResult(session: ClientSession, mcpHost: McpHost, histo
 
 import { createProviderRuntimeContext, createSafeMarkdownFence, createMcpSystemContext } from "./prompt-context.js";
 
+type ToolBudgetDecision = "continue" | "stop";
+
+function cloneToolBudgetPhaseStats(stats: PendingToolBudgetPhaseStats | undefined): PendingToolBudgetPhaseStats {
+	return stats === undefined
+		? createEmptyWorkflowPhaseToolStats()
+		: { ...stats };
+}
+
+async function handleToolBudgetDecision(
+	socket: WebSocket,
+	responseId: string,
+	session: ClientSession,
+	mcpHost: McpHost,
+	budgetId: string,
+	decision: ToolBudgetDecision
+): Promise<void> {
+	const pending: PendingToolBudget | undefined = session.pendingToolBudgets.get(budgetId);
+	if (pending === undefined) {
+		sendJson(socket, {
+			type: "response",
+			id: responseId,
+			ok: false,
+			error: {
+				code: "tool_budget_not_found",
+				message: `Tool budget continuation not found: ${budgetId}`
+			}
+		});
+		return;
+	}
+
+	const sessionRun = beginSessionRun(session.sessionId, pending.requestId);
+	if (!sessionRun.ok) {
+		sendJson(socket, {
+			type: "response",
+			id: responseId,
+			ok: false,
+			error: {
+				code: "session_busy",
+				message: `Session is already running request ${sessionRun.activeRequestId}.`
+			}
+		});
+		return;
+	}
+
+	const abortController: AbortController = new AbortController();
+	const runId: string = pending.continuation.workflowState?.plan.id ?? pending.requestId;
+	const stepRunId: string = pending.continuation.workflowState?.activePhaseRunId ?? pending.requestId;
+	session.activeAbortControllers.set(responseId, abortController);
+	session.activeAbortControllers.set(pending.requestId, abortController);
+	session.activeRunRequestId = pending.requestId;
+	setWorkbenchActiveRun(session, {
+		status: "streaming",
+		requestId: pending.requestId
+	});
+	emitWorkbenchUpdated(socket, responseId, session);
+
+	try {
+		const pendingContinuation: PendingAiContinuation = pending.continuation;
+		session.pendingToolBudgets.delete(budgetId);
+		const continuationParams: AiChatParams = await hydrateImageAttachmentContexts(session.sessionId, pendingContinuation.params);
+		const toolStats: PendingToolBudgetPhaseStats = cloneToolBudgetPhaseStats(pending.workflowPhaseToolStats);
+		let toolObservations: WorkflowToolObservation[] = pending.workflowToolObservations?.map((observation: WorkflowToolObservation): WorkflowToolObservation => ({ ...observation })) ?? [];
+		const forwardToolEvent: OnToolEvent = createAgentToolEventForwarder(
+			socket,
+			pending.requestId,
+			session,
+			runId,
+			stepRunId,
+			pending.requestId,
+			mcpHost
+		);
+		const onToolEvent: OnToolEvent = (event: ToolEvent): void => {
+			if (pendingContinuation.workflowState !== undefined) {
+				updateWorkflowPhaseToolStats(toolStats, event);
+				toolObservations = applyToolEventToWorkflowObservations(toolObservations, event);
+			}
+			forwardToolEvent(event);
+		};
+		sendSessionEvent(socket, responseId, session, "agent.run.tool_budget.resolved", {
+			runId,
+			budgetId,
+			decision
+		}, pending.requestId);
+
+		const toolContext = {
+			workspaceId: session.activeWorkspace?.id,
+			editorInstanceId: session.editorInstanceId,
+			sessionId: session.sessionId
+		};
+		const agentResult: ProviderAgentResult = decision === "continue"
+			? pendingContinuation.stream
+				? await continueProviderAgentAfterToolBudgetStreaming(
+					continuationParams,
+					pendingContinuation.options,
+					pendingContinuation.continuation,
+					mcpHost,
+					session.approvalGateway,
+					pendingContinuation.allowedToolNames,
+					onToolEvent,
+					abortController.signal,
+					toolContext
+				)
+				: await continueProviderAgentAfterToolBudget(
+					continuationParams,
+					pendingContinuation.options,
+					pendingContinuation.continuation,
+					mcpHost,
+					session.approvalGateway,
+					pendingContinuation.allowedToolNames,
+					onToolEvent,
+					abortController.signal,
+					toolContext
+				)
+			: pendingContinuation.stream
+				? await finalizeProviderAgentAfterToolBudgetStreaming(
+					continuationParams,
+					pendingContinuation.options,
+					pendingContinuation.continuation,
+					pendingContinuation.allowedToolNames,
+					createToolBudgetStopReason(pending),
+					onToolEvent,
+					abortController.signal,
+					toolContext
+				)
+				: await finalizeProviderAgentAfterToolBudget(
+					continuationParams,
+					pendingContinuation.options,
+					pendingContinuation.continuation,
+					pendingContinuation.allowedToolNames,
+					createToolBudgetStopReason(pending),
+					onToolEvent,
+					abortController.signal,
+					toolContext
+				);
+
+		if (pendingContinuation.workflowState !== undefined) {
+			const continuationWorkflowState: WorkflowRunState = {
+				...pendingContinuation.workflowState,
+				originalParams: continuationParams
+			};
+			const phaseRunResult: WorkflowPhaseRunResult = {
+				agentResult,
+				toolStats,
+				toolObservations,
+				capturedAttachments: []
+			};
+			await continueWorkflowExecution(
+				socket,
+				pending.requestId,
+				session,
+				mcpHost,
+				pendingContinuation.options,
+				continuationWorkflowState,
+				pendingContinuation.userCreatedAt,
+				undefined,
+				pending.requestId,
+				abortController.signal,
+				[],
+				phaseRunResult
+			);
+		} else {
+			await sendContinuedAgentResult(
+				socket,
+				pending.requestId,
+				session,
+				mcpHost,
+				agentResult,
+				{
+					...pendingContinuation,
+					params: continuationParams
+				}
+			);
+		}
+
+		setWorkbenchActiveRun(session, { status: "idle" });
+		emitWorkbenchUpdated(socket, responseId, session);
+		sendJson(socket, {
+			type: "response",
+			id: responseId,
+			ok: true,
+			result: {
+				budgetId,
+				continued: decision === "continue",
+				stopped: decision === "stop",
+				workbench: serializeWorkbench(session)
+			}
+		});
+	} catch (error: unknown) {
+		if (isCancellationError(error, abortController.signal)) {
+			setWorkbenchActiveRun(session, { status: "idle" });
+			emitWorkbenchUpdated(socket, responseId, session);
+			sendAgentCancelled(socket, pending.requestId, session);
+			sendJson(socket, {
+				type: "response",
+				id: responseId,
+				ok: true,
+				result: {
+					cancelled: true,
+					requestId: pending.requestId,
+					budgetId
+				}
+			});
+			return;
+		}
+		setWorkbenchActiveRun(session, { status: "idle" });
+		emitWorkbenchUpdated(socket, responseId, session);
+		const toolBudgetErrorStatus = classifyProviderError(error);
+		sendSessionEvent(socket, responseId, session, "agent.run.error", {
+			runId,
+			code: toolBudgetErrorStatus.code,
+			message: toolBudgetErrorStatus.message
+		}, pending.requestId);
+		sendJson(socket, {
+			type: "response",
+			id: responseId,
+			ok: false,
+			error: {
+				code: toolBudgetErrorStatus.code,
+				message: toolBudgetErrorStatus.message
+			}
+		});
+	} finally {
+		session.activeAbortControllers.delete(responseId);
+		session.activeAbortControllers.delete(pending.requestId);
+		if (session.activeRunRequestId === pending.requestId) {
+			session.activeRunRequestId = undefined;
+		}
+		finishSessionRun(session.sessionId, pending.requestId);
+	}
+}
+
 export async function handleChatRequest(socket: WebSocket, request: ClientRequest, session: ClientSession, mcpHost: McpHost): Promise<void> {
 	switch (request.method) {
 		case "ai.cancel": {
@@ -656,7 +944,8 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				}
 			}
 			const cancelledApprovalIds: string[] = await cancelPendingApprovalsForRequest(session, targetRequestId);
-			if (cancelledApprovalIds.length > 0) {
+			const cancelledToolBudgetIds: string[] = cancelPendingToolBudgetsForRequest(session, targetRequestId);
+			if (cancelledApprovalIds.length > 0 || cancelledToolBudgetIds.length > 0) {
 				session.activeRunRequestId = session.activeRunRequestId === targetRequestId
 					? undefined
 					: session.activeRunRequestId;
@@ -672,11 +961,32 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				id: request.id,
 				ok: true,
 				result: {
-					cancelled: controller !== undefined || cancelledApprovalIds.length > 0,
+					cancelled: controller !== undefined || cancelledApprovalIds.length > 0 || cancelledToolBudgetIds.length > 0,
 					requestId: targetRequestId,
-					cancelledApprovalIds
+					cancelledApprovalIds,
+					cancelledToolBudgetIds
 				}
 			});
+			break;
+		}
+
+		case "ai.toolBudget.continue":
+		case "ai.toolBudget.stop": {
+			const ownerSession: ClientSession | undefined = session.pendingToolBudgets.has(request.params.budgetId)
+				? session
+				: findSessionWithPendingToolBudget(request.params.budgetId);
+			if (ownerSession !== undefined && ownerSession !== session) {
+				await handleChatRequest(socket, request, ownerSession, mcpHost);
+				break;
+			}
+			await handleToolBudgetDecision(
+				socket,
+				request.id,
+				session,
+				mcpHost,
+				request.params.budgetId,
+				request.method === "ai.toolBudget.continue" ? "continue" : "stop"
+			);
 			break;
 		}
 
@@ -1031,6 +1341,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 								mcpHost,
 								options,
 								chatParams: effectiveParams,
+								routeDecision,
 								history,
 								historyBudgetTokens,
 								fullSystemPrompt,
@@ -1047,6 +1358,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 							mcpHost,
 							options,
 							chatParams: effectiveParams,
+							routeDecision,
 							history,
 							historyBudgetTokens,
 							fullSystemPrompt,

@@ -77,6 +77,48 @@ export type ProviderAdapter = {
 		abortSignal?: AbortSignal | undefined,
 		toolContext?: ToolExecutionContext | undefined
 	) => Promise<ProviderAgentResult>;
+	continueAgentAfterToolBudget: (
+		params: AiChatParams,
+		options: ProviderChatOptions,
+		continuation: AgentContinuation,
+		mcpHost: McpHost,
+		gateway: ApprovalGateway,
+		allowedToolNames?: readonly string[] | undefined,
+		onEvent?: OnToolEvent,
+		abortSignal?: AbortSignal | undefined,
+		toolContext?: ToolExecutionContext | undefined
+	) => Promise<ProviderAgentResult>;
+	continueAgentAfterToolBudgetStreaming: (
+		params: AiChatParams,
+		options: ProviderChatOptions,
+		continuation: AgentContinuation,
+		mcpHost: McpHost,
+		gateway: ApprovalGateway,
+		allowedToolNames?: readonly string[] | undefined,
+		onEvent?: OnToolEvent,
+		abortSignal?: AbortSignal | undefined,
+		toolContext?: ToolExecutionContext | undefined
+	) => Promise<ProviderAgentResult>;
+	finalizeAgentAfterToolBudget: (
+		params: AiChatParams,
+		options: ProviderChatOptions,
+		continuation: AgentContinuation,
+		allowedToolNames: readonly string[] | undefined,
+		reason: string,
+		onEvent?: OnToolEvent,
+		abortSignal?: AbortSignal | undefined,
+		toolContext?: ToolExecutionContext | undefined
+	) => Promise<ProviderAgentResult>;
+	finalizeAgentAfterToolBudgetStreaming: (
+		params: AiChatParams,
+		options: ProviderChatOptions,
+		continuation: AgentContinuation,
+		allowedToolNames: readonly string[] | undefined,
+		reason: string,
+		onEvent?: OnToolEvent,
+		abortSignal?: AbortSignal | undefined,
+		toolContext?: ToolExecutionContext | undefined
+	) => Promise<ProviderAgentResult>;
 	listModels: (
 		options: ProviderChatOptions,
 		refresh?: boolean | undefined

@@ -85,3 +85,61 @@ export async function continueProviderAgentStreaming(
 	assertContinuationMatchesAdapter(options, continuation);
 	return resolveProviderAdapter(options).continueAgentStreaming(params, options, continuation, approvedToolResult, mcpHost, gateway, allowedToolNames, onEvent, abortSignal, toolContext);
 }
+
+export async function continueProviderAgentAfterToolBudget(
+	params: AiChatParams,
+	options: ProviderChatOptions,
+	continuation: AgentContinuation,
+	mcpHost: McpHost,
+	gateway: ApprovalGateway,
+	allowedToolNames?: readonly string[] | undefined,
+	onEvent?: OnToolEvent,
+	abortSignal?: AbortSignal | undefined,
+	toolContext?: ToolExecutionContext | undefined
+): Promise<ProviderAgentResult> {
+	assertContinuationMatchesAdapter(options, continuation);
+	return resolveProviderAdapter(options).continueAgentAfterToolBudget(params, options, continuation, mcpHost, gateway, allowedToolNames, onEvent, abortSignal, toolContext);
+}
+
+export async function continueProviderAgentAfterToolBudgetStreaming(
+	params: AiChatParams,
+	options: ProviderChatOptions,
+	continuation: AgentContinuation,
+	mcpHost: McpHost,
+	gateway: ApprovalGateway,
+	allowedToolNames?: readonly string[] | undefined,
+	onEvent?: OnToolEvent,
+	abortSignal?: AbortSignal | undefined,
+	toolContext?: ToolExecutionContext | undefined
+): Promise<ProviderAgentResult> {
+	assertContinuationMatchesAdapter(options, continuation);
+	return resolveProviderAdapter(options).continueAgentAfterToolBudgetStreaming(params, options, continuation, mcpHost, gateway, allowedToolNames, onEvent, abortSignal, toolContext);
+}
+
+export async function finalizeProviderAgentAfterToolBudget(
+	params: AiChatParams,
+	options: ProviderChatOptions,
+	continuation: AgentContinuation,
+	allowedToolNames: readonly string[] | undefined,
+	reason: string,
+	onEvent?: OnToolEvent,
+	abortSignal?: AbortSignal | undefined,
+	toolContext?: ToolExecutionContext | undefined
+): Promise<ProviderAgentResult> {
+	assertContinuationMatchesAdapter(options, continuation);
+	return resolveProviderAdapter(options).finalizeAgentAfterToolBudget(params, options, continuation, allowedToolNames, reason, onEvent, abortSignal, toolContext);
+}
+
+export async function finalizeProviderAgentAfterToolBudgetStreaming(
+	params: AiChatParams,
+	options: ProviderChatOptions,
+	continuation: AgentContinuation,
+	allowedToolNames: readonly string[] | undefined,
+	reason: string,
+	onEvent?: OnToolEvent,
+	abortSignal?: AbortSignal | undefined,
+	toolContext?: ToolExecutionContext | undefined
+): Promise<ProviderAgentResult> {
+	assertContinuationMatchesAdapter(options, continuation);
+	return resolveProviderAdapter(options).finalizeAgentAfterToolBudgetStreaming(params, options, continuation, allowedToolNames, reason, onEvent, abortSignal, toolContext);
+}
