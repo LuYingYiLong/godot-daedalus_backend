@@ -10,8 +10,6 @@ jobs:
   test-ubuntu:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    env:
-      USERPROFILE: ${{ runner.temp }}/userprofile
 
     steps:
       - name: Checkout repository
@@ -36,8 +34,11 @@ jobs:
         run: npm ci
 
       - name: Check
-        run: npm run check
+        run: |
+          mkdir -p "$USERPROFILE"
+          npm run check
         env:
+          USERPROFILE: ${{ runner.temp }}/userprofile
           GODOT_DAEDALUS_PLUGIN_DIR: ${{ github.workspace }}/godot-daedalus-frontend/addons/godot_daedalus
 
   beta-windows:
