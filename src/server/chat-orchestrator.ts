@@ -4,6 +4,8 @@ import type { AdditionalContextItem, AiChatParams, ChatMessage, ClientRequest, M
 import type { OnToolEvent, ToolEvent } from "../tools/tool-dispatcher.js";
 import { parseToolResultSummary } from "../tools/tool-result-parser.js";
 import { chatWithDeepSeek, createDeepSeekClient, resolveChatModel, type ProviderChatOptions } from "../providers/deepseek-client.js";
+import type { ProviderAgentResult } from "../providers/agent-types.js";
+import { runProviderAgentStreaming } from "../providers/provider-agent.js";
 import { McpHost } from "../mcp/mcp-host.js";
 import type { CustomMcpServerRuntimeStatus } from "../mcp/mcp-host.js";
 import {
@@ -64,9 +66,10 @@ import { resolveProviderTaskModelOptions } from "../providers/task-model-routing
 import { getProviderDefaultBaseUrl, getProviderDefaultModel, getProviderDisplayName, isProviderId } from "../providers/provider-registry.js";
 import { classifyProviderError, createProviderStatusEvent } from "../providers/provider-error.js";
 import { isFirstSessionUserTurn } from "./session-title.js";
-import { createReadOnlyFactWorkflowPlan, createSingleAnswerPlan, isCurrentProjectFactRequest, planWorkflow, planWorkflowAfterLlmPlannerFailure, READ_TOOLS, VERIFY_TOOLS, WRITE_TOOLS } from "../workflow/planner.js";
+import { planWorkflow, planWorkflowAfterLlmPlannerFailure, READ_TOOLS, VERIFY_TOOLS, WRITE_TOOLS } from "../workflow/planner.js";
 import { createLlmWorkflowPlan, reviseLlmWorkflowPlan } from "../workflow/llm-planner.js";
 import { createGodotTemplateWorkflowPlan } from "../workflow/godot-template-planner.js";
+import { createFallbackWorkflowRoute, resolveForcedWorkflowRoute, routeWorkflowExecution, type WorkflowRouteContext, type WorkflowRouteDecision } from "../workflow/router.js";
 import {
 	applyDeterministicVerificationGate,
 	applyToolEventToWorkflowObservations,
@@ -93,6 +96,7 @@ import {
 	type ThinkingEventBuffer
 } from "./client-session.js";
 import { getToolPolicy } from "../tools/tool-policy.js";
+import { isPlanSafeDynamicMcpToolName } from "../tools/dynamic-mcp-tools.js";
 import { createWorkspaceToolCatalog, filterToolNamesForWorkspace, getNoWorkspaceToolNames } from "../tools/tool-catalog.js";
 import { ApprovalGateway, ReadOnlyToolApprovalGateway, type PendingApproval } from "../tools/approval-gateway.js";
 import { getLlmToolExecutionIdentity } from "../tools/tool-idempotency.js";
@@ -259,6 +263,202 @@ function filterWebSearchFromWorkflowPlan(plan: WorkflowPlan): WorkflowPlan {
 			};
 		})
 	};
+}
+
+function createWorkflowRouteContext(session: ClientSession, mcpHost: McpHost, additionalContext: readonly AdditionalContextItem[] | undefined): WorkflowRouteContext {
+	const workspaceSummary: string = session.activeWorkspace === undefined
+		? "No active workspace."
+		: [
+			`id=${session.activeWorkspace.id}`,
+			`name=${session.activeWorkspace.name}`,
+			`kind=${session.activeWorkspace.kind}`,
+			`rootPath=${session.activeWorkspace.rootPath}`
+		].join("\n");
+	const editorSummary: string = [
+		`editorInstanceId=${session.editorInstanceId ?? "none"}`,
+		`diagnostics=${JSON.stringify(mcpHost.getDiagnosticsBridge().getCachedStatus())}`,
+		`runtime=${JSON.stringify(createGodotRuntimeStatus(session, mcpHost))}`
+	].join("\n");
+	const additionalContextSummary: string = (additionalContext ?? []).length === 0
+		? "No additional context."
+		: (additionalContext ?? []).map((item: AdditionalContextItem, index: number): string => {
+			const record: Record<string, unknown> = getAdditionalContextDataRecord(item) ?? {};
+			const title: string = getContextString(record, "title") ?? getContextString(record, "path") ?? item.kind;
+			return `${index + 1}. kind=${item.kind}; title=${clipTextByChars(title, 160)}`;
+		}).join("\n");
+	return {
+		workspaceSummary,
+		editorSummary,
+		additionalContextSummary
+	};
+}
+
+function getAllRuntimeToolNames(session: ClientSession): readonly string[] {
+	if (session.activeWorkspace === undefined) {
+		return getNoWorkspaceToolNames();
+	}
+
+	return createWorkspaceToolCatalog({
+		workspaceId: session.activeWorkspace.id,
+		editorInstanceId: session.editorInstanceId,
+		sessionId: session.sessionId
+	}).getEntries().map((entry): string => entry.id);
+}
+
+function filterReadOnlyAnswerToolNames(toolNames: readonly string[], workspaceId?: string | undefined): readonly string[] {
+	return toolNames.filter((toolName: string): boolean => {
+		if (isPlanSafeDynamicMcpToolName(toolName, workspaceId)) {
+			return true;
+		}
+
+		const risk: string | undefined = getToolPolicy(toolName, workspaceId)?.risk;
+		return risk === "read" || risk === "verify";
+	});
+}
+
+function resolveHiddenAnswerToolNames(
+	routeDecision: WorkflowRouteDecision,
+	allowedToolNames: readonly string[] | undefined,
+	session: ClientSession
+): readonly string[] {
+	if (routeDecision.execution === "direct_answer") {
+		return [];
+	}
+
+	const sourceToolNames: readonly string[] = allowedToolNames ?? getAllRuntimeToolNames(session);
+	if (routeDecision.requiresWrite) {
+		return sourceToolNames;
+	}
+
+	return filterReadOnlyAnswerToolNames(sourceToolNames, session.activeWorkspace?.id);
+}
+
+async function createWorkflowPlanForRoute(
+	params: AiChatParams,
+	options: ProviderChatOptions,
+	history: ChatMessage[],
+	planningContext: string,
+	abortSignal?: AbortSignal | undefined
+): Promise<WorkflowPlan | null> {
+	try {
+		const plannerOptions: ProviderChatOptions = (await resolveProviderTaskModelOptions("workflowPlanner", options)).options;
+		const plan: WorkflowPlan | null = await createLlmWorkflowPlan(params, plannerOptions, history, planningContext, abortSignal);
+		if (plan !== null) {
+			return plan;
+		}
+	} catch (error: unknown) {
+		logger.warn("ai", "llm_workflow_planner_failed_fallback", {
+			message: error instanceof Error ? error.message : "LLM planner failed"
+		});
+	}
+
+	const templateFallback: WorkflowPlan | null = createGodotTemplateWorkflowPlan({
+		...params,
+		options: {
+			...(params.options ?? {}),
+			workflow: "auto"
+		}
+	});
+	if (templateFallback !== null) {
+		return templateFallback;
+	}
+
+	if (params.options?.workflow === "multi_phase") {
+		return planWorkflow({
+			...params,
+			options: {
+				...(params.options ?? {}),
+				workflow: "multi_phase"
+			}
+		});
+	}
+
+	return planWorkflowAfterLlmPlannerFailure(params);
+}
+
+async function runHiddenAnswerExecution(params: {
+	socket: WebSocket;
+	requestId: string;
+	session: ClientSession;
+	mcpHost: McpHost;
+	options: ProviderChatOptions;
+	chatParams: AiChatParams;
+	history: ChatMessage[];
+	historyBudgetTokens: number;
+	fullSystemPrompt: string;
+	allowedToolNames: readonly string[];
+	userCreatedAt: string;
+	abortSignal?: AbortSignal | undefined;
+}): Promise<void> {
+	const runId: string = params.requestId;
+	const stepRunId: string = `${params.requestId}:answer`;
+	const forwardToolEvent: OnToolEvent = createAgentToolEventForwarder(
+		params.socket,
+		params.requestId,
+		params.session,
+		runId,
+		stepRunId,
+		params.requestId,
+		params.mcpHost
+	);
+	const agentResult: ProviderAgentResult = await runProviderAgentStreaming(
+		params.chatParams,
+		params.options,
+		params.history,
+		params.fullSystemPrompt,
+		params.mcpHost,
+		params.session.approvalGateway,
+		params.allowedToolNames,
+		forwardToolEvent,
+		params.abortSignal,
+		undefined,
+		{
+			workspaceId: params.session.activeWorkspace?.id,
+			editorInstanceId: params.session.editorInstanceId,
+			sessionId: params.session.sessionId
+		}
+	);
+
+	if (agentResult.status === "approval_required") {
+		throw new Error("Hidden answer execution unexpectedly requested approval.");
+	}
+	if (agentResult.status === "protocol_violation") {
+		throw new Error(agentResult.reason);
+	}
+
+	await appendChatTurnToSession(
+		params.session,
+		params.history,
+		params.chatParams.message,
+		agentResult.text,
+		params.requestId,
+		params.userCreatedAt,
+		undefined,
+		params.chatParams.additionalContext
+	);
+	sendSessionEvent(params.socket, params.requestId, params.session, "agent.message.done", {
+		runId,
+		stepRunId,
+		text: agentResult.text,
+		context: {
+			historyMessagesStored: params.session.messages.length,
+			historyBudgetTokens: params.historyBudgetTokens,
+			mcpServers: params.mcpHost.getConnectedServerIds()
+		}
+	});
+	sendJson(params.socket, {
+		type: "response",
+		id: params.requestId,
+		ok: true,
+		result: {
+			text: agentResult.text,
+			context: {
+				historyMessagesStored: params.session.messages.length,
+				historyBudgetTokens: params.historyBudgetTokens,
+				mcpServers: params.mcpHost.getConnectedServerIds()
+			}
+		}
+	});
 }
 
 class ContextTooLargeError extends Error {
@@ -696,75 +896,135 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 					abortController.signal
 				);
 				const history: ChatMessage[] = await selectHistoryForModel(session, historyBudgetTokens, request.id);
-				let workflowPlan: WorkflowPlan | null = null;
-				if (builtinToolRestriction !== undefined && (effectiveParams.mode !== "ask" || imageGenerationOnly)) {
-					workflowPlan = createSingleAnswerPlan(effectiveParams, allowedToolNames);
+				const planningContext: string = skillPrompt + skillCatalogPrompt + mcpSystemContext + additionalContextSection + guidePromptSection;
+				let routeDecision: WorkflowRouteDecision;
+				const forcedRoute: WorkflowRouteDecision | null = resolveForcedWorkflowRoute(effectiveParams);
+				if (forcedRoute !== null) {
+					routeDecision = forcedRoute;
+				} else if (builtinToolRestriction !== undefined && (effectiveParams.mode !== "ask" || imageGenerationOnly)) {
+					routeDecision = {
+						execution: "tool_answer",
+						reason: "Explicit skill tool restriction uses hidden single-turn tool execution.",
+						requiresTools: true,
+						requiresWrite: false,
+						planningHint: ""
+					};
 				} else if (requestHasImages) {
-					workflowPlan = createSingleAnswerPlan(effectiveParams, []);
-				} else if (session.activeWorkspace === undefined) {
-					workflowPlan = createSingleAnswerPlan(effectiveParams, allowedToolNames);
-				} else if (slashCommandResult.type === "none") {
-					if (effectiveParams.mode === "ask" && isCurrentProjectFactRequest(effectiveParams.message)) {
-						workflowPlan = createReadOnlyFactWorkflowPlan(effectiveParams);
-					} else if (effectiveParams.options?.workflow !== "llm_planned") {
-						workflowPlan = createGodotTemplateWorkflowPlan(effectiveParams);
+					routeDecision = {
+						execution: "direct_answer",
+						reason: "Image attachments were preprocessed before routing; answer without workflow todos.",
+						requiresTools: false,
+						requiresWrite: false,
+						planningHint: ""
+					};
+				} else {
+					try {
+						const routerOptions: ProviderChatOptions = (await resolveProviderTaskModelOptions("workflowPlanner", options)).options;
+						routeDecision = await routeWorkflowExecution(
+							effectiveParams,
+							routerOptions,
+							history,
+							createWorkflowRouteContext(session, mcpHost, effectiveParams.additionalContext),
+							abortController.signal
+						);
+					} catch (error: unknown) {
+						logger.warn("ai", "workflow_router_failed_fallback", {
+							requestId: request.id,
+							sessionId: session.sessionId,
+							message: error instanceof Error ? error.message : "Workflow router failed"
+						});
+						routeDecision = createFallbackWorkflowRoute(effectiveParams, error instanceof Error ? error.message : "Workflow router failed.");
 					}
-					if (workflowPlan === null) {
-						if (effectiveParams.options?.workflow === "llm_planned") {
-							try {
-								const plannerOptions: ProviderChatOptions = (await resolveProviderTaskModelOptions("workflowPlanner", options)).options;
-								workflowPlan = await createLlmWorkflowPlan(effectiveParams, plannerOptions, history, skillPrompt + skillCatalogPrompt + mcpSystemContext + additionalContextSection + guidePromptSection, abortController.signal);
-							} catch (error: unknown) {
-								logger.warn("ai", "llm_workflow_planner_failed_fallback", {
-									requestId: request.id,
-									sessionId: session.sessionId,
-									message: error instanceof Error ? error.message : "LLM planner failed"
-								});
-								workflowPlan = planWorkflowAfterLlmPlannerFailure(effectiveParams);
-							}
-						} else {
-							workflowPlan = planWorkflow(effectiveParams);
-						}
-					}
 				}
-
-				if (workflowPlan === null) {
-					workflowPlan = createSingleAnswerPlan(effectiveParams, allowedToolNames);
-				}
-				if (!webSearchEnabled) {
-					workflowPlan = filterWebSearchFromWorkflowPlan(workflowPlan);
-				}
-				logger.info("ai", "workflow_planned", {
+				logger.info("ai", "workflow_route_decided", {
 					requestId: request.id,
 					sessionId: session.sessionId,
-					workflowSource: workflowPlan.source ?? null,
-					workflowPhaseCount: workflowPlan.phases.length,
-					workflowPhaseIds: workflowPlan.phases.map((phase: WorkflowPhase): string => phase.id),
-					historyMessages: history.length,
-					historyBudgetTokens,
-					allowedToolCount: allowedToolNames?.length ?? null
+					execution: routeDecision.execution,
+					reason: routeDecision.reason,
+					requiresTools: routeDecision.requiresTools,
+					requiresWrite: routeDecision.requiresWrite,
+					forcedByOption: routeDecision.forcedByOption ?? null,
+					safetyOverride: routeDecision.safetyOverride ?? null
 				});
 
 				const originalApprovalGateway: ApprovalGateway = session.approvalGateway;
-				if (effectiveParams.mode === "ask" && !imageGenerationOnly) {
+				const hiddenAnswerToolNames: readonly string[] = resolveHiddenAnswerToolNames(routeDecision, allowedToolNames, session);
+				if (routeDecision.execution !== "workflow" && !routeDecision.requiresWrite) {
+					session.approvalGateway = new ReadOnlyToolApprovalGateway(hiddenAnswerToolNames);
+				} else if (effectiveParams.mode === "ask" && !imageGenerationOnly) {
 					session.approvalGateway = new ReadOnlyToolApprovalGateway(allowedToolNames ?? []);
 				}
 				try {
-					await startWorkflowExecution(
-						socket,
-						request.id,
-						session,
-						mcpHost,
-						options,
-						workflowPlan,
-						effectiveParams,
-						history,
-						historyBudgetTokens,
-						turnStartedAt,
-						skillPrompt + skillCatalogPrompt + mcpSystemContext + additionalContextSection + guidePromptSection,
-						guidePromptSection,
-						abortController.signal
-					);
+					if (routeDecision.execution === "workflow") {
+						let workflowPlan: WorkflowPlan | null = await createWorkflowPlanForRoute(
+							effectiveParams,
+							options,
+							history,
+							[planningContext, routeDecision.planningHint].filter((section: string): boolean => section.length > 0).join("\n\n"),
+							abortController.signal
+						);
+						if (workflowPlan !== null && !webSearchEnabled) {
+							workflowPlan = filterWebSearchFromWorkflowPlan(workflowPlan);
+						}
+						if (workflowPlan !== null) {
+							logger.info("ai", "workflow_planned", {
+								requestId: request.id,
+								sessionId: session.sessionId,
+								workflowSource: workflowPlan.source ?? null,
+								workflowPhaseCount: workflowPlan.phases.length,
+								workflowPhaseIds: workflowPlan.phases.map((phase: WorkflowPhase): string => phase.id),
+								historyMessages: history.length,
+								historyBudgetTokens,
+								allowedToolCount: allowedToolNames?.length ?? null
+							});
+							await startWorkflowExecution(
+								socket,
+								request.id,
+								session,
+								mcpHost,
+								options,
+								workflowPlan,
+								effectiveParams,
+								history,
+								historyBudgetTokens,
+								turnStartedAt,
+								planningContext,
+								guidePromptSection,
+								abortController.signal
+							);
+						} else {
+							routeDecision = createFallbackWorkflowRoute(effectiveParams, "Workflow planner returned no executable plan.");
+							await runHiddenAnswerExecution({
+								socket,
+								requestId: request.id,
+								session,
+								mcpHost,
+								options,
+								chatParams: effectiveParams,
+								history,
+								historyBudgetTokens,
+								fullSystemPrompt,
+								allowedToolNames: resolveHiddenAnswerToolNames(routeDecision, allowedToolNames, session),
+								userCreatedAt: turnStartedAt,
+								abortSignal: abortController.signal
+							});
+						}
+					} else {
+						await runHiddenAnswerExecution({
+							socket,
+							requestId: request.id,
+							session,
+							mcpHost,
+							options,
+							chatParams: effectiveParams,
+							history,
+							historyBudgetTokens,
+							fullSystemPrompt,
+							allowedToolNames: hiddenAnswerToolNames,
+							userCreatedAt: turnStartedAt,
+							abortSignal: abortController.signal
+						});
+					}
 				} finally {
 					session.approvalGateway = originalApprovalGateway;
 				}

@@ -72,7 +72,7 @@ function includesAny(text: string, terms: readonly string[]): boolean {
 	return terms.some((term: string): boolean => text.includes(term));
 }
 
-function isExplicitReadOnlyRequest(text: string): boolean {
+export function isExplicitReadOnlyRequest(text: string): boolean {
 	return includesAny(text, [
 		"只读",
 		"只看",
