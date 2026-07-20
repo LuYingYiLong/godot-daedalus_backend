@@ -10,6 +10,7 @@ import { listSkillSummaries } from "../../skills/catalog.js";
 import { getSkillContent, installSkillFromPath, removePersonalSkill, setWorkspaceSkillEnabled, updateSkillContent } from "../../skills/management.js";
 import type { SkillWorkspace } from "../../skills/types.js";
 import { sendGlobalEvent } from "../session-events.js";
+import { checkBackendUpdate, installBackendUpdate } from "../backend-update.js";
 import { getUserPromptConfig, setUserPrompt } from "../../user-prompt-store.js";
 import { getGeneralSettings, updateGeneralSettings } from "../../general-settings-store.js";
 import { getWebSearchSettingsStatus, updateWebSearchSettings } from "../../web-search-settings-store.js";
@@ -58,6 +59,24 @@ export async function handleCoreRequest(socket: WebSocket, request: ClientReques
 			id: request.id,
 			ok: true,
 			result: createBackendHealthResult()
+		});
+		break;
+
+	case "backend.update.check":
+		sendJson(socket, {
+			type: "response",
+			id: request.id,
+			ok: true,
+			result: await checkBackendUpdate()
+		});
+		break;
+
+	case "backend.update.install":
+		sendJson(socket, {
+			type: "response",
+			id: request.id,
+			ok: true,
+			result: await installBackendUpdate(request.params)
 		});
 		break;
 

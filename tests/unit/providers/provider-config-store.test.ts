@@ -202,6 +202,52 @@ test("provider config migrates v2 provider config to schema v3", async (): Promi
 	});
 });
 
+test("provider config read paths treat keytar read failures as missing secrets", async (): Promise<void> => {
+	await withTempAppData(async (): Promise<void> => {
+		const configDir: string = join(process.env.USERPROFILE!, ".daedalus", "config");
+		await mkdir(configDir, { recursive: true });
+		await writeFile(join(configDir, "provider.json"), JSON.stringify({
+			schemaVersion: 3,
+			activeModel: {
+				providerId: "deepseek",
+				modelId: "deepseek-v4-pro"
+			},
+			providers: {
+				deepseek: {
+					model: "deepseek-v4-pro",
+					baseUrl: "https://proxy.example/v1",
+					keyStorage: "keytar",
+					updatedAt: "2026-07-01T00:00:00.000Z"
+				}
+			},
+			modelRouting: {
+				imageRecognition: null,
+				workflowPlanner: null,
+				sessionTitle: null,
+				imageGeneration: null
+			}
+		}), "utf8");
+
+		mock.method(keytar, "getPassword", async (): Promise<string | null> => {
+			throw new Error("The name org.freedesktop.secrets was not provided by any .service files");
+		});
+
+		const config = await loadProviderConfigWithSecret();
+		const status = await getProviderConfigStatus();
+
+		assert.deepEqual(config, {
+			provider: "deepseek",
+			model: "deepseek-v4-pro",
+			baseUrl: "https://proxy.example/v1",
+			apiKey: undefined
+		});
+		assert.equal(status.configured, false);
+		assert.equal(status.apiKeyMasked, null);
+		assert.equal(status.current.configured, false);
+		assert.equal(status.current.apiKeyMasked, null);
+	});
+});
+
 test("provider config persists cross-provider task model routing", async (): Promise<void> => {
 	await withTempAppData(async (): Promise<void> => {
 		mock.method(keytar, "setPassword", async (): Promise<void> => undefined);

@@ -162,6 +162,15 @@ function maskApiKey(apiKey: string | null): string | null {
 	return `${apiKey.slice(0, 3)}...${apiKey.slice(-4)}`;
 }
 
+async function readKeytarPassword(provider: ProviderId): Promise<string | null> {
+	try {
+		return await keytar.getPassword(KEYTAR_SERVICE, getKeytarAccount(provider));
+	} catch {
+		// 只读路径不能因为系统密钥服务不可用而让状态查询、上下文估算失败。
+		return null;
+	}
+}
+
 function getModelDisplayName(models: readonly ProviderModelInfo[], modelId: string): string {
 	return models.find((model: ProviderModelInfo): boolean => model.id === modelId)?.displayName ?? modelId;
 }
@@ -467,7 +476,7 @@ export async function loadProviderConfigWithSecret(provider?: ProviderId | undef
 		return null;
 	}
 	const entry: StoredProviderEntry | undefined = stored.providers[activeProvider];
-	const apiKey: string | null = await keytar.getPassword(KEYTAR_SERVICE, getKeytarAccount(activeProvider));
+	const apiKey: string | null = await readKeytarPassword(activeProvider);
 
 	if (entry === undefined && apiKey === null) {
 		return null;
@@ -490,7 +499,7 @@ export async function getProviderConfigStatus(): Promise<ProviderConfigStatus> {
 
 	for (const provider of getProviderIds()) {
 		const entry: StoredProviderEntry | undefined = stored.providers[provider];
-		const apiKey: string | null = await keytar.getPassword(KEYTAR_SERVICE, getKeytarAccount(provider));
+		const apiKey: string | null = await readKeytarPassword(provider);
 		providers.push({
 			provider,
 			displayName: getProviderDisplayName(provider),

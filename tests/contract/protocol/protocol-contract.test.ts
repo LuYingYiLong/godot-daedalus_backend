@@ -8,6 +8,8 @@ import { REQUEST_HANDLER_METHODS, REQUEST_HANDLERS } from "../../../src/server/r
 const pluginDir: string = process.env.GODOT_DAEDALUS_PLUGIN_DIR ?? "D:/GodotProjects/example/addons/godot_daedalus";
 const BACKEND_ONLY_OR_STUDIO_RPC_METHODS: Set<string> = new Set([
 	"attachment.image.generated.get",
+	"backend.update.check",
+	"backend.update.install",
 	"generalSettings.get",
 	"generalSettings.update",
 	"session.context.estimate",
@@ -118,6 +120,23 @@ test("workspace.git.diff.get accepts workspace id", (): void => {
 		method: "workspace.git.diff.get",
 		params: {
 			workspaceId: "workspace-a"
+		}
+	}).success, true);
+});
+
+test("backend update requests are accepted", (): void => {
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "backend-update-check",
+		method: "backend.update.check"
+	}).success, true);
+
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "backend-update-install",
+		method: "backend.update.install",
+		params: {
+			version: "1.0.9"
 		}
 	}).success, true);
 });

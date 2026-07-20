@@ -1,6 +1,6 @@
 {
   "name": "daedalus-backend",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "TypeScript backend for the Godot Daedalus editor assistant plugin.",
   "main": "./src/main.ts",
   "bin": {
