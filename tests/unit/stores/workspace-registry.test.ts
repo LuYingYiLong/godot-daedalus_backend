@@ -7,8 +7,12 @@ import type { WorkspaceConfig } from "../../../src/workspace/types.js";
 
 async function withTempAppData<T>(fn: (registry: typeof import("../../../src/workspace/registry.js"), appDataDir: string) => Promise<T>): Promise<T> {
 	const previousUserProfile: string | undefined = process.env.USERPROFILE;
+	const previousGodotProjectPath: string | undefined = process.env.GODOT_PROJECT_PATH;
+	const previousGodotExecutablePath: string | undefined = process.env.GODOT_EXECUTABLE_PATH;
 	const appDataDir: string = await fs.mkdtemp(path.join(os.tmpdir(), "godot-daedalus-workspace-appdata-"));
 	process.env.USERPROFILE = appDataDir;
+	delete process.env.GODOT_PROJECT_PATH;
+	delete process.env.GODOT_EXECUTABLE_PATH;
 
 	try {
 		const registry = await import(`../../../src/workspace/registry.js?case=${Date.now()}-${Math.random()}`);
@@ -18,6 +22,16 @@ async function withTempAppData<T>(fn: (registry: typeof import("../../../src/wor
 			delete process.env.USERPROFILE;
 		} else {
 			process.env.USERPROFILE = previousUserProfile;
+		}
+		if (previousGodotProjectPath === undefined) {
+			delete process.env.GODOT_PROJECT_PATH;
+		} else {
+			process.env.GODOT_PROJECT_PATH = previousGodotProjectPath;
+		}
+		if (previousGodotExecutablePath === undefined) {
+			delete process.env.GODOT_EXECUTABLE_PATH;
+		} else {
+			process.env.GODOT_EXECUTABLE_PATH = previousGodotExecutablePath;
 		}
 		await fs.rm(appDataDir, { recursive: true, force: true });
 	}

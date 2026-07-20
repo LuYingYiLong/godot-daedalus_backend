@@ -6,6 +6,20 @@ import { clientRequestSchema } from "../../../src/protocol/schema.js";
 import { REQUEST_HANDLER_METHODS, REQUEST_HANDLERS } from "../../../src/server/request-dispatcher.js";
 
 const pluginDir: string = process.env.GODOT_DAEDALUS_PLUGIN_DIR ?? "D:/GodotProjects/example/addons/godot_daedalus";
+const BACKEND_ONLY_OR_STUDIO_RPC_METHODS: Set<string> = new Set([
+	"attachment.image.generated.get",
+	"generalSettings.get",
+	"generalSettings.update",
+	"session.context.estimate",
+	"session.integrity.check",
+	"session.model.set",
+	"session.overview.get",
+	"session.workflow.todo.dismiss",
+	"skill.install",
+	"webSearchSettings.get",
+	"webSearchSettings.update",
+	"workspace.delete"
+]);
 
 function unique(values: string[]): string[] {
 	return Array.from(new Set(values)).sort();
@@ -43,8 +57,9 @@ test("backend protocol schema and WebSocket dispatcher stay in sync", async (): 
 test("frontend RPC constants match backend protocol schema", async (): Promise<void> => {
 	const schemaMethods: string[] = await readBackendSchemaMethods();
 	const frontendMethods: string[] = await readFrontendRpcMethods();
+	const pluginRequiredSchemaMethods: string[] = schemaMethods.filter((method: string): boolean => !BACKEND_ONLY_OR_STUDIO_RPC_METHODS.has(method));
 
-	assert.deepEqual(difference(schemaMethods, frontendMethods), [], "schema methods missing frontend RPC constant");
+	assert.deepEqual(difference(pluginRequiredSchemaMethods, frontendMethods), [], "schema methods missing frontend RPC constant");
 	assert.deepEqual(difference(frontendMethods, schemaMethods), [], "frontend RPC constants missing schema method");
 });
 

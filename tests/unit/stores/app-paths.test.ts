@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { join } from "node:path";
 import test from "node:test";
 import {
 	getDaedalusPath,
@@ -26,21 +27,24 @@ test("Daedalus state uses USERPROFILE without legacy appdata or v2 paths", (): v
 	process.env.APPDATA = "D:/Legacy/AppData";
 
 	try {
-		assert.equal(getDaedalusDir(), "D:\\Users\\TestUser\\.daedalus");
-		assert.equal(getDefaultWorkspaceConfigPath(), "D:\\Users\\TestUser\\.daedalus\\config\\workspaces.json");
-		assert.equal(getProviderConfigPath(), "D:\\Users\\TestUser\\.daedalus\\config\\provider.json");
-		assert.equal(getMcpServersConfigPath(), "D:\\Users\\TestUser\\.daedalus\\config\\mcp-servers.json");
-		assert.equal(getSkillSettingsPath(), "D:\\Users\\TestUser\\.daedalus\\config\\skill-settings.json");
-		assert.equal(getUserPromptConfigPath(), "D:\\Users\\TestUser\\.daedalus\\config\\user-prompt.json");
-		assert.equal(getGeneralSettingsConfigPath(), "D:\\Users\\TestUser\\.daedalus\\config\\general-settings.json");
-		assert.equal(getWebSearchSettingsConfigPath(), "D:\\Users\\TestUser\\.daedalus\\config\\web-search-settings.json");
-		assert.equal(getApprovalConfigPath(), "D:\\Users\\TestUser\\.daedalus\\config\\approval.json");
-		assert.equal(getPersonalSkillsDir(), "D:\\Users\\TestUser\\.daedalus\\skills");
-		assert.equal(getDefaultSessionsDir(), "D:\\Users\\TestUser\\.daedalus\\sessions");
-		assert.equal(getDefaultArchivedSessionsDir(), "D:\\Users\\TestUser\\.daedalus\\archived_sessions");
-		assert.equal(getLogsDir(), "D:\\Users\\TestUser\\.daedalus\\logs");
-		assert.equal(getTerminalJobsDir(), "D:\\Users\\TestUser\\.daedalus\\terminal-jobs");
-		assert.equal(getToolExecutionLedgerPath(), "D:\\Users\\TestUser\\.daedalus\\tool-executions.jsonl");
+		const root: string = join("D:/Users/TestUser", ".daedalus");
+		const configRoot: string = join(root, "config");
+
+		assert.equal(getDaedalusDir(), root);
+		assert.equal(getDefaultWorkspaceConfigPath(), join(configRoot, "workspaces.json"));
+		assert.equal(getProviderConfigPath(), join(configRoot, "provider.json"));
+		assert.equal(getMcpServersConfigPath(), join(configRoot, "mcp-servers.json"));
+		assert.equal(getSkillSettingsPath(), join(configRoot, "skill-settings.json"));
+		assert.equal(getUserPromptConfigPath(), join(configRoot, "user-prompt.json"));
+		assert.equal(getGeneralSettingsConfigPath(), join(configRoot, "general-settings.json"));
+		assert.equal(getWebSearchSettingsConfigPath(), join(configRoot, "web-search-settings.json"));
+		assert.equal(getApprovalConfigPath(), join(configRoot, "approval.json"));
+		assert.equal(getPersonalSkillsDir(), join(root, "skills"));
+		assert.equal(getDefaultSessionsDir(), join(root, "sessions"));
+		assert.equal(getDefaultArchivedSessionsDir(), join(root, "archived_sessions"));
+		assert.equal(getLogsDir(), join(root, "logs"));
+		assert.equal(getTerminalJobsDir(), join(root, "terminal-jobs"));
+		assert.equal(getToolExecutionLedgerPath(), join(root, "tool-executions.jsonl"));
 
 		assert.equal(getDaedalusPath("config.workspaces"), getDefaultWorkspaceConfigPath());
 		assert.equal(getDaedalusPath("config.provider"), getProviderConfigPath());

@@ -10,6 +10,8 @@ jobs:
   test-ubuntu:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      USERPROFILE: ${{ runner.temp }}/userprofile
 
     steps:
       - name: Checkout repository
