@@ -186,6 +186,22 @@ function hasOptionalDiagnosticsEnvironmentIssue(observations: WorkflowToolObserv
 	));
 }
 
+function hasSuccessfulMutationObservation(observations: WorkflowToolObservation[]): boolean {
+	return observations.some((observation: WorkflowToolObservation): boolean => (
+		observation.status === "succeeded" && (observation.risk === "write" || observation.risk === "destructive")
+	));
+}
+
+function isNonMutationFailureInCompletedWritePhase(
+	phase: WorkflowPhase,
+	observation: WorkflowToolObservation,
+	observations: WorkflowToolObservation[]
+): boolean {
+	return phase.toolGroup === "write"
+		&& hasSuccessfulMutationObservation(observations)
+		&& (observation.risk === "read" || observation.risk === "verify" || observation.risk === "propose");
+}
+
 function normalizedRecord(value: Record<string, unknown> | undefined): string {
 	if (value === undefined) {
 		return "{}";
@@ -239,6 +255,10 @@ function collectFailedChecks(phase: WorkflowPhase, observations: WorkflowToolObs
 				toolCallId: observation.toolCallId,
 				toolName: observation.toolName
 			});
+			continue;
+		}
+
+		if (isNonMutationFailureInCompletedWritePhase(phase, observation, observations)) {
 			continue;
 		}
 

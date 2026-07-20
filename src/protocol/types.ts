@@ -74,7 +74,6 @@ export type ServerEvent = {
 		| "ai.done"
 		| "ai.status"
 		| "ai.paused"
-		| "ai.cancelled"
 		| "ai.thinking.delta"
 		| "ai.thinking.done"
 		| "tool.call"

@@ -87,6 +87,7 @@ export type ClientSession = {
 	activeAbortControllers: Map<string, AbortController>;
 	inFlightRequestIds: Set<string>;
 	completedRequestIds: Map<string, number>;
+	terminalErrorEventFingerprints: Set<string>;
 	eventPersistQueue: Promise<void>;
 	pendingGuides: PendingGuide[];
 	queuedMessages: QueuedMessage[];
@@ -113,6 +114,7 @@ export function createClientSession(defaultWorkspace: WorkspaceConfig | undefine
 		activeAbortControllers: new Map(),
 		inFlightRequestIds: new Set(),
 		completedRequestIds: new Map(),
+		terminalErrorEventFingerprints: new Set(),
 		pendingGuides: [],
 		queuedMessages: [],
 		messageQueueNextId: 0,
@@ -154,6 +156,7 @@ export function clearActiveSession(session: ClientSession): void {
 	session.workbenchClientPatchSequences.clear();
 	session.aiDeltaEventBuffers.clear();
 	session.thinkingEventBuffers.clear();
+	session.terminalErrorEventFingerprints.clear();
 }
 
 export function applySessionMetadata(session: ClientSession, metadata: SessionMetadata): void {

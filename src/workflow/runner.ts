@@ -146,6 +146,8 @@ function createPhaseToolGroupRules(phase: WorkflowPhase): string[] {
 		return [
 			"- 当前是写入/提案阶段：如果阶段目标是预览、提案或 diff，必须调用对应 propose_* 工具。",
 			"- 如果阶段目标是实际创建、修改、删除或应用补丁，必须调用实际写入工具；写入工具触发审批时按现有流程暂停。",
+			"- 只修改当前任务直接相关的目标文件；不要创建占位文件、临时文件或无关文件来满足写入要求。",
+			"- 修改 `.ts`、`.tsx`、`.js`、`.jsx`、Electron 或前端文件时，不要运行 `godot.check_only` 或 `godot.validate_scene`；后续验证应使用 `workspace.typecheck`、`git.diff` 或其它 workspace/TypeScript 验证。",
 			"- 不要只输出计划、意图或“稍后将执行”；后端会把未调用当前阶段所需工具的阶段视为未完成。"
 		];
 	}
@@ -153,6 +155,8 @@ function createPhaseToolGroupRules(phase: WorkflowPhase): string[] {
 	if (phase.toolGroup === "verify") {
 		return [
 			"- 当前是验证阶段：优先实际调用诊断或验证工具，不要只描述验证计划。",
+			"- 验证 `.ts`、`.tsx`、`.js`、`.jsx`、Electron 或前端修改时，优先调用 `mcp_terminal_run_safe_preset` 的 `workspace.typecheck`；可辅以 `git.diff`。不要把这些文件传给 Godot 预设。",
+			"- `godot.check_only` 只用于 `.gd`；`godot.validate_scene` 只用于 `.tscn`。不要对 TypeScript、前端或普通 workspace 文件使用 Godot 预设。",
 			"- 如果验证失败或发现需要修改的问题，不要声称阶段完成；明确列出失败点和需要修复的内容。",
 			"- 当前阶段没有写入职责；不要说“接下来我会修改”后直接结束。需要修改时明确交给后续修复阶段。"
 		];

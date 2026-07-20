@@ -31,6 +31,7 @@ type ConnectionRecord = ClientConnectionInfo & {
 const socketConnections: Map<WebSocket, ConnectionRecord> = new Map();
 const sessionSubscribers: Map<string, Set<WebSocket>> = new Map();
 const activeSessionRuns: Map<string, string> = new Map();
+const activeSessionRunControllers: Map<string, AbortController> = new Map();
 const sessionRuntimes: SessionRuntimeRegistry<ClientSession> = new SessionRuntimeRegistry<ClientSession>();
 
 function createConnectionId(): string {
@@ -248,6 +249,35 @@ export function getActiveSessionRunRequestId(sessionId: string | undefined): str
 	return activeSessionRuns.get(sessionId);
 }
 
+export function registerSessionRunController(sessionId: string | undefined, requestId: string, controller: AbortController): void {
+	if (sessionId === undefined) {
+		return;
+	}
+
+	if (activeSessionRuns.get(sessionId) === requestId) {
+		activeSessionRunControllers.set(sessionId, controller);
+	}
+}
+
+export function getActiveSessionRunController(sessionId: string | undefined, requestId?: string | undefined): { requestId: string; controller: AbortController } | undefined {
+	if (sessionId === undefined) {
+		return undefined;
+	}
+
+	const activeRequestId: string | undefined = activeSessionRuns.get(sessionId);
+	const controller: AbortController | undefined = activeSessionRunControllers.get(sessionId);
+	if (activeRequestId === undefined || controller === undefined) {
+		return undefined;
+	}
+	if (requestId !== undefined && requestId !== activeRequestId) {
+		return undefined;
+	}
+	return {
+		requestId: activeRequestId,
+		controller
+	};
+}
+
 export function finishSessionRun(sessionId: string | undefined, requestId: string): void {
 	if (sessionId === undefined) {
 		return;
@@ -255,5 +285,6 @@ export function finishSessionRun(sessionId: string | undefined, requestId: strin
 
 	if (activeSessionRuns.get(sessionId) === requestId) {
 		activeSessionRuns.delete(sessionId);
+		activeSessionRunControllers.delete(sessionId);
 	}
 }

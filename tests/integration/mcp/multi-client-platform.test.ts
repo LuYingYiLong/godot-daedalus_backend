@@ -6,7 +6,7 @@ import { GodotEditorBridge } from "../../../src/mcp/godot/bridges/editor-bridge.
 import { McpHost } from "../../../src/mcp/mcp-host.js";
 import { withMcpRequestContext } from "../../../src/mcp/request-context.js";
 import { createClientSession } from "../../../src/server/client-session.js";
-import { beginSessionRun, bindConnectionToSessionRuntime, finishSessionRun, getClientConnection, getConnectionSession, registerClientConnection, subscribeSocketToSession, unregisterClientConnection, updateClientConnection } from "../../../src/server/client-connections.js";
+import { beginSessionRun, bindConnectionToSessionRuntime, finishSessionRun, getActiveSessionRunController, getClientConnection, getConnectionSession, registerClientConnection, registerSessionRunController, subscribeSocketToSession, unregisterClientConnection, updateClientConnection } from "../../../src/server/client-connections.js";
 import { handleClientRequest } from "../../../src/server/handlers/client-handlers.js";
 import { createGodotRuntimeStatus } from "../../../src/server/godot-runtime-status.js";
 import { sendSessionEvent } from "../../../src/server/session-events.js";
@@ -293,6 +293,33 @@ test("session events broadcast to subscribed frontend sockets once", (): void =>
 	assert.equal(studioSocket.sent.filter((message: Record<string, unknown>): boolean => message.event === "client.connected").length, 1);
 });
 
+test("session terminal errors are emitted once per request and message", (): void => {
+	const originSocket = createSocket();
+	const studioSocket = createSocket();
+	const originSession = createClientSession(undefined);
+	const studioSession = createClientSession(undefined);
+	originSession.sessionId = "session-terminal-error";
+	studioSession.sessionId = "session-terminal-error";
+	registerClientConnection(originSocket, originSession);
+	registerClientConnection(studioSocket, studioSession);
+	subscribeSocketToSession(originSocket, "session-terminal-error");
+	subscribeSocketToSession(studioSocket, "session-terminal-error");
+
+	sendSessionEvent(originSocket, "request-error", originSession, "agent.run.error", {
+		runId: "workflow-a",
+		code: "agent_run_error",
+		message: "oldText not found in file"
+	});
+	sendSessionEvent(originSocket, "request-error", originSession, "agent.run.error", {
+		runId: "request-error",
+		code: "provider_error",
+		message: "oldText not found in file"
+	});
+
+	assert.equal(originSocket.sent.filter((message: Record<string, unknown>): boolean => message.event === "agent.run.error").length, 1);
+	assert.equal(studioSocket.sent.filter((message: Record<string, unknown>): boolean => message.event === "agent.run.error").length, 1);
+});
+
 test("opening the same session binds frontend connections to one runtime", (): void => {
 	const firstSocket = createSocket();
 	const secondSocket = createSocket();
@@ -325,6 +352,19 @@ test("session run lock is shared across frontend connections", (): void => {
 	finishSessionRun("session-run-lock", "request-a");
 	assert.deepEqual(beginSessionRun("session-run-lock", "request-d"), { ok: true });
 	finishSessionRun("session-run-lock", "request-d");
+});
+
+test("session run controller follows the active session run", (): void => {
+	const controller = new AbortController();
+	assert.deepEqual(beginSessionRun("session-run-controller", "request-a"), { ok: true });
+	registerSessionRunController("session-run-controller", "request-a", controller);
+
+	assert.equal(getActiveSessionRunController("session-run-controller", "request-a")?.controller, controller);
+	assert.equal(getActiveSessionRunController("session-run-controller")?.requestId, "request-a");
+	assert.equal(getActiveSessionRunController("session-run-controller", "request-b"), undefined);
+
+	finishSessionRun("session-run-controller", "request-a");
+	assert.equal(getActiveSessionRunController("session-run-controller"), undefined);
 });
 
 test("custom MCP dynamic tools are scoped by workspace context", async (): Promise<void> => {

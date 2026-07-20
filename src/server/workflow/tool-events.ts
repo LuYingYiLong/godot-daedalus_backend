@@ -230,7 +230,8 @@ export function createWorkflowWriteGuardRetryMessage(
 		`这是第 ${attempt} 次守卫重试。本次重试的第一步必须发出 API tool_call，不能只输出文字说明。`,
 		"如果当前阶段是预览/提案，请调用允许的 propose_* 工具；如果当前阶段是实际修改，请调用写入工具并按审批流程暂停。",
 		"不要只调用 read/verify 工具替代写入工具；read/verify 结果不能完成当前写入阶段。",
-		"不要只描述计划、步骤或意图，也不要写“准备调用/接下来调用”后结束。"
+		"不要只描述计划、步骤或意图，也不要写“准备调用/接下来调用”后结束。",
+		"不要创建占位文件、临时文件或与用户目标无关的文件来满足写入守卫；只允许修改当前任务相关目标。"
 	];
 	if (allowedToolNames.length > 0) {
 		lines.push("");
@@ -250,6 +251,9 @@ export function createWorkflowWriteGuardRetryMessage(
 
 export function getWorkflowWriteGuardRetryAllowedTools(phase: WorkflowPhase): string[] {
 	return phase.allowedTools.filter((toolName: string): boolean => {
+		if (toolName.startsWith("mcp_terminal_")) {
+			return false;
+		}
 		const risk: string | undefined = getToolPolicy(toolName)?.risk;
 		return risk === "propose" || risk === "write" || risk === "destructive";
 	});

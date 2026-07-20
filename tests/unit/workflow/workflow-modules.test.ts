@@ -93,7 +93,8 @@ test("workflow write guard retry narrows allowed tools to mutation tools", (): v
 			"mcp_godot_propose_attach_script_to_node",
 			"mcp_godot_attach_script_to_node",
 			"mcp_godot_validate_scene_script_references",
-			"mcp_terminal_run_safe_preset"
+			"mcp_terminal_run_safe_preset",
+			"mcp_terminal_run_write_preset"
 		]
 	} as WorkflowPhase;
 

@@ -433,7 +433,7 @@ function appendSummaryStartPart(parts: TimelineBodyPart[], eventData: Record<str
 }
 
 function appendStatusPart(parts: TimelineBodyPart[], statusData: Partial<TimelineStatusPart>): void {
-	parts.push({
+	const nextPart: TimelineStatusPart = {
 		type: "status",
 		status: statusData.status ?? "message",
 		title: statusData.title ?? "",
@@ -444,7 +444,14 @@ function appendStatusPart(parts: TimelineBodyPart[], statusData: Partial<Timelin
 		iconUid: statusData.iconUid ?? "",
 		planId: statusData.planId ?? "",
 		recommendedReplies: statusData.recommendedReplies
-	});
+	};
+	if (nextPart.status === "error" && nextPart.details.length > 0 && parts.some((part: TimelineBodyPart): boolean => {
+		return part.type === "status" && part.status === "error" && part.details === nextPart.details;
+	})) {
+		return;
+	}
+
+	parts.push(nextPart);
 }
 
 function parsePlanRecommendedReplies(value: unknown): TimelinePlanRecommendedReply[] {
@@ -674,8 +681,7 @@ function eventCompletesAssistantBlock(eventName: string): boolean {
 		|| eventName === "ai.done"
 		|| eventName === "agent.run.error"
 		|| eventName === "workflow.error"
-		|| eventName === "agent.run.cancelled"
-		|| eventName === "ai.cancelled";
+		|| eventName === "agent.run.cancelled";
 }
 
 function shouldAppendInlineDiff(events: StoredSessionEvent[], assistantMessage?: StoredMessage | undefined): boolean {

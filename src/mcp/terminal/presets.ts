@@ -14,12 +14,14 @@ export const GODOT_PROJECT: string = process.env.GODOT_PROJECT_PATH ?? "";
 
 export type TerminalPresetContext = {
 	backendDir?: string | undefined;
+	workspaceRoot?: string | undefined;
 	godotProjectPath?: string | undefined;
 	godotExecutablePath?: string | undefined;
 };
 
 type ResolvedTerminalPresetContext = {
 	backendDir: string;
+	workspaceRoot: string;
 	godotProjectPath: string;
 	godotExecutablePath: string;
 };
@@ -31,6 +33,7 @@ const NPM_TYPECHECK_COMMAND: string[] = process.platform === "win32"
 function resolveContext(context?: TerminalPresetContext | undefined): ResolvedTerminalPresetContext {
 	return {
 		backendDir: context?.backendDir ?? BACKEND_DIR,
+		workspaceRoot: context?.workspaceRoot ?? "",
 		godotProjectPath: context?.godotProjectPath ?? GODOT_PROJECT,
 		godotExecutablePath: context?.godotExecutablePath ?? GODOT_EXECUTABLE
 	};
@@ -40,6 +43,7 @@ export function createAllowedWorkingRoots(context?: TerminalPresetContext | unde
 	const resolvedContext = resolveContext(context);
 	return [
 		path.resolve(resolvedContext.backendDir),
+		...(resolvedContext.workspaceRoot.length > 0 ? [path.resolve(resolvedContext.workspaceRoot)] : []),
 		...(resolvedContext.godotProjectPath.length > 0 ? [path.resolve(resolvedContext.godotProjectPath)] : [])
 	];
 }
@@ -50,6 +54,13 @@ export const COMMAND_PRESETS: CommandPreset[] = [
 	{
 		name: "backend.typecheck",
 		description: "运行后端 TypeScript 类型检查 (tsc --noEmit)",
+		command: NPM_TYPECHECK_COMMAND,
+		workingDirectory: BACKEND_DIR,
+		risk: "verify"
+	},
+	{
+		name: "workspace.typecheck",
+		description: "在当前 workspace 运行 TypeScript 类型检查 (npm run typecheck)。适用于前端、Electron、Node/TypeScript 仓库。",
 		command: NPM_TYPECHECK_COMMAND,
 		workingDirectory: BACKEND_DIR,
 		risk: "verify"
@@ -113,11 +124,18 @@ export function findPreset(name: string): CommandPreset {
 }
 
 export function materializePreset(preset: CommandPreset, context?: TerminalPresetContext | undefined): CommandPreset {
+	const resolvedContext = resolveContext(context);
+	if (preset.name === "workspace.typecheck") {
+		return {
+			...preset,
+			workingDirectory: resolvedContext.workspaceRoot || resolvedContext.backendDir
+		};
+	}
+
 	if (preset.requiresGodotProject !== true) {
 		return preset;
 	}
 
-	const resolvedContext = resolveContext(context);
 	return {
 		...preset,
 		command: [

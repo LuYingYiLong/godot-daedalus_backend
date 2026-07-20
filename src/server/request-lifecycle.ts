@@ -26,18 +26,6 @@ export function sendAgentCancelled(socket: WebSocket, requestId: string, session
 	}, requestId);
 }
 
-export function sendAiCancelled(socket: WebSocket, requestId: string, reason: string = "cancelled"): void {
-	sendJson(socket, {
-		type: "event",
-		id: requestId,
-		event: "ai.cancelled",
-		data: {
-			requestId,
-			reason
-		}
-	});
-}
-
 export function pruneCompletedRequestIds(session: ClientSession, now: number = Date.now()): void {
 	for (const [requestId, completedAt] of session.completedRequestIds.entries()) {
 		if (now - completedAt > REQUEST_DEDUP_TTL_MS) {

@@ -10,6 +10,7 @@ import { broadcastSessionEvent } from "./client-connections.js";
 import { logger } from "../logger.js";
 
 const THINKING_EVENT_FLUSH_CHARS = 800;
+const MAX_TERMINAL_ERROR_FINGERPRINTS = 512;
 
 function withSessionId(data: unknown, sessionId: string | undefined): unknown {
 	if (sessionId === undefined || typeof data !== "object" || data === null || Array.isArray(data)) {
@@ -29,6 +30,53 @@ function getDataSessionId(data: unknown): string | undefined {
 
 	const sessionId: unknown = (data as Record<string, unknown>).sessionId;
 	return typeof sessionId === "string" && sessionId.length > 0 ? sessionId : undefined;
+}
+
+function getRecordString(data: unknown, key: string): string {
+	if (typeof data !== "object" || data === null || Array.isArray(data)) {
+		return "";
+	}
+
+	const value: unknown = (data as Record<string, unknown>)[key];
+	return typeof value === "string" ? value.trim() : "";
+}
+
+function createTerminalErrorFingerprint(eventName: ServerEvent["event"], data: unknown, sessionId: string | undefined, persistRequestId: string): string | null {
+	if (eventName !== "agent.run.error" && eventName !== "workflow.error") {
+		return null;
+	}
+	if (sessionId === undefined) {
+		return null;
+	}
+
+	const message: string = getRecordString(data, "message");
+	if (message.length === 0) {
+		return null;
+	}
+
+	return `${sessionId}\n${persistRequestId}\n${message}`;
+}
+
+function shouldSuppressDuplicateTerminalError(session: ClientSession, eventName: ServerEvent["event"], data: unknown, sessionId: string | undefined, persistRequestId: string): boolean {
+	const fingerprint: string | null = createTerminalErrorFingerprint(eventName, data, sessionId, persistRequestId);
+	if (fingerprint === null) {
+		return false;
+	}
+	if (session.terminalErrorEventFingerprints.has(fingerprint)) {
+		logger.debug("session", "duplicate_terminal_error_suppressed", {
+			sessionId,
+			requestId: persistRequestId,
+			eventName,
+			message: getRecordString(data, "message")
+		});
+		return true;
+	}
+
+	if (session.terminalErrorEventFingerprints.size >= MAX_TERMINAL_ERROR_FINGERPRINTS) {
+		session.terminalErrorEventFingerprints.clear();
+	}
+	session.terminalErrorEventFingerprints.add(fingerprint);
+	return false;
 }
 
 export function shouldPersistSessionEvent(eventName: ServerEvent["event"]): boolean {
@@ -226,6 +274,10 @@ export function sendSessionEvent(
 ): void {
 	const sessionId: string | undefined = sessionIdOverride ?? getDataSessionId(data) ?? session.sessionId;
 	const eventData: unknown = withSessionId(data, sessionId);
+	if (shouldSuppressDuplicateTerminalError(session, eventName, eventData, sessionId, persistRequestId)) {
+		return;
+	}
+
 	sendJson(socket, {
 		type: "event",
 		id: requestId,

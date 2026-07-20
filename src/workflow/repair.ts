@@ -1,9 +1,13 @@
 import { READ_TOOLS, VERIFY_TOOLS, WRITE_TOOLS } from "./planner.js";
+import { getToolPolicy } from "../tools/tool-policy.js";
 import type { WorkflowFailedCheck, WorkflowPhase, WorkflowPlan, WorkflowTodoItem } from "./types.js";
 
 const AUTO_REPAIR_ID_PREFIX: string = "auto-repair-";
 const AUTO_VERIFY_ID_PREFIX: string = "auto-verify-";
 const REPAIR_READ_TOOLS: string[] = [
+	"mcp_workspace_list_files",
+	"mcp_workspace_read_text_file",
+	"mcp_workspace_search_text",
 	"mcp_godot_get_project_summary",
 	"mcp_godot_list_project_files",
 	"mcp_godot_list_scenes",
@@ -14,6 +18,12 @@ const REPAIR_READ_TOOLS: string[] = [
 	"mcp_godot_get_project_settings",
 	"mcp_godot_lsp_get_status",
 	"mcp_godot_lsp_get_file_diagnostics"
+];
+const WORKSPACE_REPAIR_WRITE_TOOLS: string[] = [
+	"mcp_workspace_create_text_file",
+	"mcp_workspace_overwrite_text_file",
+	"mcp_workspace_replace_text_in_file",
+	"mcp_workspace_replace_line_in_file"
 ];
 const SCRIPT_REPAIR_WRITE_TOOLS: string[] = [
 	"mcp_godot_create_text_file",
@@ -32,6 +42,10 @@ const PROJECT_SETTING_REPAIR_WRITE_TOOLS: string[] = [
 	"mcp_godot_set_project_setting",
 	"mcp_godot_unset_project_setting"
 ];
+
+function isWriteGuardFailure(failedPhase: WorkflowPhase, failedChecks: WorkflowFailedCheck[]): boolean {
+	return failedPhase.toolGroup === "write" && failedChecks.some((check: WorkflowFailedCheck): boolean => check.code === "write_tool_missing");
+}
 
 export function countWorkflowAutoRepairRounds(plan: WorkflowPlan): number {
 	return plan.phases.filter((phase: WorkflowPhase): boolean => (
@@ -119,6 +133,16 @@ function collectRepairEvidence(
 	return parts.join("\n").toLowerCase();
 }
 
+function collectActualWriteToolsFromPhase(failedPhase: WorkflowPhase): string[] {
+	return failedPhase.allowedTools.filter((toolName: string): boolean => {
+		if (toolName.startsWith("mcp_terminal_")) {
+			return false;
+		}
+		const risk: string | undefined = getToolPolicy(toolName)?.risk;
+		return risk === "write" || risk === "destructive";
+	});
+}
+
 function hasAny(text: string, terms: readonly string[]): boolean {
 	return terms.some((term: string): boolean => text.includes(term));
 }
@@ -130,6 +154,24 @@ function inferRepairWriteTools(
 ): string[] {
 	const evidence: string = collectRepairEvidence(failedPhase, verifyFailureReason, failedChecks);
 	const tools: string[] = [];
+
+	if (hasAny(evidence, [
+		".ts",
+		".tsx",
+		".js",
+		".jsx",
+		"typescript",
+		"javascript",
+		"electron",
+		"renderer",
+		"preload",
+		"frontend",
+		"front-end",
+		"前端",
+		"渲染进程"
+	])) {
+		tools.push(...WORKSPACE_REPAIR_WRITE_TOOLS);
+	}
 
 	if (hasAny(evidence, [
 		"project.godot",
@@ -176,23 +218,63 @@ function inferRepairWriteTools(
 	}
 
 	if (tools.length === 0) {
+		const phaseWriteTools: string[] = collectActualWriteToolsFromPhase(failedPhase);
+		if (phaseWriteTools.length > 0) {
+			return uniqueTools(phaseWriteTools);
+		}
+
 		return WRITE_TOOLS.filter((toolName: string): boolean => !toolName.includes("_propose_") && toolName !== "mcp_terminal_run_write_preset");
 	}
 
 	return uniqueTools(tools);
 }
 
-function createRepairInstruction(failedPhase: WorkflowPhase, verifyFailureReason: string, repairWriteTools: string[]): string {
+function createRepairInstruction(
+	failedPhase: WorkflowPhase,
+	verifyFailureReason: string,
+	repairWriteTools: string[],
+	failedChecks: WorkflowFailedCheck[]
+): string {
+	const failureDetails: string = uniqueTools([
+		verifyFailureReason,
+		...failedChecks.map((check: WorkflowFailedCheck): string => {
+			const prefix: string = check.toolName !== undefined ? `${check.toolName}: ` : "";
+			const artifact: string = check.artifact !== undefined ? `（${check.artifact}）` : "";
+			return `${prefix}${check.message}${artifact}`;
+		})
+	].filter((item: string): boolean => item.length > 0)).join("\n");
+	const isWriteRetry: boolean = failedPhase.toolGroup === "write" && (
+		verifyFailureReason.includes("没有实际调用写入工具")
+		|| verifyFailureReason.includes("oldText not found")
+		|| failedChecks.some((check: WorkflowFailedCheck): boolean => check.code === "write_tool_missing")
+	);
+	if (isWriteRetry) {
+		return [
+			`上一写入阶段「${failedPhase.title}」没有完成实际落盘修改。`,
+			"请先用只读工具重新读取目标文件的最新内容，再调用下面列出的实际写入工具之一完成修改；如果写入触发审批，按审批流程暂停。",
+			"如果上一次失败包含 oldText not found，必须基于最新文件内容重新构造 oldText 或改用更稳定的行级/覆盖写入工具。",
+			"不要只输出计划、修复建议、工具调用预告或后续动作。不要只调用 read/verify/propose 工具替代实际写入。",
+			"不要创建占位文件、临时文件或与用户目标无关的文件；这些不算完成当前修改。",
+			"",
+			"## 本阶段允许的实际写入工具",
+			...repairWriteTools.map((toolName: string): string => `- ${toolName}`),
+			"",
+			"## 写入失败内容",
+			failureDetails
+		].join("\n");
+	}
+
 	return [
 		`上一验证阶段「${failedPhase.title}」发现任务尚未可交付。`,
 		"请根据验证失败内容完成必要修复。当前阶段第一步必须调用下面列出的实际写入工具之一；如果写入触发审批，按审批流程暂停。",
 		"不要只输出计划、修复建议、工具调用预告或后续动作。不要只调用 read/verify 工具替代写入。",
+		"不要创建占位文件、临时文件或与用户目标无关的文件；这些不算完成当前修复。",
 		"",
 		"## 本阶段允许的实际写入工具",
 		...repairWriteTools.map((toolName: string): string => `- ${toolName}`),
 		"",
 		"## 验证失败内容",
-		verifyFailureReason
+		failureDetails
 	].join("\n");
 }
 
@@ -257,7 +339,7 @@ export function insertWorkflowAutoRepairPhases(
 	const repairWriteTools: string[] = inferRepairWriteTools(failedPhase, verifyFailureReason, failedChecks);
 	const repairPhase: WorkflowPhase = {
 		id: createUniquePhaseId(plan, AUTO_REPAIR_ID_PREFIX, round),
-		title: "修复验证问题",
+		title: isWriteGuardFailure(failedPhase, failedChecks) ? "重试实际修改" : "修复验证问题",
 		toolGroup: "write",
 		skillId: "file.creator",
 		promptId: "godot.assistant",
@@ -266,7 +348,7 @@ export function insertWorkflowAutoRepairPhases(
 		repairOf: failedPhase.id,
 		repairRound: round,
 		acceptanceCriteria,
-		instruction: createRepairInstruction(failedPhase, verifyFailureReason, repairWriteTools)
+		instruction: createRepairInstruction(failedPhase, verifyFailureReason, repairWriteTools, failedChecks)
 	};
 	const phases: WorkflowPhase[] = [
 		...plan.phases.slice(0, insertIndex),

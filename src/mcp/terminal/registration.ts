@@ -1,4 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { z } from "zod";
 import { terminalJobStore } from "./job-store.js";
@@ -120,6 +121,7 @@ type TerminalInternalInput = {
 function resolveTerminalContext(input: TerminalInternalInput): {
 	workspaceId?: string | undefined;
 	workspace?: WorkspaceConfig | undefined;
+	workspaceRoot: string;
 	godotProjectPath: string;
 	godotExecutablePath: string;
 } {
@@ -131,15 +133,23 @@ function resolveTerminalContext(input: TerminalInternalInput): {
 	if (workspaceId !== undefined && workspace === undefined) {
 		return {
 			workspaceId,
+			workspaceRoot: "",
 			godotProjectPath: "",
 			godotExecutablePath: GODOT_EXECUTABLE
 		};
 	}
 
+	const workspaceRoot: string = workspace?.rootPath ?? "";
+	const workspaceHasGodotProject: boolean = workspaceRoot.length > 0 && fs.existsSync(path.join(workspaceRoot, "project.godot"));
+	const workspaceGodotProjectPath: string = workspace === undefined
+		? GODOT_PROJECT
+		: (workspaceHasGodotProject || workspace.godotExecutablePath !== undefined ? workspace.rootPath : "");
+
 	return {
 		workspaceId,
 		workspace,
-		godotProjectPath: workspace?.rootPath ?? GODOT_PROJECT,
+		workspaceRoot: workspaceRoot || GODOT_PROJECT,
+		godotProjectPath: workspaceGodotProjectPath,
 		godotExecutablePath: workspace?.godotExecutablePath ?? GODOT_EXECUTABLE
 	};
 }
@@ -296,6 +306,7 @@ async function runCommand(input: CommandRunInput & TerminalInternalInput): Promi
 async function runPreset(input: PresetRunInput, allowedRisks: readonly string[]): Promise<Record<string, unknown>> {
 	const context = resolveTerminalContext(input as PresetRunInput & TerminalInternalInput);
 	const preset: CommandPreset = materializePreset(findPreset(input.presetName), {
+		workspaceRoot: context.workspaceRoot,
 		godotProjectPath: context.godotProjectPath,
 		godotExecutablePath: context.godotExecutablePath
 	});
@@ -328,6 +339,7 @@ async function runPreset(input: PresetRunInput, allowedRisks: readonly string[])
 	let cwd: string;
 	try {
 		cwd = resolveWorkingDirectory(input.workingDirectory, preset, {
+			workspaceRoot: context.workspaceRoot,
 			godotProjectPath: context.godotProjectPath,
 			godotExecutablePath: context.godotExecutablePath
 		});
@@ -347,6 +359,7 @@ async function runPreset(input: PresetRunInput, allowedRisks: readonly string[])
 	let command: string[];
 	try {
 		command = createGodotResourceCommand(preset, input.resourcePath, {
+			workspaceRoot: context.workspaceRoot,
 			godotProjectPath: context.godotProjectPath,
 			godotExecutablePath: context.godotExecutablePath
 		});
@@ -467,6 +480,7 @@ export function registerTerminalTools(server: McpServer): void {
 					name: preset.name,
 					description: preset.description,
 					workingDirectory: materializePreset(preset, {
+						workspaceRoot: context.workspaceRoot,
 						godotProjectPath: context.godotProjectPath,
 						godotExecutablePath: context.godotExecutablePath
 					}).workingDirectory,
@@ -476,6 +490,7 @@ export function registerTerminalTools(server: McpServer): void {
 					godotExecutablePath: preset.requiresGodotProject ? context.godotExecutablePath : undefined,
 					command: preset.requiresGodotProject
 						? describePresetCommand(materializePreset(preset, {
+							workspaceRoot: context.workspaceRoot,
 							godotProjectPath: context.godotProjectPath,
 							godotExecutablePath: context.godotExecutablePath
 						}).command)

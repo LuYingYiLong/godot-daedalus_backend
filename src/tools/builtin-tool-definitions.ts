@@ -1375,17 +1375,17 @@ const BASE_BUILTIN_TOOL_DEFINITIONS: ChatCompletionTool[] = [
 		type: "function",
 		function: {
 			name: "mcp_terminal_run_safe_preset",
-			description: "执行安全的（read/verify 风险）终端预设命令，自动允许。包括：backend.typecheck（TypeScript 类型检查）、git.status（Git 工作区状态）、git.diff（Git 差异）、godot.check_only（Godot 语法检查）、godot.validate_scene（Godot 场景加载验证）。Godot 预设建议传 resourcePath 精确检查目标 .gd 或 .tscn，工具结果会返回实际执行命令和 cwd。",
+			description: "执行安全的（read/verify 风险）终端预设命令，自动允许。包括：backend.typecheck（后端 TypeScript 类型检查）、workspace.typecheck（当前 workspace 的 TypeScript 类型检查，适合前端/Electron/Node 项目）、git.status（Git 工作区状态）、git.diff（Git 差异）、godot.check_only（仅 .gd）、godot.validate_scene（仅 .tscn）。不要把 .ts/.tsx/.js/.jsx 文件传给 Godot 预设；工具结果会返回实际执行命令和 cwd。",
 			parameters: {
 				type: "object",
 				properties: {
 					presetName: {
 						type: "string",
-						description: "安全预设名称，如 'backend.typecheck'、'git.status'、'git.diff'、'godot.check_only'、'godot.validate_scene'"
+						description: "安全预设名称，如 'workspace.typecheck'、'backend.typecheck'、'git.status'、'git.diff'、'godot.check_only'、'godot.validate_scene'"
 					},
 					resourcePath: {
 						type: "string",
-						description: "Godot 资源路径，仅 Godot 预设需要。可用 res://、项目相对路径或项目内绝对路径，例如 scripts/main.gd、scenes/main.tscn。检查脚本用 godot.check_only + .gd；验证场景用 godot.validate_scene + .tscn。"
+						description: "Godot 资源路径，仅 Godot 预设需要。可用 res://、项目相对路径或项目内绝对路径，例如 scripts/main.gd、scenes/main.tscn。检查脚本用 godot.check_only + .gd；验证场景用 godot.validate_scene + .tscn。TypeScript/前端文件不要传 resourcePath，应改用 workspace.typecheck。"
 					},
 					executionMode: {
 						type: "string",
@@ -1430,17 +1430,17 @@ const BASE_BUILTIN_TOOL_DEFINITIONS: ChatCompletionTool[] = [
 		type: "function",
 		function: {
 			name: "mcp_terminal_run_write_preset",
-			description: "执行终端预设命令，需要通过审批系统批准。主要用于 write 风险预设（如 git.init），也兼容更低风险的 read/verify 预设（如 git.status、backend.typecheck、godot.check_only、godot.validate_scene），避免审批后的流程因为工具包装器选择错误而中断。",
+			description: "执行终端预设命令，需要通过审批系统批准。主要用于 write 风险预设（如 git.init）。read/verify 风险预设应优先使用 mcp_terminal_run_safe_preset；TypeScript/前端验证用 workspace.typecheck，Godot 预设只用于 .gd/.tscn。",
 			parameters: {
 				type: "object",
 				properties: {
 					presetName: {
 						type: "string",
-						description: "预设名称，如 'git.init'、'backend.typecheck'、'git.status'、'git.diff'、'godot.check_only'、'godot.validate_scene'"
+						description: "预设名称，如 'git.init'、'workspace.typecheck'、'backend.typecheck'、'git.status'、'git.diff'、'godot.check_only'、'godot.validate_scene'"
 					},
 					resourcePath: {
 						type: "string",
-						description: "Godot 资源路径，仅 Godot 预设需要。可用 res://、项目相对路径或项目内绝对路径，例如 scripts/main.gd、scenes/main.tscn。"
+						description: "Godot 资源路径，仅 Godot 预设需要。可用 res://、项目相对路径或项目内绝对路径，例如 scripts/main.gd、scenes/main.tscn。TypeScript/前端文件不要传 resourcePath，应改用 workspace.typecheck。"
 					},
 					executionMode: {
 						type: "string",

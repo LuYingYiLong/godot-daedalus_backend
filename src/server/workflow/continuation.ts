@@ -6,7 +6,7 @@ import { McpHost } from "../../mcp/mcp-host.js";
 import { sendJson } from "../send-json.js";
 import { createWorkflowPhaseRunId, applyDeterministicVerificationGate, createWorkflowPhaseOutcome } from "../../workflow/outcome.js";
 import { appendPhaseOutput, createPhaseMessage, createPhaseParams, updateWorkflowPhaseStatus } from "../../workflow/runner.js";
-import type { WorkflowPhase, WorkflowPhaseOutput, WorkflowPlan, WorkflowRunState, WorkflowToolObservation } from "../../workflow/types.js";
+import type { WorkflowFailedCheck, WorkflowPhase, WorkflowPhaseOutput, WorkflowPlan, WorkflowRunState, WorkflowToolObservation } from "../../workflow/types.js";
 import type { ClientSession, PendingAiContinuation } from "../client-session.js";
 import { appendChatTurnToSession } from "../token-budget.js";
 import { consumePendingGuideSection } from "../pending-guides.js";
@@ -29,6 +29,73 @@ import { scheduleWorkflowApproval, scheduleWorkflowPhaseOutcome, scheduleWorkflo
 import { logger } from "../../logger.js";
 
 const MAX_WORKFLOW_WRITE_GUARD_RETRY_ATTEMPTS: number = 2;
+
+function stringifyWorkflowFailedChecks(value: unknown): string[] {
+	if (!Array.isArray(value)) {
+		return [];
+	}
+
+	return value.map((item: unknown): string => String(item)).filter((item: string): boolean => item.length > 0);
+}
+
+function createWorkflowWriteGuardOutcome(
+	phase: WorkflowPhase,
+	phaseRunId: string,
+	guardMessage: string,
+	agentResultText: string,
+	toolObservations: WorkflowToolObservation[]
+): WorkflowPhaseOutput {
+	const failedChecks: WorkflowFailedCheck[] = [];
+	for (const observation of toolObservations) {
+		if (observation.status !== "failed") {
+			continue;
+		}
+
+		const parsedFailedChecks: string[] = stringifyWorkflowFailedChecks(observation.parsedResult?.failedChecks);
+		if (parsedFailedChecks.length > 0) {
+			for (const message of parsedFailedChecks) {
+				failedChecks.push({
+					code: "tool_failed_check",
+					message,
+					toolCallId: observation.toolCallId,
+					toolName: observation.toolName,
+					artifact: observation.artifactRefs?.[0]
+				});
+			}
+			continue;
+		}
+
+		failedChecks.push({
+			code: "tool_failed",
+			message: observation.error ?? String(observation.parsedResult?.summary ?? `${observation.toolName} failed`),
+			toolCallId: observation.toolCallId,
+			toolName: observation.toolName,
+			artifact: observation.artifactRefs?.[0]
+		});
+	}
+
+	failedChecks.push({
+		code: "write_tool_missing",
+		message: guardMessage,
+		severity: "error"
+	});
+
+	const requiredFixes: string[] = [...new Set(failedChecks.map((check: WorkflowFailedCheck): string => `修复：${check.message}`))];
+	return {
+		phaseId: phase.id,
+		phaseRunId,
+		title: phase.title,
+		status: "needs_fix",
+		summary: guardMessage,
+		evidence: failedChecks.map((check: WorkflowFailedCheck): string => check.message),
+		failedChecks,
+		requiredFixes,
+		modifiedArtifacts: [],
+		verifiedArtifacts: [],
+		toolObservations: toolObservations.map((observation: WorkflowToolObservation): WorkflowToolObservation => ({ ...observation })),
+		text: agentResultText
+	};
+}
 
 function appendCapturedAttachments(state: WorkflowRunState, attachments: AdditionalContextItem[]): WorkflowRunState {
 	if (attachments.length === 0) {
@@ -310,11 +377,32 @@ export async function continueWorkflowExecution(
 
 		if (shouldRequireWorkflowWriteTool(phase) && !didWorkflowWritePhaseExecute(phase, phaseToolStats)) {
 			const guardMessage: string = `写入阶段「${phase.title}」没有实际调用写入工具或触发审批，已阻止将该 Todo 标记为完成。`;
-			throw new WorkflowExecutionError(
-				guardMessage,
-				plan,
-				new Error(guardMessage)
-			);
+			const guardOutcome: WorkflowPhaseOutput = createWorkflowWriteGuardOutcome(phase, phaseRunId, guardMessage, agentResult.text, phaseToolObservations);
+			const guardCommand = scheduleWorkflowPhaseOutcome(state, phase, guardOutcome, MAX_WORKFLOW_AUTO_REPAIR_ROUNDS);
+			state = guardCommand.state;
+			plan = state.plan;
+			phaseOutputs = state.phaseOutputs;
+			if (guardCommand.type === "repair") {
+				sendWorkflowEvent(socket, requestId, session, "workflow.phase.outcome", {
+					workflowId: plan.id,
+					phaseId: phase.id,
+					phaseRunId,
+					outcome: guardCommand.outcome
+				}, persistRequestId);
+				sendWorkflowTodoSnapshot(socket, requestId, session, plan, persistRequestId, phaseOutputs);
+				continue;
+			}
+			if (guardCommand.type === "failed") {
+				sendWorkflowEvent(socket, requestId, session, "workflow.phase.outcome", {
+					workflowId: plan.id,
+					phaseId: phase.id,
+					phaseRunId,
+					outcome: guardCommand.outcome
+				}, persistRequestId);
+				sendWorkflowTodoSnapshot(socket, requestId, session, plan, persistRequestId, phaseOutputs);
+				throw new WorkflowExecutionError(guardCommand.outcome.summary, plan, new Error(guardMessage), phaseOutputs);
+			}
+			throw new WorkflowExecutionError("Workflow scheduler returned an unexpected write guard command", plan, new Error("workflow_write_guard_unexpected_command"), phaseOutputs);
 		}
 
 		const phaseOutcome: WorkflowPhaseOutput = applyDeterministicVerificationGate(

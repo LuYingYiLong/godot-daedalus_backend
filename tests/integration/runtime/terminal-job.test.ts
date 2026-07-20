@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -210,6 +210,7 @@ test("terminal capabilities use injected workspace context", async (): Promise<v
 		const server: FakeMcpServer = createFakeTerminalServer();
 		registerTerminalTools(server as never);
 		const workspaceRoot: string = await mkdtemp(join(tmpdir(), "terminal-workspace-"));
+		await writeFile(join(workspaceRoot, "project.godot"), "[application]\n", "utf8");
 		const workspace = upsertRuntimeWorkspace(createRuntimeWorkspace(workspaceRoot, "godot-test"));
 
 		try {
@@ -218,10 +219,35 @@ test("terminal capabilities use injected workspace context", async (): Promise<v
 			});
 			const presets = capabilities.presets as Array<Record<string, unknown>>;
 			const godotPreset = presets.find((preset: Record<string, unknown>): boolean => preset.name === "godot.check_only");
+			const workspaceTypecheckPreset = presets.find((preset: Record<string, unknown>): boolean => preset.name === "workspace.typecheck");
 
 			assert.equal(godotPreset?.godotProjectPath, workspace.rootPath);
 			assert.equal(godotPreset?.godotExecutablePath, "godot-test");
 			assert.match(String(godotPreset?.command), /godot-test/);
+			assert.equal(workspaceTypecheckPreset?.workingDirectory, workspace.rootPath);
+		} finally {
+			await rm(workspaceRoot, { recursive: true, force: true });
+		}
+	});
+});
+
+test("terminal capabilities do not treat ordinary workspaces as Godot projects", async (): Promise<void> => {
+	await withAppData(async (): Promise<void> => {
+		const server: FakeMcpServer = createFakeTerminalServer();
+		registerTerminalTools(server as never);
+		const workspaceRoot: string = await mkdtemp(join(tmpdir(), "terminal-ordinary-workspace-"));
+		const workspace = upsertRuntimeWorkspace(createRuntimeWorkspace(workspaceRoot));
+
+		try {
+			const capabilities: Record<string, unknown> = await callTerminalTool(server, "get_terminal_capabilities", {
+				__daedalusWorkspaceId: workspace.id
+			});
+			const presets = capabilities.presets as Array<Record<string, unknown>>;
+			const godotPreset = presets.find((preset: Record<string, unknown>): boolean => preset.name === "godot.check_only");
+			const workspaceTypecheckPreset = presets.find((preset: Record<string, unknown>): boolean => preset.name === "workspace.typecheck");
+
+			assert.equal(godotPreset?.godotProjectPath, null);
+			assert.equal(workspaceTypecheckPreset?.workingDirectory, workspace.rootPath);
 		} finally {
 			await rm(workspaceRoot, { recursive: true, force: true });
 		}

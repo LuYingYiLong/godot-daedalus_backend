@@ -707,6 +707,42 @@ test("canonical timeline restores failed transcript-only turn with tool, error a
 	assert.equal(statusPart?.details, "总结阶段不能调用工具");
 });
 
+test("canonical timeline deduplicates repeated terminal errors by message", (): void => {
+	const stored: StoredSession = session(
+		[
+			{
+				role: "user",
+				requestId: "request-error",
+				content: "帮我改一下",
+				createdAt: "2026-07-09T00:03:00.000Z"
+			}
+		],
+		[
+			event("event-start", "request-error", "agent.run.started", "2026-07-09T00:03:01.000Z", {
+				runId: "request-error"
+			}),
+			event("event-workflow-error", "request-error", "agent.run.error", "2026-07-09T00:03:02.000Z", {
+				runId: "workflow-a",
+				code: "agent_run_error",
+				message: "oldText not found in file"
+			}),
+			event("event-provider-error", "request-error", "agent.run.error", "2026-07-09T00:03:03.000Z", {
+				runId: "request-error",
+				code: "provider_error",
+				message: "oldText not found in file"
+			})
+		]
+	);
+
+	const result = buildCanonicalTimelineBlocks(stored);
+	const assistant = assistantBlock(result.blocks[1]);
+	const statusParts = assistant.bodyParts.filter((part) => part.type === "status" && part.status === "error");
+
+	assert.equal(statusParts.length, 1);
+	assert.equal(statusParts[0]?.type, "status");
+	assert.equal(statusParts[0]?.details, "oldText not found in file");
+});
+
 test("canonical timeline compacts many deltas into a bounded markdown part", (): void => {
 	const events: StoredSessionEvent[] = [];
 	for (let index = 0; index < 2600; index += 1) {

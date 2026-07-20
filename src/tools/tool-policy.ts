@@ -16,6 +16,7 @@ export type ToolRequiredConsent = {
 
 const TERMINAL_PRESET_RISKS: Record<string, ToolRisk> = {
 	"backend.typecheck": "verify",
+	"workspace.typecheck": "verify",
 	"git.status": "read",
 	"git.diff": "read",
 	"git.init": "write",

@@ -83,12 +83,13 @@ export async function routeWorkflowExecution(
 }
 
 export function createFallbackWorkflowRoute(params: AiChatParams, reason: string = "Workflow router failed."): WorkflowRouteDecision {
+	const requiresWrite: boolean = hasWriteIntent(params.message);
 	return applyWorkflowRouteSafety({
-		execution: "tool_answer",
+		execution: requiresWrite ? "workflow" : "tool_answer",
 		reason,
 		requiresTools: true,
-		requiresWrite: false,
-		planningHint: "",
+		requiresWrite,
+		planningHint: requiresWrite ? "Router failed, but the user appears to request a project change. Create a minimal write and verify workflow." : "",
 		safetyOverride: "router_fallback"
 	}, params);
 }
@@ -129,6 +130,38 @@ export function applyWorkflowRouteSafety(decision: WorkflowRouteDecision, params
 
 function parseWorkflowRouteDecision(text: string): RawWorkflowRouteDecision {
 	return workflowRouteSchema.parse(parseJsonObjectFromLlm(text, "Workflow router did not return valid JSON"));
+}
+
+function hasWriteIntent(message: string): boolean {
+	const normalized: string = message.toLowerCase();
+	if (isExplicitReadOnlyRequest(normalized)) {
+		return false;
+	}
+
+	return [
+		"帮我改",
+		"改一下",
+		"修改",
+		"修复",
+		"实现",
+		"新增",
+		"添加",
+		"创建",
+		"生成",
+		"删除",
+		"替换",
+		"更新",
+		"apply",
+		"change",
+		"modify",
+		"fix",
+		"implement",
+		"create",
+		"add",
+		"delete",
+		"replace",
+		"update"
+	].some((keyword: string): boolean => normalized.includes(keyword));
 }
 
 function createRouterParams(message: string): AiChatParams {

@@ -119,7 +119,7 @@ import { clearWorkbenchComposer, emitWorkbenchUpdated, serializeWorkbench, setWo
 
 import { normalizeChatParamsForMode, resolveAllowedToolsForChatParams } from "./chat-mode.js";
 import { logPromptTrace, logProjectInstructionTrace } from "./prompt-trace.js";
-import { isCancellationError, sendAiCancelled, beginRequestExecution, finishRequestExecution, parseMessage } from "./request-lifecycle.js";
+import { isCancellationError, sendAgentCancelled, beginRequestExecution, finishRequestExecution, parseMessage } from "./request-lifecycle.js";
 import { estimateTextTokens, estimateMessagesTokens, estimateTextTokensForProvider, estimateCurrentMessageTokensForProvider, computeHistoryBudget, appendChatTurnToSession, appendUserMessageToSession, appendFailedChatTurnToSession, selectHistoryForModel, createSummaryMessage, loadSessionCompressorPrompt, filterLlmContextMessages } from "./token-budget.js";
 import { getSessionProjectPath, toChatMessage, clampSessionOpenMessageLimit, createPreviewValue, createTimelinePageResult, startFullSessionLoad, waitForFullSessionLoad } from "./session-preview.js";
 import { createProviderChatOptions } from "./provider-chat-options.js";
@@ -170,7 +170,7 @@ import { runWorkflowPhase, createWorkflowPhasePrompt } from "./workflow/phase-ru
 import { createWorkflowPendingContinuation, continueWorkflowExecution } from "./workflow/continuation.js";
 import { startWorkflowExecution } from "./workflow/executor.js";
 import { ensureProviderConfigured } from "../application/provider-session-service.js";
-import { beginSessionRun, finishSessionRun } from "./client-connections.js";
+import { beginSessionRun, finishSessionRun, getActiveSessionRunController, registerSessionRunController } from "./client-connections.js";
 import { logger } from "../logger.js";
 import { createInitialPlan } from "./plan-mode.js";
 import { createPlanGetResult, type StoredPlan } from "./plan-store.js";
@@ -621,24 +621,49 @@ import { createProviderRuntimeContext, createSafeMarkdownFence, createMcpSystemC
 export async function handleChatRequest(socket: WebSocket, request: ClientRequest, session: ClientSession, mcpHost: McpHost): Promise<void> {
 	switch (request.method) {
 		case "ai.cancel": {
-			const controller: AbortController | undefined = session.activeAbortControllers.get(request.params.requestId);
+			const activeSessionRun = getActiveSessionRunController(session.sessionId, request.params.requestId)
+				?? getActiveSessionRunController(session.sessionId);
+			const targetRequestId: string = session.activeAbortControllers.has(request.params.requestId)
+				? request.params.requestId
+				: activeSessionRun?.requestId ?? request.params.requestId;
+			const controller: AbortController | undefined = session.activeAbortControllers.get(targetRequestId)
+				?? activeSessionRun?.controller;
 			if (controller !== undefined) {
 				setWorkbenchActiveRun(session, {
 					status: "cancelling",
-					requestId: request.params.requestId
+					requestId: targetRequestId
 				});
 				emitWorkbenchUpdated(socket, request.id, session);
 				controller.abort();
-				session.activeAbortControllers.delete(request.params.requestId);
+				session.activeAbortControllers.delete(targetRequestId);
+				if (session.activeRunRequestId === targetRequestId) {
+					session.activeRunRequestId = undefined;
+				}
+				finishSessionRun(session.sessionId, targetRequestId);
+				setWorkbenchActiveRun(session, { status: "idle" });
+				emitWorkbenchUpdated(socket, request.id, session);
+				sendAgentCancelled(socket, targetRequestId, session);
+				if (targetRequestId !== request.id) {
+					sendJson(socket, {
+						type: "response",
+						id: targetRequestId,
+						ok: true,
+						result: {
+							cancelled: true,
+							requestId: targetRequestId
+						}
+					});
+				}
 			}
-			const cancelledApprovalIds: string[] = await cancelPendingApprovalsForRequest(session, request.params.requestId);
+			const cancelledApprovalIds: string[] = await cancelPendingApprovalsForRequest(session, targetRequestId);
 			if (cancelledApprovalIds.length > 0) {
-				session.activeRunRequestId = session.activeRunRequestId === request.params.requestId
+				session.activeRunRequestId = session.activeRunRequestId === targetRequestId
 					? undefined
 					: session.activeRunRequestId;
+				finishSessionRun(session.sessionId, targetRequestId);
 				setWorkbenchActiveRun(session, {
 					status: "idle",
-					requestId: request.params.requestId
+					requestId: targetRequestId
 				});
 				emitWorkbenchUpdated(socket, request.id, session);
 			}
@@ -648,7 +673,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				ok: true,
 				result: {
 					cancelled: controller !== undefined || cancelledApprovalIds.length > 0,
-					requestId: request.params.requestId,
+					requestId: targetRequestId,
 					cancelledApprovalIds
 				}
 			});
@@ -746,9 +771,14 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 			const abortController: AbortController = new AbortController();
 			session.activeAbortControllers.set(request.id, abortController);
 			session.activeRunRequestId = request.id;
+			registerSessionRunController(runSessionId, request.id, abortController);
 			const runStartedAtMs: number = Date.now();
 			const turnStartedAt: string = new Date().toISOString();
 			let persistedParams: AiChatParams = params;
+			sendSessionEvent(socket, request.id, session, "agent.run.started", {
+				runId: request.id,
+				requestId: request.id
+			});
 			setWorkbenchActiveRun(session, {
 				status: "streaming",
 				requestId: request.id,
@@ -1110,6 +1140,43 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 					});
 					break;
 				}
+				if (error instanceof WorkflowExecutionError) {
+					const workflowErrorMessage: string = error.message.length > 0
+						? error.message
+						: error.originalError instanceof Error
+							? error.originalError.message
+							: "Workflow failed";
+					logger.error("ai", "workflow_failed", error, {
+						requestId: request.id,
+						sessionId: runSessionId,
+						workspaceId: session.activeWorkspace?.id,
+						durationMs: Date.now() - runStartedAtMs
+					});
+					await waitForSessionEventPersistence(session);
+					await appendFailedChatTurnToSession(
+						session,
+						persistedParams.message,
+						{
+							code: "agent_run_error",
+							message: workflowErrorMessage
+						},
+						request.id,
+						turnStartedAt,
+						undefined,
+						persistedParams.additionalContext,
+						workflowErrorMessage
+					);
+					sendJson(socket, {
+						type: "response",
+						id: request.id,
+						ok: false,
+						error: {
+							code: "agent_run_error",
+							message: workflowErrorMessage
+						}
+					});
+					break;
+				}
 				const providerError = classifyProviderError(error);
 				logger.error("ai", "chat_failed", error, {
 					requestId: request.id,
@@ -1146,15 +1213,19 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 					}
 				});
 			} finally {
+				const ownsActiveRun: boolean = session.activeRunRequestId === request.id
+					|| session.workbenchActiveRun.requestId === request.id;
 				session.activeAbortControllers.delete(request.id);
 				if (session.activeRunRequestId === request.id) {
 					session.activeRunRequestId = undefined;
 				}
-				setWorkbenchActiveRun(session, {
-					status: session.approvalGateway.listPending().length > 0 ? "approval" : "idle",
-					requestId: request.id
-				});
-				emitWorkbenchUpdated(socket, request.id, session);
+				if (ownsActiveRun) {
+					setWorkbenchActiveRun(session, {
+						status: session.approvalGateway.listPending().length > 0 ? "approval" : "idle",
+						requestId: request.id
+					});
+					emitWorkbenchUpdated(socket, request.id, session);
+				}
 				finishSessionRun(runSessionId, request.id);
 			}
 			break;
@@ -1225,7 +1296,15 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				});
 			} catch (error: unknown) {
 				if (isCancellationError(error, abortController.signal)) {
-					sendAiCancelled(socket, request.id);
+					sendJson(socket, {
+						type: "response",
+						id: request.id,
+						ok: true,
+						result: {
+							cancelled: true,
+							requestId: request.id
+						}
+					});
 					break;
 				}
 				sendJson(socket, {

@@ -71,6 +71,52 @@ test("scheduler inserts repair phases for a repairable verification outcome", ()
 	}
 });
 
+test("scheduler inserts workspace write retry phases for write guard failures", (): void => {
+	const phase: WorkflowPhase = {
+		...createPhase("implement", "write"),
+		title: "实现修改",
+		allowedTools: [
+			"mcp_workspace_read_text_file",
+			"mcp_workspace_propose_replace_text_in_file",
+			"mcp_workspace_replace_text_in_file"
+		],
+		instruction: "修改 src/main/services/system-info.ts"
+	};
+	const outcome: WorkflowPhaseOutput = {
+		...createOutcome(phase, "needs_fix"),
+		summary: "写入阶段「实现修改」没有实际调用写入工具或触发审批，已阻止将该 Todo 标记为完成。",
+		failedChecks: [
+			{
+				code: "tool_failed_check",
+				message: "oldText not found in file",
+				toolName: "mcp_workspace_propose_replace_text_in_file",
+				artifact: "src/main/services/system-info.ts"
+			},
+			{
+				code: "write_tool_missing",
+				message: "写入阶段「实现修改」没有实际调用写入工具或触发审批，已阻止将该 Todo 标记为完成。"
+			}
+		],
+		requiredFixes: [
+			"修复：oldText not found in file",
+			"修复：写入阶段「实现修改」没有实际调用写入工具或触发审批，已阻止将该 Todo 标记为完成。"
+		]
+	};
+
+	const command = scheduleWorkflowPhaseOutcome(createState([phase]), phase, outcome, 2);
+
+	assert.equal(command.type, "repair");
+	if (command.type === "repair") {
+		const repairPhase: WorkflowPhase | undefined = command.state.plan.phases[1];
+		assert.equal(repairPhase?.title, "重试实际修改");
+		assert.ok(repairPhase?.allowedTools.includes("mcp_workspace_read_text_file"));
+		assert.ok(repairPhase?.allowedTools.includes("mcp_workspace_replace_text_in_file"));
+		assert.equal(repairPhase?.allowedTools.includes("mcp_workspace_propose_replace_text_in_file"), false);
+		assert.match(repairPhase?.instruction ?? "", /上一写入阶段/);
+		assert.match(repairPhase?.instruction ?? "", /oldText not found/);
+	}
+});
+
 test("scheduler blocks a repairable outcome after the repair budget is exhausted", (): void => {
 	const phase = createPhase("verify", "verify");
 	const state = createState([phase]);

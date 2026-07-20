@@ -71,6 +71,17 @@ test("workflow router normalizes direct and tool answers without workflow todos"
 	}).execution, "tool_answer");
 });
 
+test("workflow router fallback treats short edit confirmations as workflow", (): void => {
+	const decision = createFallbackWorkflowRoute({
+		message: "帮我改一下",
+		mode: "agent"
+	});
+
+	assert.equal(decision.execution, "workflow");
+	assert.equal(decision.requiresWrite, true);
+	assert.equal(decision.safetyOverride, "router_fallback");
+});
+
 test("chat orchestrator has a hidden answer path that does not emit workflow todo snapshots", async (): Promise<void> => {
 	const source: string = await readFile(new URL("../../../src/server/chat-orchestrator.ts", import.meta.url), "utf8");
 	const hiddenAnswerStart: number = source.indexOf("async function runHiddenAnswerExecution");
@@ -80,4 +91,52 @@ test("chat orchestrator has a hidden answer path that does not emit workflow tod
 	assert.ok(workflowStart > hiddenAnswerStart);
 	assert.equal(source.slice(hiddenAnswerStart, workflowStart).includes("sendWorkflowTodoSnapshot"), false);
 	assert.equal(source.includes("workflow_route_decided"), true);
+});
+
+test("chat orchestrator emits run started before workflow routing", async (): Promise<void> => {
+	const source: string = await readFile(new URL("../../../src/server/chat-orchestrator.ts", import.meta.url), "utf8");
+	const registerIndex: number = source.indexOf("registerSessionRunController(runSessionId, request.id, abortController)");
+	const startedIndex: number = source.indexOf("sendSessionEvent(socket, request.id, session, \"agent.run.started\"");
+	const routeIndex: number = source.indexOf("routeDecision = await routeWorkflowExecution");
+
+	assert.ok(registerIndex >= 0);
+	assert.ok(startedIndex > registerIndex);
+	assert.ok(routeIndex > startedIndex);
+});
+
+test("chat orchestrator cancel releases the active run immediately", async (): Promise<void> => {
+	const source: string = await readFile(new URL("../../../src/server/chat-orchestrator.ts", import.meta.url), "utf8");
+	const cancelStart: number = source.indexOf("case \"ai.cancel\"");
+	const chatStart: number = source.indexOf("case \"ai.chat\"");
+	const cancelBlock: string = source.slice(cancelStart, chatStart);
+
+	assert.ok(cancelStart >= 0);
+	assert.ok(chatStart > cancelStart);
+	assert.equal(cancelBlock.includes("finishSessionRun(session.sessionId, targetRequestId);"), true);
+	assert.equal(cancelBlock.includes("setWorkbenchActiveRun(session, { status: \"idle\" });"), true);
+	assert.equal(cancelBlock.includes("id: targetRequestId"), true);
+	assert.equal(cancelBlock.includes("sendAgentCancelled(socket, targetRequestId, session);"), true);
+});
+
+test("chat orchestrator final cleanup only updates the workbench for the owned run", async (): Promise<void> => {
+	const source: string = await readFile(new URL("../../../src/server/chat-orchestrator.ts", import.meta.url), "utf8");
+	const finallyStart: number = source.indexOf("const ownsActiveRun: boolean = session.activeRunRequestId === request.id");
+	const idleUpdate: number = source.indexOf("setWorkbenchActiveRun(session, {", finallyStart);
+	const finishRun: number = source.indexOf("finishSessionRun(runSessionId, request.id);", finallyStart);
+
+	assert.ok(finallyStart >= 0);
+	assert.ok(idleUpdate > finallyStart);
+	assert.ok(finishRun > idleUpdate);
+	assert.equal(source.slice(finallyStart, finishRun).includes("if (ownsActiveRun)"), true);
+});
+
+test("chat orchestrator preserves workflow failures instead of reclassifying them as provider errors", async (): Promise<void> => {
+	const source: string = await readFile(new URL("../../../src/server/chat-orchestrator.ts", import.meta.url), "utf8");
+	const workflowErrorIndex: number = source.indexOf("if (error instanceof WorkflowExecutionError)");
+	const providerErrorIndex: number = source.indexOf("const providerError = classifyProviderError(error);");
+
+	assert.ok(workflowErrorIndex >= 0);
+	assert.ok(providerErrorIndex > workflowErrorIndex);
+	assert.equal(source.slice(workflowErrorIndex, providerErrorIndex).includes("code: \"agent_run_error\""), true);
+	assert.equal(source.slice(workflowErrorIndex, providerErrorIndex).includes("workflow_failed"), true);
 });

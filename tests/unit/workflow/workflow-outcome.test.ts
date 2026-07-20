@@ -168,6 +168,67 @@ test("write phase treats transient tool failure as resolved when same tool succe
 	assert.equal(outcome.toolObservations.length, 2);
 });
 
+test("write phase ignores failed non-mutation verification after a successful write", (): void => {
+	const observations: WorkflowToolObservation[] = applyEvents([
+		{
+			type: "tool.call",
+			step: 0,
+			toolCallId: "write-ts",
+			toolName: "mcp_workspace_replace_text_in_file",
+			args: { relativePath: "src/renderer/src/hooks/useDiskSpaceCheck.ts", oldText: "checkDiskSpace(driveLetter)", newText: "checkDiskSpace()" },
+			serverId: "workspace",
+			serverName: "Workspace",
+			category: "write",
+			title: "写入文件",
+			summary: "src/renderer/src/hooks/useDiskSpaceCheck.ts",
+			target: { kind: "file", path: "src/renderer/src/hooks/useDiskSpaceCheck.ts", label: "src/renderer/src/hooks/useDiskSpaceCheck.ts" }
+		},
+		{
+			type: "tool.result",
+			step: 0,
+			toolCallId: "write-ts",
+			toolName: "mcp_workspace_replace_text_in_file",
+			resultChars: 20,
+			truncated: false,
+			ok: true,
+			validationStatus: "passed",
+			summary: "mcp_workspace_replace_text_in_file",
+			artifactRefs: ["src/renderer/src/hooks/useDiskSpaceCheck.ts"]
+		},
+		{
+			type: "tool.call",
+			step: 0,
+			toolCallId: "bad-verify",
+			toolName: "mcp_terminal_run_write_preset",
+			args: { presetName: "godot.check_only", resourcePath: "src/renderer/src/hooks/useDiskSpaceCheck.ts" },
+			serverId: "terminal",
+			serverName: "Terminal",
+			category: "terminal",
+			title: "运行终端命令",
+			summary: "godot.check_only src/renderer/src/hooks/useDiskSpaceCheck.ts",
+			target: { kind: "command", label: "godot.check_only src/renderer/src/hooks/useDiskSpaceCheck.ts" }
+		},
+		{
+			type: "tool.result",
+			step: 0,
+			toolCallId: "bad-verify",
+			toolName: "mcp_terminal_run_write_preset",
+			resultChars: 120,
+			truncated: false,
+			ok: false,
+			validationStatus: "failed",
+			summary: "godot.check_only src/renderer/src/hooks/useDiskSpaceCheck.ts failed",
+			failedChecks: ["Unsupported Godot resourcePath extension for 'godot.check_only': .ts. Use a .gd or .tscn file."],
+			artifactRefs: ["src/renderer/src/hooks/useDiskSpaceCheck.ts"]
+		}
+	]);
+	const outcome = createWorkflowPhaseOutcome(createPhase("write", "write"), "phase-run-1", "修改完成。", observations);
+
+	assert.equal(outcome.status, "completed");
+	assert.deepEqual(outcome.failedChecks, []);
+	assert.deepEqual(outcome.modifiedArtifacts, ["src/renderer/src/hooks/useDiskSpaceCheck.ts"]);
+});
+
 test("verify phase without deterministic validation tool becomes blocked", (): void => {
 	const outcome = createWorkflowPhaseOutcome(createPhase("verify", "verify"), "phase-run-1", "我检查过了，应该没问题。", []);
 
