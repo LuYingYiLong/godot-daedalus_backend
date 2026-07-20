@@ -9,7 +9,7 @@ import type { ProviderChatOptions, ProviderModelInfo } from "./provider-types.js
 import { normalizeConfiguredProviderBaseUrl, resolveDashScopeApiBaseUrl, resolveProviderBaseUrl } from "./provider-base-url.js";
 import { ProviderTaskModelError, resolveConfiguredProviderTaskModelOptions } from "./task-model-routing.js";
 
-export type ImageGenerationAspectRatio = "1:1" | "16:9" | "9:16" | "4:3" | "3:4";
+export type ImageGenerationAspectRatio = string;
 
 export type ImageGenerationInput = {
 	sessionId: string;
@@ -64,53 +64,102 @@ function getPrompt(value: unknown): string {
 	return value.trim().slice(0, 32000);
 }
 
+type AspectRatioOption<T extends string> = {
+	value: T;
+	width: number;
+	height: number;
+};
+
 function normalizeAspectRatio(value: unknown): ImageGenerationAspectRatio {
-	if (value === "16:9" || value === "9:16" || value === "4:3" || value === "3:4") {
-		return value;
+	if (typeof value !== "string") {
+		return "1:1";
 	}
-	return "1:1";
+	const trimmed: string = value.trim().slice(0, 32);
+	const match: RegExpMatchArray | null = /^(\d{1,4})\s*[:：xX*＊]\s*(\d{1,4})$/u.exec(trimmed);
+	if (match === null) {
+		return "1:1";
+	}
+	const width: number = Number.parseInt(match[1]!, 10);
+	const height: number = Number.parseInt(match[2]!, 10);
+	if (width <= 0 || height <= 0) {
+		return "1:1";
+	}
+	return `${width}:${height}`;
 }
 
+function getAspectRatioValue(aspectRatio: ImageGenerationAspectRatio): number {
+	const match: RegExpMatchArray | null = /^(\d{1,4}):(\d{1,4})$/u.exec(aspectRatio);
+	if (match === null) {
+		return 1;
+	}
+	const width: number = Number.parseInt(match[1]!, 10);
+	const height: number = Number.parseInt(match[2]!, 10);
+	return width > 0 && height > 0 ? width / height : 1;
+}
+
+function getClosestAspectRatioValue<T extends string>(aspectRatio: ImageGenerationAspectRatio, options: readonly AspectRatioOption<T>[]): T {
+	const target: number = getAspectRatioValue(aspectRatio);
+	let closest: AspectRatioOption<T> = options[0]!;
+	let closestDistance: number = Number.POSITIVE_INFINITY;
+	for (const option of options) {
+		const optionRatio: number = option.width / option.height;
+		const distance: number = Math.abs(Math.log(optionRatio / target));
+		if (distance < closestDistance) {
+			closest = option;
+			closestDistance = distance;
+		}
+	}
+	return closest.value;
+}
+
+const OPENAI_IMAGE_SIZE_OPTIONS: readonly AspectRatioOption<NonNullable<ImageGenerateParamsNonStreaming["size"]>>[] = [
+	{ value: "1024x1024", width: 1024, height: 1024 },
+	{ value: "1536x1024", width: 1536, height: 1024 },
+	{ value: "1024x1536", width: 1024, height: 1536 }
+];
+
+const ZHIPU_IMAGE_SIZE_OPTIONS: readonly AspectRatioOption<string>[] = [
+	{ value: "1280x1280", width: 1280, height: 1280 },
+	{ value: "1728x960", width: 1728, height: 960 },
+	{ value: "960x1728", width: 960, height: 1728 },
+	{ value: "1568x1056", width: 1568, height: 1056 },
+	{ value: "1056x1568", width: 1056, height: 1568 }
+];
+
+const DASHSCOPE_IMAGE_SIZE_OPTIONS: readonly AspectRatioOption<string>[] = [
+	{ value: "1024*1024", width: 1024, height: 1024 },
+	{ value: "1280*720", width: 1280, height: 720 },
+	{ value: "720*1280", width: 720, height: 1280 },
+	{ value: "1280*960", width: 1280, height: 960 },
+	{ value: "960*1280", width: 960, height: 1280 }
+];
+
+const MINIMAX_ASPECT_RATIO_OPTIONS: readonly AspectRatioOption<string>[] = [
+	{ value: "1:1", width: 1, height: 1 },
+	{ value: "16:9", width: 16, height: 9 },
+	{ value: "9:16", width: 9, height: 16 },
+	{ value: "4:3", width: 4, height: 3 },
+	{ value: "3:4", width: 3, height: 4 }
+];
+
 function mapAspectRatioToOpenAIImageSize(aspectRatio: ImageGenerationAspectRatio): NonNullable<ImageGenerateParamsNonStreaming["size"]> {
-	if (aspectRatio === "9:16" || aspectRatio === "3:4") {
-		return "1024x1536";
-	}
-	if (aspectRatio === "16:9" || aspectRatio === "4:3") {
-		return "1536x1024";
-	}
-	return "1024x1024";
+	return getClosestAspectRatioValue(aspectRatio, OPENAI_IMAGE_SIZE_OPTIONS);
 }
 
 function mapAspectRatioToZhipuImageSize(aspectRatio: ImageGenerationAspectRatio): string {
-	if (aspectRatio === "9:16") {
-		return "960x1728";
-	}
-	if (aspectRatio === "3:4") {
-		return "1056x1568";
-	}
-	if (aspectRatio === "16:9") {
-		return "1728x960";
-	}
-	if (aspectRatio === "4:3") {
-		return "1568x1056";
-	}
-	return "1280x1280";
+	return getClosestAspectRatioValue(aspectRatio, ZHIPU_IMAGE_SIZE_OPTIONS);
 }
 
 function mapAspectRatioToDashScopeImageSize(aspectRatio: ImageGenerationAspectRatio): string {
-	if (aspectRatio === "9:16") {
-		return "720*1280";
-	}
-	if (aspectRatio === "3:4") {
-		return "960*1280";
-	}
-	if (aspectRatio === "16:9") {
-		return "1280*720";
-	}
-	if (aspectRatio === "4:3") {
-		return "1280*960";
-	}
-	return "1024*1024";
+	return getClosestAspectRatioValue(aspectRatio, DASHSCOPE_IMAGE_SIZE_OPTIONS);
+}
+
+function mapAspectRatioToMiniMaxAspectRatio(aspectRatio: ImageGenerationAspectRatio): string {
+	return getClosestAspectRatioValue(aspectRatio, MINIMAX_ASPECT_RATIO_OPTIONS);
+}
+
+function isNativeImageAspectRatio(aspectRatio: ImageGenerationAspectRatio): boolean {
+	return MINIMAX_ASPECT_RATIO_OPTIONS.some((option: AspectRatioOption<string>): boolean => option.value === aspectRatio);
 }
 
 function getStyle(value: unknown): string | undefined {
@@ -236,6 +285,9 @@ function createOpenAIClient(options: ProviderChatOptions): OpenAI {
 
 function createPrompt(input: ImageGenerationInput): string {
 	const segments: string[] = [input.prompt];
+	if (input.aspectRatio !== undefined && !isNativeImageAspectRatio(input.aspectRatio)) {
+		segments.push(`Target aspect ratio: ${input.aspectRatio}. If the provider canvas is only approximate, preserve this composition as closely as possible.`);
+	}
 	if (input.style !== undefined) {
 		segments.push(`Style: ${input.style}`);
 	}
@@ -519,7 +571,7 @@ async function generateMiniMaxImages(options: ProviderChatOptions, input: ImageG
 		body: JSON.stringify({
 			model,
 			prompt: createPrompt(input),
-			aspect_ratio: input.aspectRatio ?? "1:1",
+			aspect_ratio: mapAspectRatioToMiniMaxAspectRatio(input.aspectRatio ?? "1:1"),
 			response_format: "base64",
 			n: input.count ?? 1,
 			prompt_optimizer: true,

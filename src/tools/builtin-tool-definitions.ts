@@ -110,7 +110,7 @@ const IMAGE_GENERATION_TOOL_DEFINITIONS: ChatCompletionTool[] = [
 		{
 			prompt: { type: "string", description: "详细图像生成提示词，包含主体、风格、构图、颜色、文字限制等。" },
 			count: { type: "integer", minimum: 1, maximum: 4, description: "生成图片数量，默认 1，最大 4。" },
-			aspectRatio: { type: "string", enum: ["1:1", "16:9", "9:16", "4:3", "3:4"], description: "画幅比例，默认 1:1。" },
+			aspectRatio: { type: "string", description: "目标画幅比例，例如 1:1、16:9、2:1、21:9、9:16。没有明确要求时根据用途合理假设；后端会为具体 provider 选择最接近的可用画布。" },
 			style: { type: "string", description: "可选风格提示，例如 photorealistic、pixel art、flat illustration。" },
 			seed: { type: "integer", description: "可选种子提示；不保证所有 provider 都严格支持。" },
 			sourceImages: {

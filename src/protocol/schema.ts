@@ -997,6 +997,14 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		id: z.string(),
 		method: z.literal("workspace.info"),
 		params: z.object({}).optional(),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("workspace.git.diff.get"),
+		params: z.object({
+			workspaceId: z.string().min(1),
+		}),
 	})
 ]);
 

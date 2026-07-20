@@ -9,6 +9,7 @@ import type { WorkspaceConfig } from "../../workspace/types.js";
 import { updateClientConnection } from "../client-connections.js";
 import { logger } from "../../logger.js";
 import { deleteSessionsByWorkspace, listArchivedSessions, listSessions } from "../../session/session-store.js";
+import { readWorkspaceGitDiff } from "../workspace-git-diff.js";
 
 export async function handleWorkspaceRequest(socket: WebSocket, request: ClientRequest, session: ClientSession, mcpHost: McpHost): Promise<void> {
 	switch (request.method) {
@@ -159,7 +160,31 @@ export async function handleWorkspaceRequest(socket: WebSocket, request: ClientR
 			result: session.activeWorkspace ?? null
 		});
 		break;
-		default:
-			throw new Error(`Unsupported workspace method: ${request.method}`);
+
+	case "workspace.git.diff.get": {
+		const workspace: WorkspaceConfig | undefined = findWorkspace(request.params.workspaceId);
+		if (!workspace) {
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: false,
+				error: {
+					code: "workspace_not_found",
+					message: `Workspace not found: ${request.params.workspaceId}`
+				}
+			});
+			break;
+		}
+
+		sendJson(socket, {
+			type: "response",
+			id: request.id,
+			ok: true,
+			result: await readWorkspaceGitDiff(workspace.id, workspace.rootPath)
+		});
+		break;
+	}
+	default:
+		throw new Error(`Unsupported workspace method: ${request.method}`);
 	}
 }

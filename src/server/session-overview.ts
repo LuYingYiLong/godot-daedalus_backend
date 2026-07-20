@@ -1,13 +1,12 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { spawn } from "node:child_process";
 import { getSessionDir, openSession, type SessionMetadata } from "../session/session-store.js";
 import type { GeneratedImageArtifactMetadata, ImageAttachmentMetadata } from "../session/session-attachments.js";
 import type { StoredPlanMetadata } from "./plan-store.js";
+import { isInsideGitWorkTree, readGitBranch, runGit } from "./git-utils.js";
 
 const DEFAULT_OVERVIEW_LIMIT: number = 3;
 const MAX_OVERVIEW_LIMIT: number = 100;
-const GIT_COMMAND_TIMEOUT_MS: number = 2500;
 
 export type SessionOverviewGitInfo = {
 	hasGitRepository: boolean;
@@ -51,10 +50,6 @@ export type SessionOverviewResult = {
 	};
 };
 
-type GitResult = {
-	stdout: string;
-};
-
 function clampLimit(limit: number | undefined): number {
 	if (limit === undefined || !Number.isFinite(limit)) {
 		return DEFAULT_OVERVIEW_LIMIT;
@@ -86,67 +81,16 @@ async function readJsonFile(filePath: string): Promise<Record<string, unknown> |
 	}
 }
 
-function runGit(workspaceRoot: string, args: string[]): Promise<GitResult> {
-	return new Promise((resolve: (result: GitResult) => void, reject: (error: Error) => void): void => {
-		const child = spawn("git", args, {
-			cwd: workspaceRoot,
-			windowsHide: true,
-			stdio: ["ignore", "pipe", "pipe"]
-		});
-		let stdout: string = "";
-		let stderr: string = "";
-		const timeout = setTimeout((): void => {
-			child.kill();
-			reject(new Error("Git command timed out."));
-		}, GIT_COMMAND_TIMEOUT_MS);
-
-		child.stdout.setEncoding("utf8");
-		child.stderr.setEncoding("utf8");
-		child.stdout.on("data", (chunk: string): void => {
-			stdout += chunk;
-		});
-		child.stderr.on("data", (chunk: string): void => {
-			stderr += chunk;
-		});
-		child.on("error", (error: Error): void => {
-			clearTimeout(timeout);
-			reject(error);
-		});
-		child.on("close", (code: number | null): void => {
-			clearTimeout(timeout);
-			if (code === 0) {
-				resolve({ stdout });
-				return;
-			}
-			reject(new Error(stderr.trim() || `Git exited with code ${code ?? "unknown"}.`));
-		});
-	});
-}
-
 async function loadGitInfo(workspaceRoot: string | undefined): Promise<SessionOverviewGitInfo | null> {
 	if (workspaceRoot === undefined || workspaceRoot.trim().length === 0) {
 		return null;
 	}
 
-	try {
-		const repoCheck: GitResult = await runGit(workspaceRoot, ["rev-parse", "--is-inside-work-tree"]);
-		if (repoCheck.stdout.trim() !== "true") {
-			return null;
-		}
-	} catch {
+	if (!await isInsideGitWorkTree(workspaceRoot)) {
 		return null;
 	}
 
-	let branch: string | null = null;
-	try {
-		branch = (await runGit(workspaceRoot, ["branch", "--show-current"])).stdout.trim() || null;
-		if (branch === null) {
-			const revision: string = (await runGit(workspaceRoot, ["rev-parse", "--short", "HEAD"])).stdout.trim();
-			branch = revision.length > 0 ? revision : null;
-		}
-	} catch {
-		branch = null;
-	}
+	const branch: string | null = await readGitBranch(workspaceRoot);
 
 	let additions: number = 0;
 	let deletions: number = 0;

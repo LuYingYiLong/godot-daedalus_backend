@@ -94,6 +94,17 @@ test("workspace tool catalog exposes approval reason schema for write tools", ()
 	}
 });
 
+test("image generation tool accepts custom aspect ratios", (): void => {
+	const catalog = createWorkspaceToolCatalog();
+	const imageGenerate = catalog.getDefinitionsForNames(["mcp_image_generate"])[0];
+	const properties = getFunctionToolProperties(imageGenerate!);
+	const aspectRatio = properties.aspectRatio as Record<string, unknown> | undefined;
+
+	assert.equal(aspectRatio?.type, "string");
+	assert.equal("enum" in (aspectRatio ?? {}), false);
+	assert.match(String(aspectRatio?.description ?? ""), /2:1/u);
+});
+
 test("workspace runtime filter hides Godot tools without an active workspace", (): void => {
 	const names: string[] = filterToolNamesForWorkspace([
 		"mcp_skills_load",

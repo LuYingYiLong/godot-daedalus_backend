@@ -18,7 +18,8 @@ const BACKEND_ONLY_OR_STUDIO_RPC_METHODS: Set<string> = new Set([
 	"skill.install",
 	"webSearchSettings.get",
 	"webSearchSettings.update",
-	"workspace.delete"
+	"workspace.delete",
+	"workspace.git.diff.get"
 ]);
 
 function unique(values: string[]): string[] {
@@ -104,6 +105,17 @@ test("workspace.delete accepts workspace id", (): void => {
 		type: "request",
 		id: "workspace-delete",
 		method: "workspace.delete",
+		params: {
+			workspaceId: "workspace-a"
+		}
+	}).success, true);
+});
+
+test("workspace.git.diff.get accepts workspace id", (): void => {
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "workspace-git-diff",
+		method: "workspace.git.diff.get",
 		params: {
 			workspaceId: "workspace-a"
 		}

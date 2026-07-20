@@ -4,7 +4,7 @@ export const TOOL_POLICIES: Record<string, ToolPolicy> = {
 	"mcp_skills_load": { risk: "read" },
 	"mcp_skills_propose_create": { risk: "propose" },
 	"mcp_skills_create": { risk: "write" },
-	"mcp_image_generate": { risk: "write" },
+	"mcp_image_generate": { risk: "verify" },
 	"mcp_web_search": { risk: "read" },
 	"mcp_workspace_list_files": { risk: "read" },
 	"mcp_workspace_read_text_file": { risk: "read" },

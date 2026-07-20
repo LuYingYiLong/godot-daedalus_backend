@@ -29,9 +29,20 @@ test("manual mode requests approval for write risks", (): void => {
 	assert.equal(evaluateToolCall("manual", readTool, {}).action, "allow");
 	assert.equal(evaluateToolCall("manual", verifyTool, {}).action, "allow");
 	assert.equal(evaluateToolCall("manual", proposeTool, {}).action, "allow");
+	assert.equal(evaluateToolCall("manual", "mcp_image_generate", {}).action, "allow");
 	assert.equal(evaluateToolCall("manual", writeTool, {}).action, "request_approval");
 	assert.equal(evaluateToolCall("manual", dynamicMcpTool, {}).action, "request_approval");
 	assert.equal(evaluateToolCall("manual", destructiveTool, {}).action, "request_approval");
+});
+
+test("manual mode approval reason is Studio-neutral", (): void => {
+	const decision = evaluateToolCall("manual", writeTool, {});
+
+	assert.equal(decision.action, "request_approval");
+	if (decision.action === "request_approval") {
+		assert.match(decision.reason, /Studio/u);
+		assert.doesNotMatch(decision.reason, /Godot/u);
+	}
 });
 
 test("terminal write preset uses actual preset risk at approval boundary", (): void => {

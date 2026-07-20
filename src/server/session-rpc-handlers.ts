@@ -174,6 +174,7 @@ import { bindConnectionToSessionRuntime, getClientConnection, getSessionRuntime,
 import { createSessionBrowserSnapshot } from "./session-browser-snapshot.js";
 import { logger } from "../logger.js";
 import { getApprovalMode } from "../approval-settings-store.js";
+import { resolveSessionCreateWorkspaceId } from "./session-create-workspace.js";
 
 function restoreWorkspaceFromSessionMetadata(metadata: SessionMetadata): WorkspaceConfig | undefined {
 	if (metadata.workspaceId === undefined || metadata.workspaceRoot === undefined) {
@@ -510,10 +511,13 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 
 		case "session.create": {
 			const requestedWorkspaceId: string | null | undefined = request.params.workspaceId;
-			let workspaceId: string | undefined = requestedWorkspaceId === null
-				? undefined
-				: requestedWorkspaceId ?? session.activeWorkspace?.id;
 			const clientConnection = getClientConnection(socket);
+			const shouldUseConnectionWorkspace: boolean = clientConnection?.clientType === "godot_plugin";
+			let workspaceId: string | undefined = resolveSessionCreateWorkspaceId({
+				requestedWorkspaceId,
+				clientType: clientConnection?.clientType,
+				activeWorkspaceId: session.activeWorkspace?.id
+			});
 			if (
 				clientConnection?.clientType === "godot_plugin"
 				&& session.activeWorkspace !== undefined
@@ -599,6 +603,14 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 					session.godotExecutablePath = workspace.godotExecutablePath;
 				}
 			} else if (requestedWorkspaceId === null) {
+				session.activeWorkspace = undefined;
+				session.godotProjectPath = undefined;
+				session.godotExecutablePath = undefined;
+				updateClientConnection(socket, {
+					workspaceId: null,
+					workspaceRoot: null
+				});
+			} else if (workspace === undefined && !shouldUseConnectionWorkspace) {
 				session.activeWorkspace = undefined;
 				session.godotProjectPath = undefined;
 				session.godotExecutablePath = undefined;

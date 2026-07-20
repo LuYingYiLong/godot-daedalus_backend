@@ -242,14 +242,14 @@ test("Zhipu image generation uses the configured image model and saves a session
 			const result = await generateImage({
 				sessionId: session.id,
 				prompt: "生成一张蓝色机器人图标",
-				aspectRatio: "16:9"
+				aspectRatio: "2:1"
 			});
 
 			const imageRequest = requests.find((request: RecordedRequest): boolean => request.url === "/images/generations");
 			assert.equal(imageRequest?.authorization, "Bearer zhipu-test-key");
 			assert.deepEqual(imageRequest?.body, {
 				model: "glm-image",
-				prompt: "生成一张蓝色机器人图标",
+				prompt: "生成一张蓝色机器人图标\nTarget aspect ratio: 2:1. If the provider canvas is only approximate, preserve this composition as closely as possible.",
 				size: "1728x960",
 				watermark_enabled: false
 			});

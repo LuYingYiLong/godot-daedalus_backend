@@ -113,7 +113,7 @@ export function evaluateToolCall(
 			return { action: "allow" };
 		}
 
-		return { action: "request_approval", reason: "写操作需要用户在 Godot 客户端确认" };
+		return { action: "request_approval", reason: "此操作会修改文件或外部状态，需要你在 Studio 中确认。" };
 	}
 
 	if (mode === "auto-safe") {
