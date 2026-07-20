@@ -22,6 +22,15 @@ function withSessionId(data: unknown, sessionId: string | undefined): unknown {
 	};
 }
 
+function getDataSessionId(data: unknown): string | undefined {
+	if (typeof data !== "object" || data === null || Array.isArray(data)) {
+		return undefined;
+	}
+
+	const sessionId: unknown = (data as Record<string, unknown>).sessionId;
+	return typeof sessionId === "string" && sessionId.length > 0 ? sessionId : undefined;
+}
+
 export function shouldPersistSessionEvent(eventName: ServerEvent["event"]): boolean {
 	return eventName.startsWith("agent.")
 		|| eventName.startsWith("tool.")
@@ -128,9 +137,11 @@ export function persistSessionEvent(
 	session: ClientSession,
 	eventName: ServerEvent["event"],
 	data: unknown,
-	persistRequestId: string
+	persistRequestId: string,
+	sessionIdOverride?: string | undefined
 ): void {
-	if (!session.sessionId || !shouldPersistSessionEvent(eventName)) {
+	const sessionId: string | undefined = sessionIdOverride ?? getDataSessionId(data) ?? session.sessionId;
+	if (sessionId === undefined || !shouldPersistSessionEvent(eventName)) {
 		return;
 	}
 
@@ -140,10 +151,10 @@ export function persistSessionEvent(
 			return;
 		}
 
-		const key: string = getThinkingEventBufferKey(session.sessionId, persistRequestId);
+		const key: string = getThinkingEventBufferKey(sessionId, persistRequestId);
 		const existingBuffer: ThinkingEventBuffer | undefined = session.aiDeltaEventBuffers.get(key);
 		const buffer: ThinkingEventBuffer = existingBuffer ?? {
-			sessionId: session.sessionId,
+			sessionId,
 			requestId: persistRequestId,
 			text: ""
 		};
@@ -156,7 +167,7 @@ export function persistSessionEvent(
 		return;
 	}
 
-	const aiDeltaKey: string = getThinkingEventBufferKey(session.sessionId, persistRequestId);
+	const aiDeltaKey: string = getThinkingEventBufferKey(sessionId, persistRequestId);
 	flushAiDeltaEventBuffer(session, aiDeltaKey);
 
 	if (eventName === "ai.thinking.delta") {
@@ -165,10 +176,10 @@ export function persistSessionEvent(
 			return;
 		}
 
-		const key: string = getThinkingEventBufferKey(session.sessionId, persistRequestId);
+		const key: string = getThinkingEventBufferKey(sessionId, persistRequestId);
 		const existingBuffer: ThinkingEventBuffer | undefined = session.thinkingEventBuffers.get(key);
 		const buffer: ThinkingEventBuffer = existingBuffer ?? {
-			sessionId: session.sessionId,
+			sessionId,
 			requestId: persistRequestId,
 			text: ""
 		};
@@ -182,12 +193,11 @@ export function persistSessionEvent(
 	}
 
 	if (eventName === "ai.thinking.done") {
-		const key: string = getThinkingEventBufferKey(session.sessionId, persistRequestId);
+		const key: string = getThinkingEventBufferKey(sessionId, persistRequestId);
 		flushThinkingEventBuffer(session, key);
 		session.thinkingEventBuffers.delete(key);
 	}
 
-	const sessionId: string = session.sessionId;
 	enqueueSessionEventWrite(session, async (): Promise<void> => {
 		await appendSessionEvent(sessionId, persistRequestId, eventName, data);
 		if (eventName.startsWith("workflow.")) {
@@ -211,9 +221,11 @@ export function sendSessionEvent(
 	session: ClientSession,
 	eventName: ServerEvent["event"],
 	data: unknown,
-	persistRequestId: string = requestId
+	persistRequestId: string = requestId,
+	sessionIdOverride?: string | undefined
 ): void {
-	const eventData: unknown = withSessionId(data, session.sessionId);
+	const sessionId: string | undefined = sessionIdOverride ?? getDataSessionId(data) ?? session.sessionId;
+	const eventData: unknown = withSessionId(data, sessionId);
 	sendJson(socket, {
 		type: "event",
 		id: requestId,
@@ -221,11 +233,11 @@ export function sendSessionEvent(
 		data: eventData
 	});
 
-	if (session.sessionId !== undefined) {
-		broadcastSessionEvent(socket, session.sessionId, requestId, eventName, eventData);
+	if (sessionId !== undefined) {
+		broadcastSessionEvent(socket, sessionId, requestId, eventName, eventData);
 	}
 
-	persistSessionEvent(session, eventName, eventData, persistRequestId);
+	persistSessionEvent(session, eventName, eventData, persistRequestId, sessionId);
 }
 
 export function sendGlobalEvent(socket: WebSocket, requestId: string, eventName: ServerEvent["event"], data: unknown): void {

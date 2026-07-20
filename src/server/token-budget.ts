@@ -5,7 +5,7 @@ import { type TokenCounter } from "../tokens/token-counter.js";
 import { createTokenCounter } from "../tokens/token-counter-factory.js";
 import { computeInputBudget, selectMessagesWithinBudget } from "../session/session-compressor.js";
 import type { SessionSummary } from "../session/session-store.js";
-import { createWorkspaceMetadataSnapshot, openSession, saveSession, type StoredMessage } from "../session/session-store.js";
+import { createWorkspaceMetadataSnapshot, openSession, updateSessionTranscript, type StoredMessage } from "../session/session-store.js";
 import { estimateProviderMessagesTokens, estimateProviderTextTokens } from "../providers/provider-token-estimator.js";
 import {
 	createCurrentUserMessage,
@@ -145,43 +145,44 @@ export async function appendChatTurnToSession(
 		return false;
 	}
 
-	const clonedAdditionalContext: AdditionalContextItem[] | undefined = cloneAdditionalContextItems(additionalContext);
 	const sessionId: string = session.sessionId;
-	const storedMessages: StoredMessage[] = (await openSession(sessionId)).messages;
-	const nextMessages: ChatMessage[] = storedMessages.map((message: StoredMessage): ChatMessage => ({ ...message }));
-	const existingUserIndex: number = nextMessages.findIndex((message: ChatMessage): boolean => message.requestId === requestId && message.role === "user");
-	const existingAssistantIndex: number = nextMessages.findIndex((message: ChatMessage): boolean => message.requestId === requestId && message.role === "assistant");
-	let changed: boolean = false;
+	return updateSessionTranscript(sessionId, (stored): { messages: ChatMessage[]; metadata: ReturnType<typeof createWorkspaceMetadataSnapshot>; result: boolean } => {
+		const clonedAdditionalContext: AdditionalContextItem[] | undefined = cloneAdditionalContextItems(additionalContext);
+		const nextMessages: ChatMessage[] = stored.messages.map((message: StoredMessage): ChatMessage => ({ ...message }));
+		const existingUserIndex: number = nextMessages.findIndex((message: ChatMessage): boolean => message.requestId === requestId && message.role === "user");
+		const existingAssistantIndex: number = nextMessages.findIndex((message: ChatMessage): boolean => message.requestId === requestId && message.role === "assistant");
+		let changed: boolean = false;
 
-	if (existingUserIndex < 0) {
-		const userChatMessage: ChatMessage = { role: "user", content: userMessage, requestId, createdAt: userCreatedAt };
-		if (clonedAdditionalContext !== undefined) {
-			userChatMessage.additionalContext = clonedAdditionalContext;
+		if (existingUserIndex < 0) {
+			const userChatMessage: ChatMessage = { role: "user", content: userMessage, requestId, createdAt: userCreatedAt };
+			if (clonedAdditionalContext !== undefined) {
+				userChatMessage.additionalContext = clonedAdditionalContext;
+			}
+			nextMessages.push(userChatMessage);
+			changed = true;
+		} else if (clonedAdditionalContext !== undefined && nextMessages[existingUserIndex]?.additionalContext === undefined) {
+			nextMessages[existingUserIndex] = {
+				...nextMessages[existingUserIndex]!,
+				additionalContext: clonedAdditionalContext
+			};
+			changed = true;
 		}
-		nextMessages.push(userChatMessage);
-		changed = true;
-	} else if (clonedAdditionalContext !== undefined && nextMessages[existingUserIndex]?.additionalContext === undefined) {
-		nextMessages[existingUserIndex] = {
-			...nextMessages[existingUserIndex]!,
-			additionalContext: clonedAdditionalContext
+
+		if (existingAssistantIndex < 0) {
+			nextMessages.push({ role: "assistant", content: assistantMessage, requestId, createdAt: assistantCreatedAt });
+			changed = true;
+		}
+
+		if (changed) {
+			session.messages = nextMessages;
+		}
+
+		return {
+			messages: nextMessages,
+			metadata: createWorkspaceMetadataSnapshot(session.activeWorkspace),
+			result: changed
 		};
-		changed = true;
-	}
-
-	if (existingAssistantIndex < 0) {
-		nextMessages.push({ role: "assistant", content: assistantMessage, requestId, createdAt: assistantCreatedAt });
-		changed = true;
-	}
-
-	if (!changed) {
-		return false;
-	}
-
-	session.messages = nextMessages;
-	await saveSession(sessionId, session.messages, {
-		...createWorkspaceMetadataSnapshot(session.activeWorkspace)
 	});
-	return true;
 }
 
 export async function appendUserMessageToSession(
@@ -195,24 +196,31 @@ export async function appendUserMessageToSession(
 		return false;
 	}
 	const sessionId: string = session.sessionId;
-	const storedMessages: StoredMessage[] = (await openSession(sessionId)).messages;
-	const nextMessages: ChatMessage[] = storedMessages.map((message: StoredMessage): ChatMessage => ({ ...message }));
-	if (nextMessages.some((message: ChatMessage): boolean => message.requestId === requestId && message.role === "user")) {
-		session.messages = nextMessages;
-		return false;
-	}
+	return updateSessionTranscript(sessionId, (stored): { messages: ChatMessage[]; metadata: ReturnType<typeof createWorkspaceMetadataSnapshot>; result: boolean } => {
+		const nextMessages: ChatMessage[] = stored.messages.map((message: StoredMessage): ChatMessage => ({ ...message }));
+		if (nextMessages.some((message: ChatMessage): boolean => message.requestId === requestId && message.role === "user")) {
+			session.messages = nextMessages;
+			return {
+				messages: nextMessages,
+				metadata: createWorkspaceMetadataSnapshot(session.activeWorkspace),
+				result: false
+			};
+		}
 
-	const userChatMessage: ChatMessage = { role: "user", content: userMessage, requestId, createdAt: userCreatedAt };
-	const clonedAdditionalContext: AdditionalContextItem[] | undefined = cloneAdditionalContextItems(additionalContext);
-	if (clonedAdditionalContext !== undefined) {
-		userChatMessage.additionalContext = clonedAdditionalContext;
-	}
+		const userChatMessage: ChatMessage = { role: "user", content: userMessage, requestId, createdAt: userCreatedAt };
+		const clonedAdditionalContext: AdditionalContextItem[] | undefined = cloneAdditionalContextItems(additionalContext);
+		if (clonedAdditionalContext !== undefined) {
+			userChatMessage.additionalContext = clonedAdditionalContext;
+		}
 
-	session.messages = [...nextMessages, userChatMessage];
-	await saveSession(sessionId, session.messages, {
-		...createWorkspaceMetadataSnapshot(session.activeWorkspace)
+		const messages: ChatMessage[] = [...nextMessages, userChatMessage];
+		session.messages = messages;
+		return {
+			messages,
+			metadata: createWorkspaceMetadataSnapshot(session.activeWorkspace),
+			result: true
+		};
 	});
-	return true;
 }
 
 export async function selectHistoryForModel(session: ClientSession, budgetTokens: number, excludeRequestId?: string | undefined): Promise<ChatMessage[]> {

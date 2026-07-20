@@ -104,10 +104,35 @@ type TimelineCacheEntry = {
 };
 
 const timelineCacheBySessionId: Map<string, TimelineCacheEntry> = new Map();
+const transcriptWriteQueuesBySessionId: Map<string, Promise<void>> = new Map();
 
 type RewindableEvent = {
 	requestId: string;
 	createdAt: string;
+};
+
+type StoredEventFileKind = "messages" | "events" | "approval-events" | "workflow-events" | "agent-events";
+
+export type SessionIntegrityIssue = {
+	file: StoredEventFileKind;
+	line: number;
+	expectedSessionId: string;
+	actualSessionId: string;
+	requestId?: string | undefined;
+	event?: string | undefined;
+};
+
+export type SessionIntegrityCheckResult = {
+	sessionId: string;
+	ok: boolean;
+	issues: SessionIntegrityIssue[];
+	checkedFiles: StoredEventFileKind[];
+};
+
+type TranscriptUpdate<T> = {
+	messages: ChatMessage[];
+	metadata?: Partial<SessionMetadata> | undefined;
+	result: T;
 };
 
 export type SessionSummary = {
@@ -127,6 +152,29 @@ function assertSafeSessionId(sessionId: string): string {
 
 export function getSessionDir(sessionId: string): string {
 	return join(SESSIONS_DIR, assertSafeSessionId(sessionId));
+}
+
+function invalidateTimelineCache(sessionId: string): void {
+	timelineCacheBySessionId.delete(assertSafeSessionId(sessionId));
+}
+
+async function enqueueTranscriptWrite<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
+	const safeSessionId: string = assertSafeSessionId(sessionId);
+	const previousWrite: Promise<void> = transcriptWriteQueuesBySessionId.get(safeSessionId) ?? Promise.resolve();
+	const nextWrite: Promise<T> = previousWrite.then(operation, operation);
+	const queuedWrite: Promise<void> = nextWrite.then(
+		(): void => undefined,
+		(): void => undefined
+	);
+	transcriptWriteQueuesBySessionId.set(safeSessionId, queuedWrite);
+
+	try {
+		return await nextWrite;
+	} finally {
+		if (transcriptWriteQueuesBySessionId.get(safeSessionId) === queuedWrite) {
+			transcriptWriteQueuesBySessionId.delete(safeSessionId);
+		}
+	}
 }
 
 function getArchivedSessionDir(sessionId: string): string {
@@ -314,7 +362,10 @@ async function createTimelineCacheKey(sessionId: string): Promise<string> {
 	const paths: string[] = [
 		metaPath(sessionId),
 		messagesPath(sessionId),
-		eventsPath(sessionId)
+		eventsPath(sessionId),
+		approvalEventsPath(sessionId),
+		workflowEventsPath(sessionId),
+		agentEventsPath(sessionId)
 	];
 	const parts: string[] = [];
 	for (const filePath of paths) {
@@ -429,11 +480,10 @@ export async function openSessionTimelinePageAfter(sessionId: string, afterOffse
 	return createTimelinePageFromStoredSession(stored, blockOffset, limit);
 }
 
-export async function saveSession(sessionId: string, messages: ChatMessage[], metadata?: Partial<SessionMetadata>): Promise<void> {
+async function writeSessionMessagesAndMetadata(sessionId: string, existing: StoredSession, messages: ChatMessage[], metadata?: Partial<SessionMetadata>): Promise<void> {
 	const metaFile: string = metaPath(sessionId);
 	const msgFile: string = messagesPath(sessionId);
 
-	const existing: StoredSession = await openSession(sessionId);
 	const updated: SessionMetadata = mergeSessionMetadata(existing.metadata, metadata);
 	await writeJsonFileAtomic(metaFile, updated);
 
@@ -445,6 +495,27 @@ export async function saveSession(sessionId: string, messages: ChatMessage[], me
 	}
 
 	await writeFile(msgFile, lines.join(""), "utf8");
+	invalidateTimelineCache(sessionId);
+}
+
+export async function updateSessionTranscript<T>(
+	sessionId: string,
+	updater: (stored: StoredSession) => Promise<TranscriptUpdate<T>> | TranscriptUpdate<T>
+): Promise<T> {
+	return enqueueTranscriptWrite(sessionId, async (): Promise<T> => {
+		const stored: StoredSession = await openSession(sessionId);
+		const update: TranscriptUpdate<T> = await updater(stored);
+		await writeSessionMessagesAndMetadata(sessionId, stored, update.messages, update.metadata);
+		return update.result;
+	});
+}
+
+export async function saveSession(sessionId: string, messages: ChatMessage[], metadata?: Partial<SessionMetadata>): Promise<void> {
+	await updateSessionTranscript(sessionId, (): TranscriptUpdate<void> => ({
+		messages,
+		metadata,
+		result: undefined
+	}));
 }
 
 export async function updateSessionMetadata(sessionId: string, metadata: Partial<SessionMetadata>): Promise<SessionMetadata> {
@@ -452,81 +523,85 @@ export async function updateSessionMetadata(sessionId: string, metadata: Partial
 	const existing: StoredSession = await openSession(sessionId);
 	const updated: SessionMetadata = mergeSessionMetadata(existing.metadata, metadata);
 	await writeJsonFileAtomic(metaFile, updated);
+	invalidateTimelineCache(sessionId);
 	return updated;
 }
 
 export async function rewindSessionFromRequest(sessionId: string, requestId: string): Promise<StoredMessage[]> {
-	const stored: StoredSession = await openSession(sessionId);
-	const startIndex: number = stored.messages.findIndex((message: StoredMessage): boolean => message.requestId === requestId);
-	if (startIndex < 0) {
-		return stored.messages;
-	}
+	return enqueueTranscriptWrite(sessionId, async (): Promise<StoredMessage[]> => {
+		const stored: StoredSession = await openSession(sessionId);
+		const startIndex: number = stored.messages.findIndex((message: StoredMessage): boolean => message.requestId === requestId);
+		if (startIndex < 0) {
+			return stored.messages;
+		}
 
-	const keptMessages: StoredMessage[] = stored.messages.slice(0, startIndex);
-	const removedRequestIds: Set<string> = new Set(
-		stored.messages
-			.slice(startIndex)
-			.map((message: StoredMessage): string | undefined => message.requestId)
-			.filter((value: string | undefined): value is string => value !== undefined && value.length > 0)
-	);
-	const rewindBoundaryCreatedAt: string = findRewindBoundaryCreatedAt(stored.events, removedRequestIds)
-		?? stored.messages[startIndex]?.createdAt
-		?? "";
-	const keptEvents: StoredSessionEvent[] = stored.events.filter((event: StoredSessionEvent): boolean => shouldKeepEventAfterRewind(event, removedRequestIds, rewindBoundaryCreatedAt));
-	const updatedMetadata: SessionMetadata = {
-		...stored.metadata,
-		updatedAt: new Date().toISOString()
-	};
+		const keptMessages: StoredMessage[] = stored.messages.slice(0, startIndex);
+		const removedRequestIds: Set<string> = new Set(
+			stored.messages
+				.slice(startIndex)
+				.map((message: StoredMessage): string | undefined => message.requestId)
+				.filter((value: string | undefined): value is string => value !== undefined && value.length > 0)
+		);
+		const rewindBoundaryCreatedAt: string = findRewindBoundaryCreatedAt(stored.events, removedRequestIds)
+			?? stored.messages[startIndex]?.createdAt
+			?? "";
+		const keptEvents: StoredSessionEvent[] = stored.events.filter((event: StoredSessionEvent): boolean => shouldKeepEventAfterRewind(event, removedRequestIds, rewindBoundaryCreatedAt));
+		const updatedMetadata: SessionMetadata = {
+			...stored.metadata,
+			updatedAt: new Date().toISOString()
+		};
 
-	await writeFile(metaPath(sessionId), JSON.stringify(updatedMetadata, null, 2), "utf8");
-	await writeFile(
-		messagesPath(sessionId),
-		keptMessages.map((message: StoredMessage): string => JSON.stringify(message) + "\n").join(""),
-		"utf8"
-	);
-	await writeFile(
-		eventsPath(sessionId),
-		keptEvents.map((event: StoredSessionEvent): string => JSON.stringify(event) + "\n").join(""),
-		"utf8"
-	);
-	try {
-		const rawApprovalEvents: string = await readFile(approvalEventsPath(sessionId), "utf8");
-		const keptApprovalEvents: StoredApprovalEvent[] = parseJsonLines<StoredApprovalEvent>(rawApprovalEvents)
-			.filter((event: StoredApprovalEvent): boolean => shouldKeepEventAfterRewind(event, removedRequestIds, rewindBoundaryCreatedAt));
+		await writeFile(metaPath(sessionId), JSON.stringify(updatedMetadata, null, 2), "utf8");
 		await writeFile(
-			approvalEventsPath(sessionId),
-			keptApprovalEvents.map((event: StoredApprovalEvent): string => JSON.stringify(event) + "\n").join(""),
+			messagesPath(sessionId),
+			keptMessages.map((message: StoredMessage): string => JSON.stringify(message) + "\n").join(""),
 			"utf8"
 		);
-	} catch {
-		// Older sessions may not have approval persistence yet.
-	}
-	try {
-		const rawWorkflowEvents: string = await readFile(workflowEventsPath(sessionId), "utf8");
-		const keptWorkflowEvents: StoredWorkflowEvent[] = parseJsonLines<StoredWorkflowEvent>(rawWorkflowEvents)
-			.filter((event: StoredWorkflowEvent): boolean => shouldKeepEventAfterRewind(event, removedRequestIds, rewindBoundaryCreatedAt));
 		await writeFile(
-			workflowEventsPath(sessionId),
-			keptWorkflowEvents.map((event: StoredWorkflowEvent): string => JSON.stringify(event) + "\n").join(""),
+			eventsPath(sessionId),
+			keptEvents.map((event: StoredSessionEvent): string => JSON.stringify(event) + "\n").join(""),
 			"utf8"
 		);
-	} catch {
-		// Older sessions may not have workflow persistence yet.
-	}
-	try {
-		const rawAgentEvents: string = await readFile(agentEventsPath(sessionId), "utf8");
-		const keptAgentEvents: StoredAgentEvent[] = parseJsonLines<StoredAgentEvent>(rawAgentEvents)
-			.filter((event: StoredAgentEvent): boolean => shouldKeepEventAfterRewind(event, removedRequestIds, rewindBoundaryCreatedAt));
-		await writeFile(
-			agentEventsPath(sessionId),
-			keptAgentEvents.map((event: StoredAgentEvent): string => JSON.stringify(event) + "\n").join(""),
-			"utf8"
-		);
-	} catch {
-		// Older sessions may not have agent persistence yet.
-	}
+		try {
+			const rawApprovalEvents: string = await readFile(approvalEventsPath(sessionId), "utf8");
+			const keptApprovalEvents: StoredApprovalEvent[] = parseJsonLines<StoredApprovalEvent>(rawApprovalEvents)
+				.filter((event: StoredApprovalEvent): boolean => shouldKeepEventAfterRewind(event, removedRequestIds, rewindBoundaryCreatedAt));
+			await writeFile(
+				approvalEventsPath(sessionId),
+				keptApprovalEvents.map((event: StoredApprovalEvent): string => JSON.stringify(event) + "\n").join(""),
+				"utf8"
+			);
+		} catch {
+			// Older sessions may not have approval persistence yet.
+		}
+		try {
+			const rawWorkflowEvents: string = await readFile(workflowEventsPath(sessionId), "utf8");
+			const keptWorkflowEvents: StoredWorkflowEvent[] = parseJsonLines<StoredWorkflowEvent>(rawWorkflowEvents)
+				.filter((event: StoredWorkflowEvent): boolean => shouldKeepEventAfterRewind(event, removedRequestIds, rewindBoundaryCreatedAt));
+			await writeFile(
+				workflowEventsPath(sessionId),
+				keptWorkflowEvents.map((event: StoredWorkflowEvent): string => JSON.stringify(event) + "\n").join(""),
+				"utf8"
+			);
+		} catch {
+			// Older sessions may not have workflow persistence yet.
+		}
+		try {
+			const rawAgentEvents: string = await readFile(agentEventsPath(sessionId), "utf8");
+			const keptAgentEvents: StoredAgentEvent[] = parseJsonLines<StoredAgentEvent>(rawAgentEvents)
+				.filter((event: StoredAgentEvent): boolean => shouldKeepEventAfterRewind(event, removedRequestIds, rewindBoundaryCreatedAt));
+			await writeFile(
+				agentEventsPath(sessionId),
+				keptAgentEvents.map((event: StoredAgentEvent): string => JSON.stringify(event) + "\n").join(""),
+				"utf8"
+			);
+		} catch {
+			// Older sessions may not have agent persistence yet.
+		}
 
-	return keptMessages;
+		invalidateTimelineCache(sessionId);
+		return keptMessages;
+	});
 }
 
 function findRewindBoundaryCreatedAt(events: RewindableEvent[], removedRequestIds: Set<string>): string | null {
@@ -555,10 +630,13 @@ function shouldKeepEventAfterRewind(event: RewindableEvent, removedRequestIds: S
 }
 
 export async function appendMessage(sessionId: string, message: ChatMessage): Promise<void> {
-	await ensureSessionsDir();
-	const msgFile: string = messagesPath(sessionId);
-	const line: string = JSON.stringify({ ...message, createdAt: message.createdAt ?? new Date().toISOString() }) + "\n";
-	await writeFile(msgFile, line, { encoding: "utf8", flag: "a" });
+	await enqueueTranscriptWrite(sessionId, async (): Promise<void> => {
+		await ensureSessionsDir();
+		const msgFile: string = messagesPath(sessionId);
+		const line: string = JSON.stringify({ ...message, createdAt: message.createdAt ?? new Date().toISOString() }) + "\n";
+		await writeFile(msgFile, line, { encoding: "utf8", flag: "a" });
+		invalidateTimelineCache(sessionId);
+	});
 }
 
 export async function appendSessionEvent(sessionId: string, requestId: string, event: string, data: unknown): Promise<void> {
@@ -574,6 +652,7 @@ export async function appendSessionEvent(sessionId: string, requestId: string, e
 	};
 	const line: string = JSON.stringify(record) + "\n";
 	await writeFile(eventFile, line, { encoding: "utf8", flag: "a" });
+	invalidateTimelineCache(sessionId);
 }
 
 export async function appendApprovalEvent(sessionId: string, approvalId: string, requestId: string, event: string, data: unknown): Promise<void> {
@@ -591,6 +670,7 @@ export async function appendApprovalEvent(sessionId: string, approvalId: string,
 	};
 	const line: string = JSON.stringify(record) + "\n";
 	await writeFile(eventFile, line, { encoding: "utf8", flag: "a" });
+	invalidateTimelineCache(sessionId);
 }
 
 export async function appendWorkflowEvent(sessionId: string, workflowId: string, requestId: string, event: string, data: unknown): Promise<void> {
@@ -608,6 +688,7 @@ export async function appendWorkflowEvent(sessionId: string, workflowId: string,
 	};
 	const line: string = JSON.stringify(record) + "\n";
 	await writeFile(eventFile, line, { encoding: "utf8", flag: "a" });
+	invalidateTimelineCache(sessionId);
 }
 
 export async function appendAgentEvent(sessionId: string, runId: string, requestId: string, event: string, data: unknown): Promise<void> {
@@ -625,6 +706,7 @@ export async function appendAgentEvent(sessionId: string, runId: string, request
 	};
 	const line: string = JSON.stringify(record) + "\n";
 	await writeFile(eventFile, line, { encoding: "utf8", flag: "a" });
+	invalidateTimelineCache(sessionId);
 }
 
 export async function readApprovalEvents(sessionId: string): Promise<StoredApprovalEvent[]> {
@@ -637,12 +719,114 @@ export async function readApprovalEvents(sessionId: string): Promise<StoredAppro
 	}
 }
 
+function getRecordSessionId(value: unknown): string | null {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) {
+		return null;
+	}
+
+	const record = value as Record<string, unknown>;
+	if (typeof record.sessionId === "string") {
+		return record.sessionId;
+	}
+
+	const data: unknown = record.data;
+	if (typeof data !== "object" || data === null || Array.isArray(data)) {
+		return null;
+	}
+
+	const dataRecord = data as Record<string, unknown>;
+	return typeof dataRecord.sessionId === "string" ? dataRecord.sessionId : null;
+}
+
+function getRecordRequestId(value: unknown): string | undefined {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) {
+		return undefined;
+	}
+
+	const requestId: unknown = (value as Record<string, unknown>).requestId;
+	return typeof requestId === "string" ? requestId : undefined;
+}
+
+function getRecordEventName(value: unknown): string | undefined {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) {
+		return undefined;
+	}
+
+	const eventName: unknown = (value as Record<string, unknown>).event;
+	return typeof eventName === "string" ? eventName : undefined;
+}
+
+async function collectSessionIntegrityIssues(sessionId: string, file: StoredEventFileKind, filePath: string): Promise<SessionIntegrityIssue[]> {
+	const issues: SessionIntegrityIssue[] = [];
+	let rawLines: string;
+	try {
+		rawLines = await readFile(filePath, "utf8");
+	} catch {
+		return issues;
+	}
+
+	const lines: string[] = rawLines.split("\n");
+	for (let index: number = 0; index < lines.length; index += 1) {
+		const line: string = lines[index]!.trim();
+		if (line.length === 0) {
+			continue;
+		}
+
+		let record: unknown;
+		try {
+			record = JSON.parse(line);
+		} catch {
+			continue;
+		}
+
+		const actualSessionId: string | null = getRecordSessionId(record);
+		if (actualSessionId === null || actualSessionId === sessionId) {
+			continue;
+		}
+
+		issues.push({
+			file,
+			line: index + 1,
+			expectedSessionId: sessionId,
+			actualSessionId,
+			requestId: getRecordRequestId(record),
+			event: getRecordEventName(record)
+		});
+	}
+
+	return issues;
+}
+
+export async function checkSessionIntegrity(sessionId: string): Promise<SessionIntegrityCheckResult> {
+	const safeSessionId: string = assertSafeSessionId(sessionId);
+	await openSession(safeSessionId);
+	const files: Array<{ kind: StoredEventFileKind; path: string }> = [
+		{ kind: "messages", path: messagesPath(safeSessionId) },
+		{ kind: "events", path: eventsPath(safeSessionId) },
+		{ kind: "approval-events", path: approvalEventsPath(safeSessionId) },
+		{ kind: "workflow-events", path: workflowEventsPath(safeSessionId) },
+		{ kind: "agent-events", path: agentEventsPath(safeSessionId) }
+	];
+	const issues: SessionIntegrityIssue[] = [];
+	for (const file of files) {
+		issues.push(...await collectSessionIntegrityIssues(safeSessionId, file.kind, file.path));
+	}
+
+	return {
+		sessionId: safeSessionId,
+		ok: issues.length === 0,
+		issues,
+		checkedFiles: files.map((file): StoredEventFileKind => file.kind)
+	};
+}
+
 export async function clearSessionEvents(sessionId: string): Promise<void> {
 	await ensureSessionsDir();
 	await writeFile(eventsPath(sessionId), "", "utf8");
 	await writeFile(agentEventsPath(sessionId), "", "utf8").catch((): void => {});
 	await writeFile(workflowEventsPath(sessionId), "", "utf8").catch((): void => {});
 	await writeFile(approvalEventsPath(sessionId), "", "utf8").catch((): void => {});
+	invalidateTimelineCache(sessionId);
 }
 
 export async function listSessions(): Promise<SessionMetadata[]> {

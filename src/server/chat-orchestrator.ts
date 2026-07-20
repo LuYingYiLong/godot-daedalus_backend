@@ -516,7 +516,8 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				break;
 			}
 
-			const sessionRun = beginSessionRun(session.sessionId, request.id);
+			const runSessionId: string | undefined = session.sessionId;
+			const sessionRun = beginSessionRun(runSessionId, request.id);
 			if (session.activeRunRequestId !== undefined || !sessionRun.ok) {
 				const activeRequestId: string = session.activeRunRequestId ?? (sessionRun.ok ? request.id : sessionRun.activeRequestId);
 				logger.warn("ai", "session_busy", {
@@ -769,7 +770,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				}
 				logger.info("ai", "chat_finished", {
 					requestId: request.id,
-					sessionId: session.sessionId,
+					sessionId: runSessionId,
 					workspaceId: session.activeWorkspace?.id,
 					durationMs: Date.now() - runStartedAtMs
 				});
@@ -780,7 +781,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				if (isCancellationError(error, abortController.signal)) {
 					logger.warn("ai", "chat_cancelled", {
 						requestId: request.id,
-						sessionId: session.sessionId,
+						sessionId: runSessionId,
 						workspaceId: session.activeWorkspace?.id,
 						durationMs: Date.now() - runStartedAtMs
 					});
@@ -816,7 +817,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				if (error instanceof ContextTooLargeError) {
 					logger.warn("ai", "context_too_large", {
 						requestId: request.id,
-						sessionId: session.sessionId,
+						sessionId: runSessionId,
 						workspaceId: session.activeWorkspace?.id,
 						message: error.message
 					});
@@ -852,7 +853,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				const providerError = classifyProviderError(error);
 				logger.error("ai", "chat_failed", error, {
 					requestId: request.id,
-					sessionId: session.sessionId,
+					sessionId: runSessionId,
 					workspaceId: session.activeWorkspace?.id,
 					code: providerError.code,
 					durationMs: Date.now() - runStartedAtMs
@@ -894,7 +895,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 					requestId: request.id
 				});
 				emitWorkbenchUpdated(socket, request.id, session);
-				finishSessionRun(session.sessionId, request.id);
+				finishSessionRun(runSessionId, request.id);
 			}
 			break;
 		}

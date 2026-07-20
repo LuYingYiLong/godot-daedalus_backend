@@ -36,6 +36,7 @@ import {
 	readSummary, writeSummary,
 	appendSessionEvent, appendApprovalEvent, appendWorkflowEvent, appendAgentEvent, clearSessionEvents, readApprovalEvents,
 	createWorkspaceMetadataSnapshot,
+	checkSessionIntegrity,
 	updateSessionMetadata,
 	openSessionRecentTimeline, openSessionTimelinePage, openSessionTimelinePageAfter,
 	type SessionChatMode,
@@ -841,6 +842,28 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 					error: {
 						code: "session_timeline_error",
 						message: error instanceof Error ? error.message : "Failed to load session timeline"
+					}
+				});
+			}
+			break;
+		}
+
+		case "session.integrity.check": {
+			try {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: true,
+					result: await checkSessionIntegrity(request.params.sessionId)
+				});
+			} catch (error: unknown) {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: {
+						code: "session_integrity_check_failed",
+						message: error instanceof Error ? error.message : "Failed to check session integrity"
 					}
 				});
 			}

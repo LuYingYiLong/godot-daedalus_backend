@@ -196,6 +196,39 @@ test("session metadata updates do not rewrite persisted messages", async (): Pro
 	});
 });
 
+test("session integrity check reports cross-session event records", async (): Promise<void> => {
+	await withTempAppData(async (store): Promise<void> => {
+		const metadata = await store.createSession("Integrity session");
+		await store.appendSessionEvent(metadata.id, "request-good", "agent.message.delta", {
+			sessionId: metadata.id,
+			text: "good"
+		});
+		await fs.appendFile(
+			path.join(store.getSessionDir(metadata.id), "events.jsonl"),
+			JSON.stringify({
+				id: "event-bad",
+				requestId: "request-bad",
+				event: "agent.message.delta",
+				data: {
+					sessionId: "session-20260720-other",
+					text: "wrong session"
+				},
+				createdAt: "2026-07-20T00:00:00.000Z"
+			}) + "\n",
+			"utf8"
+		);
+
+		const result = await store.checkSessionIntegrity(metadata.id);
+
+		assert.equal(result.ok, false);
+		assert.equal(result.issues.length, 1);
+		assert.equal(result.issues[0]?.file, "events");
+		assert.equal(result.issues[0]?.expectedSessionId, metadata.id);
+		assert.equal(result.issues[0]?.actualSessionId, "session-20260720-other");
+		assert.equal(result.issues[0]?.requestId, "request-bad");
+	});
+});
+
 test("session store deletes active and archived sessions by workspace", async (): Promise<void> => {
 	await withTempAppData(async (store): Promise<void> => {
 		const active = await store.createSession("Active workspace session", "workspace-a");

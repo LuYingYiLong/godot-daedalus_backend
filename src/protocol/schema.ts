@@ -517,6 +517,14 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 	z.object({
 		type: z.literal("request"),
 		id: z.string(),
+		method: z.literal("session.integrity.check"),
+		params: z.object({
+			sessionId: z.string().min(1),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
 		method: z.literal("session.list"),
 		params: z.object({}).optional(),
 	}),

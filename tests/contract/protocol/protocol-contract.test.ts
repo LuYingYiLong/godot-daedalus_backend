@@ -73,6 +73,17 @@ test("session.timeline accepts afterOffset page request", (): void => {
 	}).success, true);
 });
 
+test("session.integrity.check accepts session id", (): void => {
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "session-integrity-check",
+		method: "session.integrity.check",
+		params: {
+			sessionId: "session-test"
+		}
+	}).success, true);
+});
+
 test("workspace.delete accepts workspace id", (): void => {
 	assert.equal(clientRequestSchema.safeParse({
 		type: "request",
