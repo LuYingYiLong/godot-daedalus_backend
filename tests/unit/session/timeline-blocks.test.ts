@@ -645,6 +645,48 @@ test("canonical timeline restores final message done text after earlier workflow
 	assert.equal(markdownParts[1]?.text, "最终总结。");
 });
 
+test("canonical timeline replaces drifted streamed markdown with final message done text", (): void => {
+	const finalText: string = "## 五子棋文件拆分与验证步骤\n\n基于当前井字棋的实现，五子棋应该拆成棋盘逻辑、UI 控制器和场景容器。";
+	const streamedText: string = "## 五子棋文件拆分与验证步骤\n\n基于当前井字棋的实现，五子棋应该拆成棋盘逻辑、UI 控制器和场景容器。## 五子棋文件拆分与验证步骤";
+	const stored: StoredSession = session(
+		[
+			{
+				role: "user",
+				requestId: "request-drifted-final",
+				content: "说明五子棋拆分",
+				createdAt: "2026-07-09T00:05:00.000Z"
+			},
+			{
+				role: "assistant",
+				requestId: "request-drifted-final",
+				content: finalText,
+				createdAt: "2026-07-09T00:05:20.000Z"
+			}
+		],
+		[
+			event("event-tool", "request-drifted-final", "agent.tool.result", "2026-07-09T00:05:04.000Z", {
+				toolCallId: "tool-read",
+				toolName: "mcp_godot_read_text_file"
+			}),
+			event("event-delta", "request-drifted-final", "agent.message.delta", "2026-07-09T00:05:10.000Z", {
+				text: streamedText
+			}),
+			event("event-done", "request-drifted-final", "agent.message.done", "2026-07-09T00:05:20.000Z", {
+				text: finalText
+			})
+		]
+	);
+
+	const result = buildCanonicalTimelineBlocks(stored);
+	const assistant = assistantBlock(result.blocks[1]);
+	const markdownParts = assistant.bodyParts.filter((part) => part.type === "markdown");
+
+	assert.deepEqual(assistant.bodyParts.map((part) => part.type), ["tool", "markdown"]);
+	assert.equal(markdownParts.length, 1);
+	assert.equal(markdownParts[0]?.type, "markdown");
+	assert.equal(markdownParts[0]?.text, finalText);
+});
+
 test("canonical timeline groups tool progress with its tool call", (): void => {
 	const stored: StoredSession = session(
 		[

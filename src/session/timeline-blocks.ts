@@ -266,6 +266,22 @@ function appendFinalMarkdownPart(parts: TimelineBodyPart[], text: string): void 
 		return;
 	}
 
+	let lastMarkdownIndex: number = -1;
+	for (let index: number = parts.length - 1; index >= 0; index -= 1) {
+		if (parts[index]?.type === "markdown") {
+			lastMarkdownIndex = index;
+			break;
+		}
+	}
+
+	if (lastMarkdownIndex >= 0) {
+		const lastMarkdownPart: TimelineBodyPart = parts[lastMarkdownIndex]!;
+		if (lastMarkdownPart.type === "markdown" && shouldReplaceMarkdownWithFinalText(lastMarkdownPart.text, text)) {
+			lastMarkdownPart.text = text;
+			return;
+		}
+	}
+
 	const existingMarkdown: string = parts
 		.filter((part): part is TimelineMarkdownPart => part.type === "markdown")
 		.map((part: TimelineMarkdownPart): string => part.text)
@@ -279,6 +295,23 @@ function appendFinalMarkdownPart(parts: TimelineBodyPart[], text: string): void 
 	}
 
 	appendMarkdownPart(parts, text);
+}
+
+function shouldReplaceMarkdownWithFinalText(existingText: string, finalText: string): boolean {
+	if (existingText.length === 0 || finalText.length === 0) {
+		return false;
+	}
+	if (existingText === finalText || existingText.endsWith(finalText) || existingText.startsWith(finalText) || finalText.startsWith(existingText)) {
+		return true;
+	}
+
+	const compareLength: number = Math.min(existingText.length, finalText.length);
+	let commonPrefixLength: number = 0;
+	while (commonPrefixLength < compareLength && existingText[commonPrefixLength] === finalText[commonPrefixLength]) {
+		commonPrefixLength += 1;
+	}
+
+	return commonPrefixLength >= 80 && commonPrefixLength / Math.max(1, Math.min(existingText.length, finalText.length)) >= 0.35;
 }
 
 function appendThinkingPart(parts: TimelineBodyPart[], text: string, done: boolean): void {
