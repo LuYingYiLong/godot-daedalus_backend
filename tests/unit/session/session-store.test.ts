@@ -171,6 +171,38 @@ test("session store persists frontend session metadata", async (): Promise<void>
 	});
 });
 
+test("session rewind uses event-only retry checkpoints to remove later messages", async (): Promise<void> => {
+	await withTempAppData(async (store): Promise<void> => {
+		const metadata = await store.createSession("Event checkpoint session");
+		await store.appendMessage(metadata.id, {
+			role: "user",
+			content: "keep before checkpoint",
+			requestId: "req-before",
+			createdAt: "2026-07-03T00:00:00.000Z"
+		});
+		await store.appendSessionEvent(metadata.id, "req-checkpoint", "agent.run.cancelled", {
+			requestId: "req-checkpoint"
+		});
+		await store.appendMessage(metadata.id, {
+			role: "user",
+			content: "remove stale retry",
+			requestId: "req-stale",
+			createdAt: "9999-01-01T00:00:00.000Z"
+		});
+		await store.appendSessionEvent(metadata.id, "req-stale", "agent.message.delta", {
+			requestId: "req-stale",
+			text: "stale response"
+		});
+
+		const rewound = await store.rewindSessionFromRequest(metadata.id, "req-checkpoint");
+		assert.deepEqual(rewound.map((message) => message.requestId), ["req-before"]);
+
+		const opened = await store.openSession(metadata.id);
+		assert.deepEqual(opened.messages.map((message) => message.requestId), ["req-before"]);
+		assert.equal(opened.events.some((event) => event.requestId === "req-checkpoint" || event.requestId === "req-stale"), false);
+	});
+});
+
 test("session metadata updates do not rewrite persisted messages", async (): Promise<void> => {
 	await withTempAppData(async (store): Promise<void> => {
 		const metadata = await store.createSession("Metadata only session");
@@ -193,6 +225,45 @@ test("session metadata updates do not rewrite persisted messages", async (): Pro
 		assert.equal(after.metadata.workflowTodoCollapsed, true);
 		assert.equal(after.metadata.model, "MiniMax-M3");
 		assert.deepEqual(after.messages, before.messages);
+	});
+});
+
+test("workspace metadata backfill does not overwrite an existing session workspace", async (): Promise<void> => {
+	await withTempAppData(async (store): Promise<void> => {
+		const originalWorkspace = {
+			id: "workspace-a",
+			name: "Project A",
+			kind: "godot" as const,
+			rootPath: "D:/ProjectA"
+		};
+		const otherWorkspace = {
+			id: "workspace-b",
+			name: "Project B",
+			kind: "godot" as const,
+			rootPath: "D:/ProjectB"
+		};
+		const metadata = await store.createSession("Workspace session", originalWorkspace.id, undefined, originalWorkspace);
+
+		assert.deepEqual(store.createWorkspaceMetadataBackfill(metadata, otherWorkspace), {});
+	});
+});
+
+test("workspace metadata backfill fills only sessions without workspace metadata", async (): Promise<void> => {
+	await withTempAppData(async (store): Promise<void> => {
+		const workspace = {
+			id: "workspace-a",
+			name: "Project A",
+			kind: "godot" as const,
+			rootPath: "D:/ProjectA"
+		};
+		const metadata = await store.createSession("No workspace session");
+
+		assert.deepEqual(store.createWorkspaceMetadataBackfill(metadata, workspace), {
+			workspaceId: "workspace-a",
+			workspaceName: "Project A",
+			workspaceKind: "godot",
+			workspaceRoot: "D:/ProjectA"
+		});
 	});
 });
 

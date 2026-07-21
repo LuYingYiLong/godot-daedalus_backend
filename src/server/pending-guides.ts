@@ -66,6 +66,33 @@ export function hydratePendingGuides(events: StoredSessionEvent[]): PendingGuide
 			continue;
 		}
 
+		if (event.event === "guide.reordered") {
+			const guideIds: string[] = Array.isArray(data.guideIds)
+				? data.guideIds.filter((value: unknown): value is string => typeof value === "string" && value.length > 0)
+				: [];
+			if (guideIds.length > 0) {
+				const existingGuides: PendingGuide[] = [...pendingById.values()];
+				const guidesById: Map<string, PendingGuide> = new Map(existingGuides.map((guide: PendingGuide): [string, PendingGuide] => [guide.id, guide]));
+				const nextPendingById: Map<string, PendingGuide> = new Map();
+				for (const orderedGuideId of guideIds) {
+					const guide: PendingGuide | undefined = guidesById.get(orderedGuideId);
+					if (guide !== undefined) {
+						nextPendingById.set(orderedGuideId, guide);
+					}
+				}
+				for (const guide of existingGuides) {
+					if (!nextPendingById.has(guide.id)) {
+						nextPendingById.set(guide.id, guide);
+					}
+				}
+				pendingById.clear();
+				for (const [orderedGuideId, guide] of nextPendingById.entries()) {
+					pendingById.set(orderedGuideId, guide);
+				}
+			}
+			continue;
+		}
+
 		const guideId: string = String(data.guideId ?? "");
 		if (guideId.length === 0) {
 			continue;
@@ -108,10 +135,38 @@ export function hydratePendingGuides(events: StoredSessionEvent[]): PendingGuide
 	return [...pendingById.values()];
 }
 
+export function reorderPendingGuides(session: ClientSession, guideIds: string[]): { changed: boolean; errorCode?: string; errorMessage?: string } {
+	const existingIds: string[] = session.pendingGuides.map((guide: PendingGuide): string => guide.id);
+	const uniqueIds: string[] = [...new Set(guideIds)];
+	const existingIdSet: Set<string> = new Set(existingIds);
+	const hasSameIds: boolean = uniqueIds.length === existingIds.length
+		&& uniqueIds.every((guideId: string): boolean => existingIdSet.has(guideId));
+	if (!hasSameIds) {
+		return {
+			changed: false,
+			errorCode: "invalid_guide_order",
+			errorMessage: "Guide reorder must include every pending guide exactly once."
+		};
+	}
+	if (existingIds.join("\n") === uniqueIds.join("\n")) {
+		return { changed: false };
+	}
+	const guidesById: Map<string, PendingGuide> = new Map(session.pendingGuides.map((guide: PendingGuide): [string, PendingGuide] => [guide.id, guide]));
+	const now: string = new Date().toISOString();
+	session.pendingGuides = uniqueIds.map((guideId: string): PendingGuide => {
+		const guide: PendingGuide = guidesById.get(guideId) as PendingGuide;
+		return {
+			...guide,
+			updatedAt: now
+		};
+	});
+	return { changed: true };
+}
+
 export async function persistGuideEvent(
 	session: ClientSession,
 	requestId: string,
-	eventName: "guide.added" | "guide.updated" | "guide.deleted",
+	eventName: "guide.added" | "guide.updated" | "guide.deleted" | "guide.reordered",
 	data: Record<string, unknown>
 ): Promise<void> {
 	if (!session.sessionId) {

@@ -5,30 +5,57 @@ import type { ClientSession } from "../client-session.js";
 import { sendJson } from "../send-json.js";
 import { createRuntimeWorkspace, upsertRuntimeWorkspace } from "../../workspace/registry.js";
 import type { WorkspaceConfig } from "../../workspace/types.js";
-import { updateClientConnection } from "../client-connections.js";
+import { getClientConnection, updateClientConnection } from "../client-connections.js";
+import { evaluateWorkspaceSelectionForSession, type WorkspaceSelectionDecision } from "../workspace-selection-guard.js";
 
 export async function handleEnvironmentRequest(socket: WebSocket, request: ClientRequest, session: ClientSession, mcpHost: McpHost): Promise<void> {
 	switch (request.method) {
 	case "environment.configure":
-		if (request.params.godotExecutablePath !== undefined) {
+		const draftSelection: boolean = request.params.sessionId === null;
+		const nextGodotExecutablePath: string | undefined = request.params.godotExecutablePath ?? session.godotExecutablePath;
+		const nextGodotProjectPath: string | undefined = request.params.godotProjectPath ?? session.godotProjectPath;
+		let configuredWorkspace: WorkspaceConfig | undefined;
+
+		if (!draftSelection && request.params.godotExecutablePath !== undefined) {
 			session.godotExecutablePath = request.params.godotExecutablePath;
 		}
 
-		if (request.params.godotProjectPath !== undefined) {
+		if (!draftSelection && request.params.godotProjectPath !== undefined) {
 			session.godotProjectPath = request.params.godotProjectPath;
 		}
 
-		if (session.godotProjectPath) {
+		if (nextGodotProjectPath) {
 			const workspace: WorkspaceConfig = upsertRuntimeWorkspace(createRuntimeWorkspace(
-				session.godotProjectPath,
-				session.godotExecutablePath
+				nextGodotProjectPath,
+				nextGodotExecutablePath
 			));
+			const selectionDecision: WorkspaceSelectionDecision = evaluateWorkspaceSelectionForSession({
+				clientType: getClientConnection(socket)?.clientType,
+				session,
+				workspace,
+				requestedSessionId: request.params.sessionId
+			});
+			if (!selectionDecision.allowed) {
+				sendJson(socket, {
+					type: "response",
+					id: request.id,
+					ok: false,
+					error: {
+						code: selectionDecision.code,
+						message: selectionDecision.message
+					}
+				});
+				break;
+			}
 
 			try {
 				await mcpHost.ensureWorkspace(workspace);
-				session.activeWorkspace = workspace;
-				session.godotProjectPath = workspace.rootPath;
-				session.godotExecutablePath = workspace.godotExecutablePath ?? session.godotExecutablePath;
+				configuredWorkspace = workspace;
+				if (selectionDecision.bindToSession) {
+					session.activeWorkspace = workspace;
+					session.godotProjectPath = workspace.rootPath;
+					session.godotExecutablePath = workspace.godotExecutablePath ?? nextGodotExecutablePath;
+				}
 				updateClientConnection(socket, {
 					workspaceId: workspace.id,
 					workspaceRoot: workspace.rootPath
@@ -53,10 +80,10 @@ export async function handleEnvironmentRequest(socket: WebSocket, request: Clien
 			ok: true,
 			result: {
 				configured: true,
-				godotExecutablePath: session.godotExecutablePath ?? null,
-				godotProjectPath: session.godotProjectPath ?? null,
-				workspaceId: session.activeWorkspace?.id ?? null,
-				workspace: session.activeWorkspace ?? null
+				godotExecutablePath: configuredWorkspace?.godotExecutablePath ?? nextGodotExecutablePath ?? null,
+				godotProjectPath: configuredWorkspace?.rootPath ?? nextGodotProjectPath ?? null,
+				workspaceId: configuredWorkspace?.id ?? session.activeWorkspace?.id ?? null,
+				workspace: configuredWorkspace ?? session.activeWorkspace ?? null
 			}
 		});
 		break;

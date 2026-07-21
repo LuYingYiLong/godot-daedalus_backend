@@ -125,10 +125,20 @@ export const aiChatParamsSchema = z.object({
 		stream: z.boolean().optional(),
 		toolBudget: z.enum(["simple", "normal", "codegen", "project_edit"]).optional(),
 		workflow: z.enum(["auto", "single", "multi_phase", "llm_planned"]).optional(),
+		queueItemId: z.number().int().positive().optional(),
 	}).optional()
 });
 
 const guideTextSchema = z.string().min(1).max(4000);
+const queuedMessageSnapshotSchema = z.object({
+	text: z.string().min(1).max(20000),
+	mode: z.enum(["agent", "ask", "plan"]).optional(),
+	provider: providerIdSchema.optional(),
+	model: z.string().min(1).optional(),
+	skillRefs: z.array(skillRefSchema).max(4).optional(),
+	webSearchEnabled: z.boolean().optional(),
+	additionalContext: z.array(additionalContextItemSchema).max(32).optional(),
+}).strict();
 const workbenchAdditionalContextActionSchema = z.discriminatedUnion("action", [
 	z.object({
 		action: z.literal("set"),
@@ -713,6 +723,14 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 	z.object({
 		type: z.literal("request"),
 		id: z.string(),
+		method: z.literal("session.guide.reorder"),
+		params: z.object({
+			guideIds: z.array(z.string().min(1)).max(64),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
 		method: z.literal("message.queue.list"),
 		params: z.object({}).optional(),
 	}),
@@ -720,19 +738,14 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		type: z.literal("request"),
 		id: z.string(),
 		method: z.literal("message.queue.add"),
-		params: z.object({
-			text: z.string().min(1).max(20000),
-			additionalContext: z.array(additionalContextItemSchema).max(32).optional(),
-		}),
+		params: queuedMessageSnapshotSchema,
 	}),
 	z.object({
 		type: z.literal("request"),
 		id: z.string(),
 		method: z.literal("message.queue.update"),
-		params: z.object({
+		params: queuedMessageSnapshotSchema.extend({
 			queueId: z.number().int().positive(),
-			text: z.string().min(1).max(20000),
-			additionalContext: z.array(additionalContextItemSchema).max(32).optional(),
 		}),
 	}),
 	z.object({
@@ -750,6 +763,14 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		params: z.object({
 			queueId: z.number().int().positive(),
 			status: z.enum(["pending", "sending", "approval", "failed", "cancelled", "rejected"]),
+		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("message.queue.reorder"),
+		params: z.object({
+			queueIds: z.array(z.number().int().positive()).max(128),
 		}),
 	}),
 	z.object({
@@ -973,6 +994,7 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		params: z.object({
 			godotExecutablePath: z.string().min(1).optional(),
 			godotProjectPath: z.string().min(1).optional(),
+			sessionId: z.string().min(1).nullable().optional(),
 		}),
 	}),
 	z.object({
@@ -1012,6 +1034,7 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		method: z.literal("workspace.select"),
 		params: z.object({
 			workspaceId: z.string().min(1),
+			sessionId: z.string().min(1).nullable().optional(),
 		}),
 	}),
 	z.object({

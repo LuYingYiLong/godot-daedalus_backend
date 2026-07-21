@@ -5,7 +5,7 @@ import { type TokenCounter } from "../tokens/token-counter.js";
 import { createTokenCounter } from "../tokens/token-counter-factory.js";
 import { computeInputBudget, selectMessagesWithinBudget } from "../session/session-compressor.js";
 import type { SessionSummary } from "../session/session-store.js";
-import { createWorkspaceMetadataSnapshot, openSession, updateSessionTranscript, type StoredMessage } from "../session/session-store.js";
+import { createWorkspaceMetadataBackfill, openSession, updateSessionTranscript, type StoredMessage } from "../session/session-store.js";
 import { estimateProviderMessagesTokens, estimateProviderTextTokens } from "../providers/provider-token-estimator.js";
 import {
 	createCurrentUserMessage,
@@ -146,7 +146,7 @@ export async function appendChatTurnToSession(
 	}
 
 	const sessionId: string = session.sessionId;
-	return updateSessionTranscript(sessionId, (stored): { messages: ChatMessage[]; metadata: ReturnType<typeof createWorkspaceMetadataSnapshot>; result: boolean } => {
+	return updateSessionTranscript(sessionId, (stored): { messages: ChatMessage[]; metadata: ReturnType<typeof createWorkspaceMetadataBackfill>; result: boolean } => {
 		const clonedAdditionalContext: AdditionalContextItem[] | undefined = cloneAdditionalContextItems(additionalContext);
 		const nextMessages: ChatMessage[] = stored.messages.map((message: StoredMessage): ChatMessage => ({ ...message }));
 		const existingUserIndex: number = nextMessages.findIndex((message: ChatMessage): boolean => message.requestId === requestId && message.role === "user");
@@ -179,7 +179,7 @@ export async function appendChatTurnToSession(
 
 		return {
 			messages: nextMessages,
-			metadata: createWorkspaceMetadataSnapshot(session.activeWorkspace),
+			metadata: createWorkspaceMetadataBackfill(stored.metadata, session.activeWorkspace),
 			result: changed
 		};
 	});
@@ -196,13 +196,13 @@ export async function appendUserMessageToSession(
 		return false;
 	}
 	const sessionId: string = session.sessionId;
-	return updateSessionTranscript(sessionId, (stored): { messages: ChatMessage[]; metadata: ReturnType<typeof createWorkspaceMetadataSnapshot>; result: boolean } => {
+	return updateSessionTranscript(sessionId, (stored): { messages: ChatMessage[]; metadata: ReturnType<typeof createWorkspaceMetadataBackfill>; result: boolean } => {
 		const nextMessages: ChatMessage[] = stored.messages.map((message: StoredMessage): ChatMessage => ({ ...message }));
 		if (nextMessages.some((message: ChatMessage): boolean => message.requestId === requestId && message.role === "user")) {
 			session.messages = nextMessages;
 			return {
 				messages: nextMessages,
-				metadata: createWorkspaceMetadataSnapshot(session.activeWorkspace),
+				metadata: createWorkspaceMetadataBackfill(stored.metadata, session.activeWorkspace),
 				result: false
 			};
 		}
@@ -217,7 +217,7 @@ export async function appendUserMessageToSession(
 		session.messages = messages;
 		return {
 			messages,
-			metadata: createWorkspaceMetadataSnapshot(session.activeWorkspace),
+			metadata: createWorkspaceMetadataBackfill(stored.metadata, session.activeWorkspace),
 			result: true
 		};
 	});

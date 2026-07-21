@@ -255,6 +255,14 @@ export function createWorkspaceMetadataSnapshot(workspace: WorkspaceConfig | und
 	return metadata;
 }
 
+export function createWorkspaceMetadataBackfill(existing: SessionMetadata, workspace: WorkspaceConfig | undefined): Partial<SessionMetadata> {
+	if (existing.workspaceId !== undefined || existing.workspaceRoot !== undefined) {
+		return {};
+	}
+
+	return createWorkspaceMetadataSnapshot(workspace);
+}
+
 function mergeSessionMetadata(existing: SessionMetadata, metadata?: Partial<SessionMetadata>): SessionMetadata {
 	const updated: SessionMetadata = {
 		...existing,
@@ -531,19 +539,31 @@ export async function rewindSessionFromRequest(sessionId: string, requestId: str
 	return enqueueTranscriptWrite(sessionId, async (): Promise<StoredMessage[]> => {
 		const stored: StoredSession = await openSession(sessionId);
 		const startIndex: number = stored.messages.findIndex((message: StoredMessage): boolean => message.requestId === requestId);
-		if (startIndex < 0) {
+		const eventBoundaryCreatedAt: string | null = findRewindBoundaryCreatedAt(stored.events, new Set([requestId]));
+		if (startIndex < 0 && eventBoundaryCreatedAt === null) {
 			return stored.messages;
 		}
 
-		const keptMessages: StoredMessage[] = stored.messages.slice(0, startIndex);
+		const fallbackBoundaryCreatedAt: string = eventBoundaryCreatedAt ?? "";
+		const keptMessages: StoredMessage[] = startIndex >= 0
+			? stored.messages.slice(0, startIndex)
+			: stored.messages.filter((message: StoredMessage): boolean => {
+				return message.createdAt.length === 0 || message.createdAt < fallbackBoundaryCreatedAt;
+			});
 		const removedRequestIds: Set<string> = new Set(
-			stored.messages
-				.slice(startIndex)
+			[
+				requestId,
+				...stored.messages
+				.slice(startIndex >= 0 ? startIndex : 0)
+				.filter((message: StoredMessage): boolean => {
+					return startIndex >= 0 || message.createdAt >= fallbackBoundaryCreatedAt;
+				})
 				.map((message: StoredMessage): string | undefined => message.requestId)
 				.filter((value: string | undefined): value is string => value !== undefined && value.length > 0)
+			]
 		);
 		const rewindBoundaryCreatedAt: string = findRewindBoundaryCreatedAt(stored.events, removedRequestIds)
-			?? stored.messages[startIndex]?.createdAt
+			?? (startIndex >= 0 ? stored.messages[startIndex]?.createdAt : eventBoundaryCreatedAt)
 			?? "";
 		const keptEvents: StoredSessionEvent[] = stored.events.filter((event: StoredSessionEvent): boolean => shouldKeepEventAfterRewind(event, removedRequestIds, rewindBoundaryCreatedAt));
 		const updatedMetadata: SessionMetadata = {

@@ -282,6 +282,8 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 		}
 		const abortController: AbortController = new AbortController();
 		session.activeAbortControllers.set(request.id, abortController);
+		let continuationRequestId: string = request.id;
+		let queueItemId: number | undefined;
 		try {
 			const apiKey: string | undefined = await ensureProviderConfigured(session);
 			const hydrated = await loadHydratedPendingApprovalStates(session, apiKey);
@@ -336,6 +338,8 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 			if (pendingContinuation === undefined && pendingState?.continuation === undefined) {
 				pendingContinuation = await waitForPendingApprovalContinuationRegistration(session, request.params.approvalId);
 			}
+			continuationRequestId = pendingContinuation?.requestId ?? pendingState?.requestId ?? request.id;
+			queueItemId = pendingContinuation?.params.options?.queueItemId;
 			if (pendingState?.continuation !== undefined && pendingContinuation === undefined) {
 				const message: string = `当前没有可用的 ${getProviderDisplayName(session.activeProvider)} API key，无法恢复审批后的 LLM continuation。请先配置 provider 后重试。`;
 				if (session.sessionId !== undefined) {
@@ -372,7 +376,8 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 			const { fileEditDraft: _fileEditDraft, ...publicApprovalResult } = result;
 			setWorkbenchActiveRun(session, {
 				status: pendingContinuation !== undefined ? "streaming" : "idle",
-				requestId: pendingContinuation?.requestId ?? request.id
+				requestId: pendingContinuation?.requestId ?? request.id,
+				queueItemId
 			});
 			sendJson(socket, {
 				type: "response",
@@ -492,6 +497,9 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 					[approvedToolObservation]
 				);
 				setWorkbenchActiveRun(session, { status: "idle" });
+				const queueHelpers = await import("../chat-orchestrator.js");
+				await queueHelpers.finishQueueItemForRun(socket, pendingContinuation.requestId, session, queueItemId);
+				void queueHelpers.drainMessageQueue(socket, request.id, session, mcpHost);
 				emitWorkbenchUpdated(socket, request.id, session);
 				break;
 			}
@@ -505,15 +513,22 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 				pendingContinuation
 			);
 			setWorkbenchActiveRun(session, { status: "idle" });
+			const queueHelpers = await import("../chat-orchestrator.js");
+			await queueHelpers.finishQueueItemForRun(socket, pendingContinuation.requestId, session, queueItemId);
+			void queueHelpers.drainMessageQueue(socket, request.id, session, mcpHost);
 			emitWorkbenchUpdated(socket, request.id, session);
 		} catch (error: unknown) {
 			if (isCancellationError(error, abortController.signal)) {
 				setWorkbenchActiveRun(session, { status: "idle" });
+				const queueHelpers = await import("../chat-orchestrator.js");
+				await queueHelpers.finishQueueItemForRun(socket, continuationRequestId, session, queueItemId, "cancelled");
 				emitWorkbenchUpdated(socket, request.id, session);
 				sendAgentCancelled(socket, request.id, session);
 				break;
 			}
 			setWorkbenchActiveRun(session, { status: "idle" });
+			const queueHelpers = await import("../chat-orchestrator.js");
+			await queueHelpers.finishQueueItemForRun(socket, continuationRequestId, session, queueItemId, "failed");
 			emitWorkbenchUpdated(socket, request.id, session);
 			if (session.sessionId !== undefined) {
 				await appendApprovalEvent(session.sessionId, request.params.approvalId, request.id, "failed", {
@@ -551,6 +566,9 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 		try {
 			const hydrated = await loadHydratedPendingApprovalStates(session);
 			const pendingState: PendingApprovalState | undefined = findPendingApprovalState(hydrated.states, request.params.approvalId);
+			const pendingContinuation: PendingAiContinuation | undefined = session.pendingAiContinuations.get(request.params.approvalId);
+			const continuationRequestId: string = pendingContinuation?.requestId ?? pendingState?.requestId ?? request.id;
+			const queueItemId: number | undefined = pendingContinuation?.params.options?.queueItemId;
 			const rejected = session.approvalGateway.reject(request.params.approvalId);
 			session.pendingAiContinuations.delete(request.params.approvalId);
 			if (session.sessionId !== undefined) {
@@ -559,6 +577,8 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 				});
 			}
 			setWorkbenchActiveRun(session, { status: "idle" });
+			const queueHelpers = await import("../chat-orchestrator.js");
+			await queueHelpers.finishQueueItemForRun(socket, continuationRequestId, session, queueItemId, "rejected");
 			sendJson(socket, {
 				type: "response",
 				id: request.id,
@@ -573,11 +593,11 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 			emitWorkbenchUpdated(socket, request.id, session);
 			sendSessionEvent(socket, request.id, session, "agent.tool.rejected", {
 				type: "agent.tool.rejected",
-				runId: pendingState?.requestId ?? request.id,
-				stepRunId: pendingState?.requestId ?? request.id,
+				runId: continuationRequestId,
+				stepRunId: continuationRequestId,
 				approvalId: request.params.approvalId,
 				toolName: rejected.llmToolName
-			}, pendingState?.requestId ?? request.id);
+			}, continuationRequestId);
 		} catch (error: unknown) {
 			sendJson(socket, {
 				type: "response",

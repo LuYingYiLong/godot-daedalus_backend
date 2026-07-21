@@ -190,3 +190,27 @@ test("plan approval persists agent mode and streams every execution phase", asyn
 	assert.match(planHandlersSource, /workbench: serializeWorkbench\(session\)/);
 	assert.match(continuationSource, /const streamPhase: boolean = streamFinal/);
 });
+
+test("plan clarification and revision runs are cancellable active runs", async (): Promise<void> => {
+	const planHandlersSource: string = await readFile(new URL("../../../src/server/handlers/plan-handlers.ts", import.meta.url), "utf8");
+
+	assert.match(planHandlersSource, /function beginPlanOperationRun/);
+	assert.match(planHandlersSource, /beginSessionRun\(session\.sessionId, runRequestId\)/);
+	assert.match(planHandlersSource, /session\.activeAbortControllers\.set\(requestId, abortController\)/);
+	assert.match(planHandlersSource, /session\.activeAbortControllers\.set\(runRequestId, abortController\)/);
+	assert.match(planHandlersSource, /registerSessionRunController\(session\.sessionId, runRequestId, abortController\)/);
+	assert.match(planHandlersSource, /setWorkbenchActiveRun\(session, \{\s*status: "streaming",\s*requestId: runRequestId/s);
+	assert.match(planHandlersSource, /sendSessionEvent\(socket, runRequestId, session, "agent\.run\.started"/);
+	assert.match(planHandlersSource, /applyPlanClarification\([\s\S]*activePlanOperation\.abortController\.signal/);
+	assert.match(planHandlersSource, /applyPlanRevision\([\s\S]*activePlanOperation\.abortController\.signal/);
+	assert.match(planHandlersSource, /isCancellationError\(error, failedAbortSignal\)/);
+});
+
+test("plan operation failures are visible as agent run errors", async (): Promise<void> => {
+	const planHandlersSource: string = await readFile(new URL("../../../src/server/handlers/plan-handlers.ts", import.meta.url), "utf8");
+
+	assert.match(planHandlersSource, /sendSessionEvent\(socket, failedRunRequestId, session, "agent\.run\.error"/);
+	assert.match(planHandlersSource, /operationRequestId: request\.id/);
+	assert.match(planHandlersSource, /sendSessionEvent\(socket, request\.id, session, "plan\.error"/);
+	assert.match(planHandlersSource, /requestId: failedRunRequestId \?\? request\.id/);
+});

@@ -35,7 +35,6 @@ import {
 	rewindSessionFromRequest,
 	readSummary, writeSummary,
 	appendSessionEvent, appendApprovalEvent, appendWorkflowEvent, appendAgentEvent, clearSessionEvents, readApprovalEvents,
-	createWorkspaceMetadataSnapshot,
 	checkSessionIntegrity,
 	updateSessionMetadata,
 	openSessionRecentTimeline, openSessionTimelinePage, openSessionTimelinePageAfter,
@@ -111,7 +110,7 @@ import {
 	handleSlashCommand,
 	type SlashCommandResult
 } from "./slash-commands.js";
-import { serializeMessageQueue } from "./message-queue.js";
+import { hydrateMessageQueue, serializeMessageQueue } from "./message-queue.js";
 import { bumpWorkbenchRevision, emitWorkbenchUpdated, serializeWorkbench } from "./workbench.js";
 import { createRuntimeSessionUiMetadata } from "./session-ui-metadata.js";
 import { compressSessionHistory } from "./session-compression.js";
@@ -678,8 +677,9 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 					session.messages = timeline.messages.map(toChatMessage);
 					const storedForGuides: Awaited<ReturnType<typeof openSession>> = await openSession(request.params.sessionId);
 					session.pendingGuides = hydratePendingGuides(storedForGuides.events);
-					session.queuedMessages = [];
-					session.messageQueueNextId = 0;
+					const hydratedQueue = hydrateMessageQueue(storedForGuides.events);
+					session.queuedMessages = hydratedQueue.messages;
+					session.messageQueueNextId = hydratedQueue.nextId;
 					session.workbenchRevision = 0;
 					session.workbenchComposer = {
 						text: "",
@@ -963,7 +963,6 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 			await waitForSessionEventPersistence(session);
 			const sessionUiMetadata: Partial<SessionMetadata> = createSessionUiMetadata(request.params);
 			await updateSessionMetadata(session.sessionId, {
-				...createWorkspaceMetadataSnapshot(session.activeWorkspace),
 				...createRuntimeSessionUiMetadata(session),
 				...sessionUiMetadata,
 			});
@@ -1010,7 +1009,6 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 
 			await waitForSessionEventPersistence(session);
 			await updateSessionMetadata(session.sessionId, {
-				...createWorkspaceMetadataSnapshot(session.activeWorkspace),
 				...createRuntimeSessionUiMetadata(session),
 				provider,
 				model,

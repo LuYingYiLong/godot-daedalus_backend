@@ -121,8 +121,18 @@ import {
 	handleSlashCommand,
 	type SlashCommandResult
 } from "./slash-commands.js";
-import { serializeMessageQueue } from "./message-queue.js";
-import { clearWorkbenchComposer, emitWorkbenchUpdated, serializeWorkbench, setWorkbenchActiveRun, setWorkbenchNextStepHints } from "./workbench.js";
+import {
+	createQueuedChatRequest,
+	emitMessageQueueUpdated,
+	findQueuedMessage,
+	getNextRunnableQueuedMessage,
+	persistMessageQueueEvent,
+	removeQueuedMessage,
+	serializeMessageQueue,
+	serializeQueuedMessage,
+	setQueuedMessageStatus
+} from "./message-queue.js";
+import { bumpWorkbenchRevision, clearWorkbenchComposer, emitWorkbenchUpdated, serializeWorkbench, setWorkbenchActiveRun, setWorkbenchNextStepHints } from "./workbench.js";
 
 import { normalizeChatParamsForMode, resolveAllowedToolsForChatParams } from "./chat-mode.js";
 import { logPromptTrace, logProjectInstructionTrace } from "./prompt-trace.js";
@@ -683,6 +693,125 @@ function cloneToolBudgetPhaseStats(stats: PendingToolBudgetPhaseStats | undefine
 		: { ...stats };
 }
 
+function getQueueItemIdFromParams(params: AiChatParams): number | undefined {
+	return params.options?.queueItemId;
+}
+
+function hasPendingContinuationForRequest(session: ClientSession, requestId: string): boolean {
+	for (const pendingContinuation of session.pendingAiContinuations.values()) {
+		if (pendingContinuation.requestId === requestId) {
+			return true;
+		}
+	}
+	return false;
+}
+
+function hasPendingToolBudgetForRequest(session: ClientSession, requestId: string): boolean {
+	for (const pendingBudget of session.pendingToolBudgets.values()) {
+		if (pendingBudget.requestId === requestId) {
+			return true;
+		}
+	}
+	return false;
+}
+
+async function setQueueStatusForRun(
+	socket: WebSocket,
+	requestId: string,
+	session: ClientSession,
+	queueItemId: number | undefined,
+	status: "sending" | "approval" | "failed" | "cancelled" | "rejected"
+): Promise<void> {
+	if (queueItemId === undefined) {
+		return;
+	}
+	const result = setQueuedMessageStatus(session, queueItemId, status);
+	if (result.item === undefined || !result.changed) {
+		return;
+	}
+	await persistMessageQueueEvent(session, requestId, "message.queue.status", {
+		type: "message.queue.status",
+		queueId: queueItemId,
+		status,
+		updatedAt: result.item.updatedAt
+	});
+	bumpWorkbenchRevision(session);
+	emitMessageQueueUpdated(socket, requestId, session);
+	emitWorkbenchUpdated(socket, requestId, session);
+}
+
+async function removeQueueItemForCompletedRun(
+	socket: WebSocket,
+	requestId: string,
+	session: ClientSession,
+	queueItemId: number | undefined
+): Promise<void> {
+	if (queueItemId === undefined || findQueuedMessage(session, queueItemId) === undefined) {
+		return;
+	}
+	const removed: boolean = removeQueuedMessage(session, queueItemId);
+	if (!removed) {
+		return;
+	}
+	await persistMessageQueueEvent(session, requestId, "message.queue.removed", {
+		type: "message.queue.removed",
+		queueId: queueItemId,
+		removedAt: new Date().toISOString()
+	});
+	bumpWorkbenchRevision(session);
+	emitMessageQueueUpdated(socket, requestId, session);
+	emitWorkbenchUpdated(socket, requestId, session);
+}
+
+export async function finishQueueItemForRun(
+	socket: WebSocket,
+	requestId: string,
+	session: ClientSession,
+	queueItemId: number | undefined,
+	forcedStatus?: "failed" | "cancelled" | "rejected" | undefined
+): Promise<void> {
+	if (queueItemId === undefined || findQueuedMessage(session, queueItemId) === undefined) {
+		return;
+	}
+	if (forcedStatus !== undefined) {
+		await setQueueStatusForRun(socket, requestId, session, queueItemId, forcedStatus);
+		return;
+	}
+	if (hasPendingContinuationForRequest(session, requestId) || hasPendingToolBudgetForRequest(session, requestId)) {
+		await setQueueStatusForRun(socket, requestId, session, queueItemId, "approval");
+		return;
+	}
+	await removeQueueItemForCompletedRun(socket, requestId, session, queueItemId);
+}
+
+function createQueueRunRequestId(queueItemId: number): string {
+	return `queue-${queueItemId}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+export async function drainMessageQueue(socket: WebSocket, requestId: string, session: ClientSession, mcpHost: McpHost): Promise<void> {
+	if (session.messageQueueDrainActive || session.activeRunRequestId !== undefined) {
+		return;
+	}
+	if (session.approvalGateway.listPending().length > 0 || session.pendingToolBudgets.size > 0) {
+		return;
+	}
+
+	session.messageQueueDrainActive = true;
+	try {
+		while (session.activeRunRequestId === undefined && session.approvalGateway.listPending().length === 0 && session.pendingToolBudgets.size === 0) {
+			const nextMessage = getNextRunnableQueuedMessage(session);
+			if (nextMessage === undefined) {
+				return;
+			}
+			const queueRequestId: string = createQueueRunRequestId(nextMessage.id);
+			await setQueueStatusForRun(socket, requestId, session, nextMessage.id, "sending");
+			await handleChatRequest(socket, createQueuedChatRequest(nextMessage, queueRequestId), session, mcpHost);
+		}
+	} finally {
+		session.messageQueueDrainActive = false;
+	}
+}
+
 async function handleToolBudgetDecision(
 	socket: WebSocket,
 	responseId: string,
@@ -722,12 +851,15 @@ async function handleToolBudgetDecision(
 	const abortController: AbortController = new AbortController();
 	const runId: string = pending.continuation.workflowState?.plan.id ?? pending.requestId;
 	const stepRunId: string = pending.continuation.workflowState?.activePhaseRunId ?? pending.requestId;
+	const queueItemId: number | undefined = getQueueItemIdFromParams(pending.continuation.params);
+	let shouldDrainQueueAfterRun: boolean = false;
 	session.activeAbortControllers.set(responseId, abortController);
 	session.activeAbortControllers.set(pending.requestId, abortController);
 	session.activeRunRequestId = pending.requestId;
 	setWorkbenchActiveRun(session, {
 		status: "streaming",
-		requestId: pending.requestId
+		requestId: pending.requestId,
+		queueItemId
 	});
 	emitWorkbenchUpdated(socket, responseId, session);
 
@@ -850,6 +982,8 @@ async function handleToolBudgetDecision(
 		}
 
 		setWorkbenchActiveRun(session, { status: "idle" });
+		await finishQueueItemForRun(socket, pending.requestId, session, queueItemId);
+		shouldDrainQueueAfterRun = findQueuedMessage(session, queueItemId ?? 0) === undefined;
 		emitWorkbenchUpdated(socket, responseId, session);
 		sendJson(socket, {
 			type: "response",
@@ -865,6 +999,7 @@ async function handleToolBudgetDecision(
 	} catch (error: unknown) {
 		if (isCancellationError(error, abortController.signal)) {
 			setWorkbenchActiveRun(session, { status: "idle" });
+			await finishQueueItemForRun(socket, pending.requestId, session, queueItemId, "cancelled");
 			emitWorkbenchUpdated(socket, responseId, session);
 			sendAgentCancelled(socket, pending.requestId, session);
 			sendJson(socket, {
@@ -880,6 +1015,7 @@ async function handleToolBudgetDecision(
 			return;
 		}
 		setWorkbenchActiveRun(session, { status: "idle" });
+		await finishQueueItemForRun(socket, pending.requestId, session, queueItemId, "failed");
 		emitWorkbenchUpdated(socket, responseId, session);
 		const toolBudgetErrorStatus = classifyProviderError(error);
 		sendSessionEvent(socket, responseId, session, "agent.run.error", {
@@ -903,6 +1039,9 @@ async function handleToolBudgetDecision(
 			session.activeRunRequestId = undefined;
 		}
 		finishSessionRun(session.sessionId, pending.requestId);
+		if (shouldDrainQueueAfterRun) {
+			void drainMessageQueue(socket, responseId, session, mcpHost);
+		}
 	}
 }
 
@@ -1012,6 +1151,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				mode: rawParams.mode ?? session.workbenchComposer.chatMode,
 				additionalContext: rawParams.additionalContext ?? session.workbenchComposer.additionalContext
 			});
+			const queueItemId: number | undefined = getQueueItemIdFromParams(params);
 			const modelSnapshotChanged: boolean = applyChatRequestModelSnapshot(session, params);
 			if (modelSnapshotChanged && session.sessionId !== undefined) {
 				await updateSessionMetadata(session.sessionId, createRuntimeSessionUiMetadata(session));
@@ -1019,6 +1159,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 			const webSearchEnabled: boolean = params.webSearchEnabled === true;
 			const webSearchAvailable: boolean = webSearchEnabled ? await isWebSearchToolAvailable() : false;
 			if (webSearchEnabled && !webSearchAvailable) {
+				await finishQueueItemForRun(socket, request.id, session, queueItemId, "failed");
 				sendJson(socket, {
 					type: "response",
 					id: request.id,
@@ -1033,6 +1174,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 			const apiKey: string | undefined = await ensureProviderConfigured(session);
 
 			if (!apiKey) {
+				await finishQueueItemForRun(socket, request.id, session, queueItemId, "failed");
 				logger.warn("ai", "provider_not_configured", {
 					requestId: request.id,
 					sessionId: session.sessionId,
@@ -1055,6 +1197,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 			const sessionRun = beginSessionRun(runSessionId, request.id);
 			if (session.activeRunRequestId !== undefined || !sessionRun.ok) {
 				const activeRequestId: string = session.activeRunRequestId ?? (sessionRun.ok ? request.id : sessionRun.activeRequestId);
+				await finishQueueItemForRun(socket, request.id, session, queueItemId, "failed");
 				logger.warn("ai", "session_busy", {
 					requestId: request.id,
 					sessionId: session.sessionId,
@@ -1085,14 +1228,17 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 			const runStartedAtMs: number = Date.now();
 			const turnStartedAt: string = new Date().toISOString();
 			let persistedParams: AiChatParams = params;
+			let queuedRunForcedStatus: "failed" | "cancelled" | undefined;
 			sendSessionEvent(socket, request.id, session, "agent.run.started", {
 				runId: request.id,
 				requestId: request.id
 			});
+			await setQueueStatusForRun(socket, request.id, session, queueItemId, "sending");
 			setWorkbenchActiveRun(session, {
 				status: "streaming",
 				requestId: request.id,
-				startedAt: turnStartedAt
+				startedAt: turnStartedAt,
+				queueItemId
 			});
 			emitWorkbenchUpdated(socket, request.id, session);
 
@@ -1381,6 +1527,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				break;
 			} catch (error: unknown) {
 				if (isCancellationError(error, abortController.signal)) {
+					queuedRunForcedStatus = "cancelled";
 					logger.warn("ai", "chat_cancelled", {
 						requestId: request.id,
 						sessionId: runSessionId,
@@ -1399,6 +1546,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 					break;
 				}
 				if (error instanceof ProviderImageInputError) {
+					queuedRunForcedStatus = "failed";
 					logger.warn("ai", "image_input_rejected", {
 						requestId: request.id,
 						sessionId: session.sessionId,
@@ -1417,6 +1565,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 					break;
 				}
 				if (error instanceof ContextTooLargeError) {
+					queuedRunForcedStatus = "failed";
 					logger.warn("ai", "context_too_large", {
 						requestId: request.id,
 						sessionId: runSessionId,
@@ -1453,6 +1602,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 					break;
 				}
 				if (error instanceof WorkflowExecutionError) {
+					queuedRunForcedStatus = "failed";
 					const workflowErrorMessage: string = error.message.length > 0
 						? error.message
 						: error.originalError instanceof Error
@@ -1489,6 +1639,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 					});
 					break;
 				}
+				queuedRunForcedStatus = "failed";
 				const providerError = classifyProviderError(error);
 				logger.error("ai", "chat_failed", error, {
 					requestId: request.id,
@@ -1534,11 +1685,17 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				if (ownsActiveRun) {
 					setWorkbenchActiveRun(session, {
 						status: session.approvalGateway.listPending().length > 0 ? "approval" : "idle",
-						requestId: request.id
+						requestId: request.id,
+						queueItemId
 					});
 					emitWorkbenchUpdated(socket, request.id, session);
 				}
 				finishSessionRun(runSessionId, request.id);
+				await finishQueueItemForRun(socket, request.id, session, queueItemId, queuedRunForcedStatus);
+				const queueItemStillExists: boolean = queueItemId !== undefined && findQueuedMessage(session, queueItemId) !== undefined;
+				if (queueItemId === undefined || !queueItemStillExists) {
+					void drainMessageQueue(socket, request.id, session, mcpHost);
+				}
 			}
 			break;
 		}

@@ -6,10 +6,11 @@ import { clearActiveSession } from "../client-session.js";
 import { sendJson } from "../send-json.js";
 import { deleteWorkspace, findWorkspace, hydrateWorkspacesFromSessionMetadata, loadWorkspaces } from "../../workspace/registry.js";
 import type { WorkspaceConfig } from "../../workspace/types.js";
-import { updateClientConnection } from "../client-connections.js";
+import { getClientConnection, updateClientConnection } from "../client-connections.js";
 import { logger } from "../../logger.js";
 import { deleteSessionsByWorkspace, listArchivedSessions, listSessions } from "../../session/session-store.js";
 import { readWorkspaceGitDiff } from "../workspace-git-diff.js";
+import { evaluateWorkspaceSelectionForSession, type WorkspaceSelectionDecision } from "../workspace-selection-guard.js";
 
 export async function handleWorkspaceRequest(socket: WebSocket, request: ClientRequest, session: ClientSession, mcpHost: McpHost): Promise<void> {
 	switch (request.method) {
@@ -46,6 +47,30 @@ export async function handleWorkspaceRequest(socket: WebSocket, request: ClientR
 			break;
 		}
 
+		const selectionDecision: WorkspaceSelectionDecision = evaluateWorkspaceSelectionForSession({
+			clientType: getClientConnection(socket)?.clientType,
+			session,
+			workspace,
+			requestedSessionId: request.params.sessionId
+		});
+		if (!selectionDecision.allowed) {
+			logger.warn("workspace", "session_workspace_switch_blocked", {
+				sessionId: session.sessionId,
+				currentWorkspaceId: selectionDecision.currentWorkspaceId,
+				requestedWorkspaceId: selectionDecision.requestedWorkspaceId
+			});
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: false,
+				error: {
+					code: selectionDecision.code,
+					message: selectionDecision.message
+				}
+			});
+			break;
+		}
+
 		try {
 			await mcpHost.ensureWorkspace(workspace);
 		} catch (error: unknown) {
@@ -65,19 +90,21 @@ export async function handleWorkspaceRequest(socket: WebSocket, request: ClientR
 			break;
 		}
 
-		session.activeWorkspace = workspace;
-		session.godotProjectPath = workspace.rootPath;
+		if (selectionDecision.bindToSession) {
+			session.activeWorkspace = workspace;
+			session.godotProjectPath = workspace.rootPath;
+		}
 		logger.info("workspace", "selected", {
 			workspaceId: workspace.id,
 			rootPath: workspace.rootPath,
-			sessionId: session.sessionId
+			sessionId: selectionDecision.bindToSession ? session.sessionId : null
 		});
 		updateClientConnection(socket, {
 			workspaceId: workspace.id,
 			workspaceRoot: workspace.rootPath
 		});
 
-		if (workspace.godotExecutablePath) {
+		if (selectionDecision.bindToSession && workspace.godotExecutablePath) {
 			session.godotExecutablePath = workspace.godotExecutablePath;
 		}
 

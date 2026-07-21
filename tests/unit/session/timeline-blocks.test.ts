@@ -201,6 +201,7 @@ test("canonical timeline keeps plan clarification as hidden restorable state", (
 	assert.equal(result.latestPlanClarification, null);
 	assert.deepEqual(result.latestPlanApproval, {
 		planId: "plan-a",
+		requestId: "request-plan",
 		title: "井字棋计划",
 		status: "ready",
 		previewMarkdown: "## Summary\n\n实现井字棋。",
@@ -253,6 +254,7 @@ test("canonical timeline restores latest pending plan clarification without rend
 	assert.deepEqual(assistant.bodyParts.map((part) => part.type), ["markdown"]);
 	assert.deepEqual(result.latestPlanClarification, {
 		planId: "plan-a",
+		requestId: "request-plan",
 		title: "目标形态",
 		question: "请选择 CLI 还是 Godot 场景。",
 		recommendedReplies: [
@@ -268,6 +270,44 @@ test("canonical timeline restores latest pending plan clarification without rend
 			}
 		]
 	});
+	assert.equal(result.latestPlanApproval, null);
+});
+
+test("canonical timeline does not restore a plan clarification after the plan operation failed", (): void => {
+	const stored: StoredSession = session(
+		[
+			{
+				role: "user",
+				requestId: "request-plan",
+				content: "写一个本地井字棋",
+				createdAt: "2026-07-09T00:00:00.000Z",
+				excludeFromLlmContext: true
+			},
+			{
+				role: "assistant",
+				requestId: "request-plan",
+				content: "请选择目标形态。",
+				createdAt: "2026-07-09T00:00:01.000Z",
+				excludeFromLlmContext: true
+			}
+		],
+		[
+			event("event-clarify", "request-plan", "plan.clarification.required", "2026-07-09T00:00:01.000Z", {
+				planId: "plan-a",
+				requestId: "request-plan",
+				title: "目标形态",
+				question: "请选择 CLI 还是 Godot 场景。"
+			}),
+			event("event-plan-error", "plan-clarify-rpc", "plan.error", "2026-07-09T00:00:02.000Z", {
+				code: "plan_error",
+				message: "工具结果总量达到上限"
+			})
+		]
+	);
+
+	const result = buildCanonicalTimelineBlocks(stored);
+
+	assert.equal(result.latestPlanClarification, null);
 	assert.equal(result.latestPlanApproval, null);
 });
 

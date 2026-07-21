@@ -21,14 +21,27 @@ import {
 } from "../plan-mode.js";
 import { sendSessionEvent } from "../session-events.js";
 import { handleChatRequest } from "../chat-orchestrator.js";
-import { getActiveSessionRunRequestId } from "../client-connections.js";
+import {
+	beginSessionRun,
+	finishSessionRun,
+	getActiveSessionRunRequestId,
+	registerSessionRunController
+} from "../client-connections.js";
 import { logger } from "../../logger.js";
 import { updateSessionMetadata } from "../../session/session-store.js";
 import { createRuntimeSessionUiMetadata } from "../session-ui-metadata.js";
-import { bumpWorkbenchRevision, emitWorkbenchUpdated, serializeWorkbench } from "../workbench.js";
+import { isCancellationError, sendAgentCancelled } from "../request-lifecycle.js";
+import { bumpWorkbenchRevision, emitWorkbenchUpdated, serializeWorkbench, setWorkbenchActiveRun } from "../workbench.js";
 
 const PLAN_EXECUTION_SLOT_WAIT_TIMEOUT_MS: number = 2000;
 const PLAN_EXECUTION_SLOT_WAIT_INTERVAL_MS: number = 25;
+
+type PlanOperationRun = {
+	runRequestId: string;
+	operationRequestId: string;
+	planId: string;
+	abortController: AbortController;
+};
 
 function sendProviderMissing(socket: WebSocket, requestId: string, session: ClientSession): void {
 	sendJson(socket, {
@@ -97,7 +110,68 @@ async function waitForPlanExecutionSlot(session: ClientSession, originalRequestI
 	return false;
 }
 
+function beginPlanOperationRun(
+	socket: WebSocket,
+	requestId: string,
+	session: ClientSession,
+	plan: StoredPlan
+): PlanOperationRun | null {
+	const runRequestId: string = plan.metadata.requestId;
+	const sessionRun = beginSessionRun(session.sessionId, runRequestId);
+	if (!sessionRun.ok) {
+		sendJson(socket, {
+			type: "response",
+			id: requestId,
+			ok: false,
+			error: {
+				code: "session_busy",
+				message: `Session is already running request ${sessionRun.activeRequestId}.`
+			}
+		});
+		return null;
+	}
+
+	const abortController = new AbortController();
+	session.activeAbortControllers.set(requestId, abortController);
+	session.activeAbortControllers.set(runRequestId, abortController);
+	session.activeRunRequestId = runRequestId;
+	registerSessionRunController(session.sessionId, runRequestId, abortController);
+	sendSessionEvent(socket, runRequestId, session, "agent.run.started", {
+		runId: runRequestId,
+		requestId: runRequestId,
+		operationRequestId: requestId,
+		planId: plan.metadata.planId,
+		mode: "plan"
+	});
+	setWorkbenchActiveRun(session, {
+		status: "streaming",
+		requestId: runRequestId
+	});
+	emitWorkbenchUpdated(socket, requestId, session);
+	return {
+		runRequestId,
+		operationRequestId: requestId,
+		planId: plan.metadata.planId,
+		abortController
+	};
+}
+
+function finishPlanOperationRun(socket: WebSocket, session: ClientSession, operation: PlanOperationRun): void {
+	session.activeAbortControllers.delete(operation.operationRequestId);
+	session.activeAbortControllers.delete(operation.runRequestId);
+	if (session.activeRunRequestId === operation.runRequestId) {
+		session.activeRunRequestId = undefined;
+	}
+	finishSessionRun(session.sessionId, operation.runRequestId);
+	setWorkbenchActiveRun(session, { status: "idle" });
+	emitWorkbenchUpdated(socket, operation.operationRequestId, session);
+}
+
 export async function handlePlanRequest(socket: WebSocket, request: ClientRequest, session: ClientSession, mcpHost: McpHost): Promise<void> {
+	let failedRunRequestId: string | undefined;
+	let failedPlanId: string | undefined;
+	let failedAbortSignal: AbortSignal | undefined;
+	let activePlanOperation: PlanOperationRun | null = null;
 	try {
 		switch (request.method) {
 			case "plan.get": {
@@ -130,20 +204,33 @@ export async function handlePlanRequest(socket: WebSocket, request: ClientReques
 					return;
 				}
 				const plan: StoredPlan = await readStoredPlan(sessionId, request.params.planId);
+				failedRunRequestId = plan.metadata.requestId;
+				failedPlanId = plan.metadata.planId;
+				activePlanOperation = beginPlanOperationRun(socket, request.id, session, plan);
+				if (activePlanOperation === null) {
+					return;
+				}
+				failedAbortSignal = activePlanOperation.abortController.signal;
 				const options = createProviderChatOptions(session, apiKey);
-				const updatedPlan: StoredPlan = await applyPlanClarification(
-					plan,
-					request.params.reply,
-					options,
-					{
-						socket,
-						requestId: request.id,
-						session,
-						mcpHost
-					}
-				);
-				await emitPlanUpdate(socket, request.id, session, updatedPlan, false);
-				sendPlanResponse(socket, request.id, updatedPlan);
+				try {
+					const updatedPlan: StoredPlan = await applyPlanClarification(
+						plan,
+						request.params.reply,
+						options,
+						{
+							socket,
+							requestId: request.id,
+							session,
+							mcpHost
+						},
+						activePlanOperation.abortController.signal
+					);
+					await emitPlanUpdate(socket, request.id, session, updatedPlan, false);
+					sendPlanResponse(socket, request.id, updatedPlan);
+				} finally {
+					finishPlanOperationRun(socket, session, activePlanOperation);
+					activePlanOperation = null;
+				}
 				return;
 			}
 
@@ -158,20 +245,33 @@ export async function handlePlanRequest(socket: WebSocket, request: ClientReques
 					return;
 				}
 				const plan: StoredPlan = await readStoredPlan(sessionId, request.params.planId);
+				failedRunRequestId = plan.metadata.requestId;
+				failedPlanId = plan.metadata.planId;
+				activePlanOperation = beginPlanOperationRun(socket, request.id, session, plan);
+				if (activePlanOperation === null) {
+					return;
+				}
+				failedAbortSignal = activePlanOperation.abortController.signal;
 				const options = createProviderChatOptions(session, apiKey);
-				const updatedPlan: StoredPlan = await applyPlanRevision(
-					plan,
-					request.params.feedback,
-					options,
-					{
-						socket,
-						requestId: request.id,
-						session,
-						mcpHost
-					}
-				);
-				await emitPlanUpdate(socket, request.id, session, updatedPlan, true);
-				sendPlanResponse(socket, request.id, updatedPlan);
+				try {
+					const updatedPlan: StoredPlan = await applyPlanRevision(
+						plan,
+						request.params.feedback,
+						options,
+						{
+							socket,
+							requestId: request.id,
+							session,
+							mcpHost
+						},
+						activePlanOperation.abortController.signal
+					);
+					await emitPlanUpdate(socket, request.id, session, updatedPlan, true);
+					sendPlanResponse(socket, request.id, updatedPlan);
+				} finally {
+					finishPlanOperationRun(socket, session, activePlanOperation);
+					activePlanOperation = null;
+				}
 				return;
 			}
 
@@ -279,12 +379,43 @@ export async function handlePlanRequest(socket: WebSocket, request: ClientReques
 		}
 	} catch (error: unknown) {
 		const message: string = error instanceof Error ? error.message : String(error);
+		if (activePlanOperation !== null) {
+			finishPlanOperationRun(socket, session, activePlanOperation);
+			activePlanOperation = null;
+		}
+		if (failedRunRequestId !== undefined && isCancellationError(error, failedAbortSignal)) {
+			sendAgentCancelled(socket, failedRunRequestId, session);
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: true,
+				result: {
+					cancelled: true,
+					requestId: failedRunRequestId,
+					planId: failedPlanId ?? null
+				}
+			});
+			return;
+		}
 		logger.error("plan", "plan_request_failed", error, {
 			requestId: request.id,
 			method: request.method,
 			sessionId: session.sessionId
 		});
+		if (failedRunRequestId !== undefined) {
+			sendSessionEvent(socket, failedRunRequestId, session, "agent.run.error", {
+				runId: failedRunRequestId,
+				requestId: failedRunRequestId,
+				operationRequestId: request.id,
+				planId: failedPlanId ?? null,
+				code: "plan_error",
+				message
+			});
+		}
 		sendSessionEvent(socket, request.id, session, "plan.error", {
+			requestId: failedRunRequestId ?? request.id,
+			operationRequestId: request.id,
+			planId: failedPlanId ?? null,
 			code: "plan_error",
 			message
 		});

@@ -3,7 +3,7 @@ import { once } from "node:events";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import test, { mock } from "node:test";
 import keytar from "keytar";
 import { runOpenAICompatibleAgent } from "../../../src/providers/openai-compatible-agent.js";
@@ -279,9 +279,14 @@ test("Zhipu image generation uses the configured image model and saves a session
 				session.id
 			);
 			const toolContent = JSON.parse(toolResult.content) as {
-				artifacts: Array<{ imageId: string; localPath: string; storagePath: string }>;
+				usageHint: string;
+				artifacts: Array<{ imageId: string; absolutePath: string; localPath: string; markdownImage: string; storagePath: string }>;
 			};
+			assert.match(toolContent.usageHint, /absolutePath/u);
+			assert.equal(isAbsolute(toolContent.artifacts[0]?.absolutePath ?? ""), true);
+			assert.equal(toolContent.artifacts[0]?.localPath, toolContent.artifacts[0]?.absolutePath);
 			assert.match(toolContent.artifacts[0]?.localPath ?? "", /attachments[\\/]images[\\/]generated-image-/);
+			assert.match(toolContent.artifacts[0]?.markdownImage ?? "", /^!\[generated image\]\(<.+attachments\/images\/generated-image-.+>\)$/u);
 			assert.match(toolContent.artifacts[0]?.storagePath ?? "", /^attachments\/images\/generated-image-/);
 		});
 	});

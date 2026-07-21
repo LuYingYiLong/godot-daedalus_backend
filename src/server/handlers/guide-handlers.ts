@@ -10,6 +10,7 @@ import {
 	findPendingGuideByClientId,
 	findPendingGuideIndexById,
 	persistGuideEvent,
+	reorderPendingGuides,
 	serializePendingGuide
 } from "../pending-guides.js";
 import { bumpWorkbenchRevision, emitWorkbenchUpdated, serializeWorkbench } from "../workbench.js";
@@ -150,6 +151,53 @@ export async function handleGuideRequest(socket: WebSocket, request: ClientReque
 				guideDeleted: true,
 				found: deletedGuide !== undefined,
 				guideId: request.params.guideId,
+				pendingGuides: session.pendingGuides.map(serializePendingGuide),
+				workbench: serializeWorkbench(session)
+			}
+		});
+		break;
+	}
+
+	case "session.guide.reorder": {
+		if (!session.sessionId) {
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: false,
+				error: { code: "no_session", message: "No active session for guide." }
+			});
+			break;
+		}
+
+		const result = reorderPendingGuides(session, request.params.guideIds);
+		if (result.errorCode !== undefined) {
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: false,
+				error: {
+					code: result.errorCode,
+					message: result.errorMessage ?? "Invalid guide order."
+				}
+			});
+			break;
+		}
+		if (result.changed) {
+			const data: Record<string, unknown> = {
+				type: "guide.reordered",
+				guideIds: session.pendingGuides.map((guide: PendingGuide): string => guide.id),
+				reorderedAt: new Date().toISOString()
+			};
+			await persistGuideEvent(session, request.id, "guide.reordered", data);
+			bumpWorkbenchRevision(session);
+			emitWorkbenchUpdated(socket, request.id, session);
+		}
+		sendJson(socket, {
+			type: "response",
+			id: request.id,
+			ok: true,
+			result: {
+				guideReordered: result.changed,
 				pendingGuides: session.pendingGuides.map(serializePendingGuide),
 				workbench: serializeWorkbench(session)
 			}

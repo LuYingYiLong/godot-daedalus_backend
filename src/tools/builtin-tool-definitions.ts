@@ -106,7 +106,7 @@ const SKILL_TOOL_DEFINITIONS: ChatCompletionTool[] = [
 const IMAGE_GENERATION_TOOL_DEFINITIONS: ChatCompletionTool[] = [
 	createSceneToolDefinition(
 		"mcp_image_generate",
-		"根据文本提示生成图片，并把结果保存为当前 Daedalus 会话附件。不会写入项目工作区。适合用户明确要求生成图片、插画、视觉素材或草图时使用。",
+		"根据文本提示生成图片，并把结果保存为当前 Daedalus 会话附件。不会写入项目工作区。适合用户明确要求生成图片、插画、视觉素材或草图时使用。工具结果会返回 absolutePath 和 markdownImage；最终回复引用图片时必须使用 absolutePath/markdownImage，不要只使用 fileName。",
 		{
 			prompt: { type: "string", description: "详细图像生成提示词，包含主体、风格、构图、颜色、文字限制等。" },
 			count: { type: "integer", minimum: 1, maximum: 4, description: "生成图片数量，默认 1，最大 4。" },

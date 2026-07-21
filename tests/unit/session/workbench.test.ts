@@ -2,8 +2,17 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import WebSocket from "ws";
 import type { AdditionalContextItem, ClientRequest } from "../../../src/protocol/types.js";
+import type { StoredSessionEvent } from "../../../src/session/session-store.js";
 import { createClientSession } from "../../../src/server/client-session.js";
 import { handleMessageQueueRequest } from "../../../src/server/handlers/message-queue-handlers.js";
+import {
+	createQueuedChatRequest,
+	enqueueMessage,
+	hydrateMessageQueue,
+	reorderQueuedMessages,
+	serializeMessageQueue
+} from "../../../src/server/message-queue.js";
+import { createPendingGuide, hydratePendingGuides, reorderPendingGuides } from "../../../src/server/pending-guides.js";
 import { handleWorkbenchRequest } from "../../../src/server/handlers/workbench-handlers.js";
 import { applyWorkbenchPatch, serializeWorkbench } from "../../../src/server/workbench.js";
 
@@ -140,12 +149,12 @@ test("workbench patch ignores stale client sequence without changing revision", 
 	assert.equal(((responses[1] as Record<string, unknown>).result as Record<string, unknown>).stale, true);
 });
 
-test("message queue no-op remove does not bump workbench revision", (): void => {
+test("message queue no-op remove does not bump workbench revision", async (): Promise<void> => {
 	const session = createClientSession(undefined);
 	const messages: unknown[] = [];
 	const socket: WebSocket = makeSocket(messages);
 
-	handleMessageQueueRequest(socket, {
+	await handleMessageQueueRequest(socket, {
 		id: "remove-missing",
 		method: "message.queue.remove",
 		params: { queueId: 404 }
@@ -158,4 +167,206 @@ test("message queue no-op remove does not bump workbench revision", (): void => 
 	const result = response.result as Record<string, unknown>;
 	assert.equal(result.queueRemoved, false);
 	assert.equal(result.removed, false);
+});
+
+test("message queue stores send snapshots and reorders pending messages", (): void => {
+	const session = createClientSession(undefined);
+	const first = enqueueMessage(session, {
+		text: "先解释这个 hook",
+		mode: "ask",
+		provider: "openai",
+		model: "gpt-test",
+		skillRefs: ["skill-a"],
+		webSearchEnabled: true,
+		additionalContext: [makeContext("ctx-a", "src/hooks/useDiskSpaceCheck.ts")]
+	});
+	const second = enqueueMessage(session, {
+		text: "再修复按钮状态",
+		mode: "agent",
+		provider: "moonshot",
+		model: "kimi-k3",
+		additionalContext: [makeContext("ctx-b", "src/app/App.tsx", true)]
+	});
+
+	assert.equal(first.id, 1);
+	assert.equal(second.id, 2);
+	const serialized = serializeMessageQueue(session);
+	assert.equal((serialized[0] as Record<string, unknown>).provider, "openai");
+	assert.equal((serialized[0] as Record<string, unknown>).model, "gpt-test");
+	assert.equal((serialized[0] as Record<string, unknown>).webSearchEnabled, true);
+	assert.deepEqual((serialized[0] as Record<string, unknown>).skillRefs, ["skill-a"]);
+
+	const result = reorderQueuedMessages(session, [2, 1]);
+	assert.equal(result.changed, true);
+	assert.deepEqual(session.queuedMessages.map((message): number => message.id), [2, 1]);
+
+	const invalid = reorderQueuedMessages(session, [1]);
+	assert.equal(invalid.changed, false);
+	assert.equal(invalid.errorCode, "invalid_queue_order");
+});
+
+test("queued chat request reuses the captured send snapshot", (): void => {
+	const session = createClientSession(undefined);
+	const item = enqueueMessage(session, {
+		text: "排队执行",
+		mode: "agent",
+		provider: "deepseek",
+		model: "deepseek-chat",
+		webSearchEnabled: true,
+		additionalContext: [makeContext("ctx-a", "res://scripts/a.gd")]
+	});
+
+	const request = createQueuedChatRequest(item, "queued-run-1");
+	assert.equal(request.method, "ai.chat");
+	const params = request.params as Record<string, unknown>;
+	assert.equal(params.message, "排队执行");
+	assert.equal(params.mode, "agent");
+	assert.equal(params.provider, "deepseek");
+	assert.equal(params.model, "deepseek-chat");
+	assert.equal(params.webSearchEnabled, true);
+	assert.deepEqual(params.options, {
+		stream: true,
+		queueItemId: 1
+	});
+});
+
+test("message queue hydrates persisted events without replaying interrupted runs", (): void => {
+	const events: StoredSessionEvent[] = [
+		{
+			id: "event-1",
+			requestId: "request-1",
+			event: "message.queue.added",
+			createdAt: "2026-07-20T00:00:00.000Z",
+			data: {
+				item: {
+					id: 1,
+					text: "pending item",
+					mode: "ask",
+					provider: "openai",
+					model: "gpt-test",
+					status: "pending",
+					createdAt: "2026-07-20T00:00:00.000Z",
+					updatedAt: "2026-07-20T00:00:00.000Z"
+				}
+			}
+		},
+		{
+			id: "event-2",
+			requestId: "request-1",
+			event: "message.queue.added",
+			createdAt: "2026-07-20T00:01:00.000Z",
+			data: {
+				item: {
+					id: 2,
+					text: "sending item",
+					status: "sending",
+					createdAt: "2026-07-20T00:01:00.000Z",
+					updatedAt: "2026-07-20T00:01:00.000Z"
+				}
+			}
+		},
+		{
+			id: "event-3",
+			requestId: "request-1",
+			event: "message.queue.added",
+			createdAt: "2026-07-20T00:02:00.000Z",
+			data: {
+				item: {
+					id: 3,
+					text: "approval item",
+					status: "approval",
+					createdAt: "2026-07-20T00:02:00.000Z",
+					updatedAt: "2026-07-20T00:02:00.000Z"
+				}
+			}
+		},
+		{
+			id: "event-4",
+			requestId: "request-1",
+			event: "message.queue.status",
+			createdAt: "2026-07-20T00:03:00.000Z",
+			data: {
+				queueId: 1,
+				status: "approval"
+			}
+		},
+		{
+			id: "event-5",
+			requestId: "request-1",
+			event: "message.queue.reordered",
+			createdAt: "2026-07-20T00:04:00.000Z",
+			data: {
+				queueIds: [3, 2, 1]
+			}
+		},
+		{
+			id: "event-6",
+			requestId: "request-1",
+			event: "message.queue.removed",
+			createdAt: "2026-07-20T00:05:00.000Z",
+			data: {
+				queueId: 2
+			}
+		}
+	];
+
+	const hydrated = hydrateMessageQueue(events);
+
+	assert.equal(hydrated.nextId, 3);
+	assert.deepEqual(hydrated.messages.map((message): number => message.id), [3, 1]);
+	assert.deepEqual(hydrated.messages.map((message): string => message.status), ["failed", "failed"]);
+});
+
+test("pending guides reorder and hydrate persisted order", (): void => {
+	const session = createClientSession(undefined);
+	const first = createPendingGuide("client-1", "优先读错误日志", undefined);
+	const second = createPendingGuide("client-2", "然后检查按钮状态", "run-1");
+	session.pendingGuides = [first, second];
+
+	const reorderResult = reorderPendingGuides(session, [second.id, first.id]);
+	assert.equal(reorderResult.changed, true);
+	assert.deepEqual(session.pendingGuides.map((guide): string => guide.id), [second.id, first.id]);
+	assert.equal(session.pendingGuides[0]?.anchorRequestId, "run-1");
+
+	const invalid = reorderPendingGuides(session, [first.id]);
+	assert.equal(invalid.changed, false);
+	assert.equal(invalid.errorCode, "invalid_guide_order");
+
+	const events: StoredSessionEvent[] = [
+		{
+			id: "event-1",
+			requestId: "request-1",
+			event: "guide.added",
+			createdAt: "2026-07-20T00:00:00.000Z",
+			data: {
+				guideId: "guide-1",
+				clientGuideId: "client-1",
+				text: "第一条"
+			}
+		},
+		{
+			id: "event-2",
+			requestId: "request-1",
+			event: "guide.added",
+			createdAt: "2026-07-20T00:01:00.000Z",
+			data: {
+				guideId: "guide-2",
+				clientGuideId: "client-2",
+				text: "第二条"
+			}
+		},
+		{
+			id: "event-3",
+			requestId: "request-1",
+			event: "guide.reordered",
+			createdAt: "2026-07-20T00:02:00.000Z",
+			data: {
+				guideIds: ["guide-2", "guide-1"]
+			}
+		}
+	];
+	const guides = hydratePendingGuides(events);
+
+	assert.deepEqual(guides.map((guide): string => guide.id), ["guide-2", "guide-1"]);
+	assert.deepEqual(guides.map((guide): string => guide.text), ["第二条", "第一条"]);
 });

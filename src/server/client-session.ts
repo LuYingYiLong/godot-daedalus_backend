@@ -22,6 +22,11 @@ export type QueuedMessage = {
 	id: number;
 	text: string;
 	additionalContext: AiChatParams["additionalContext"];
+	mode?: "agent" | "ask" | "plan" | undefined;
+	provider?: ProviderId | undefined;
+	model?: string | undefined;
+	skillRefs?: AiChatParams["skillRefs"];
+	webSearchEnabled?: boolean | undefined;
 	status: QueuedMessageStatus;
 	createdAt: string;
 	updatedAt: string;
@@ -94,6 +99,7 @@ export type ClientSession = {
 	pendingGuides: PendingGuide[];
 	queuedMessages: QueuedMessage[];
 	messageQueueNextId: number;
+	messageQueueDrainActive: boolean;
 	workbenchRevision: number;
 	workbenchComposer: WorkbenchComposer;
 	workbenchActiveRun: WorkbenchActiveRun;
@@ -121,6 +127,7 @@ export function createClientSession(defaultWorkspace: WorkspaceConfig | undefine
 		pendingGuides: [],
 		queuedMessages: [],
 		messageQueueNextId: 0,
+		messageQueueDrainActive: false,
 		workbenchRevision: 0,
 		workbenchComposer: {
 			text: "",
@@ -149,6 +156,7 @@ export function clearActiveSession(session: ClientSession): void {
 	session.pendingGuides = [];
 	session.queuedMessages = [];
 	session.messageQueueNextId = 0;
+	session.messageQueueDrainActive = false;
 	session.workbenchRevision = 0;
 	session.workbenchComposer = {
 		text: "",

@@ -1,5 +1,5 @@
 import type { AdditionalContextItem, ChatMessage } from "../protocol/types.js";
-import { createWorkspaceMetadataSnapshot, updateSessionTranscript, type StoredMessage } from "../session/session-store.js";
+import { createWorkspaceMetadataBackfill, updateSessionTranscript, type StoredMessage } from "../session/session-store.js";
 import type { ClientSession } from "./client-session.js";
 import { cloneAdditionalContextItems } from "./additional-context.js";
 
@@ -57,7 +57,7 @@ export async function appendFailedChatTurnToSession(
 		}
 	};
 	const sessionId: string = session.sessionId;
-	return updateSessionTranscript(sessionId, (stored): { messages: ChatMessage[]; metadata: ReturnType<typeof createWorkspaceMetadataSnapshot>; result: boolean } => {
+	return updateSessionTranscript(sessionId, (stored): { messages: ChatMessage[]; metadata: ReturnType<typeof createWorkspaceMetadataBackfill>; result: boolean } => {
 		const clonedAdditionalContext: AdditionalContextItem[] | undefined = cloneAdditionalContextItems(additionalContext);
 		const nextMessages: ChatMessage[] = stored.messages.map((message: StoredMessage): ChatMessage => ({ ...message }));
 		const existingUserIndex: number = nextMessages.findIndex((message: ChatMessage): boolean => message.requestId === requestId && message.role === "user");
@@ -99,7 +99,7 @@ export async function appendFailedChatTurnToSession(
 
 		return {
 			messages: nextMessages,
-			metadata: createWorkspaceMetadataSnapshot(session.activeWorkspace),
+			metadata: createWorkspaceMetadataBackfill(stored.metadata, session.activeWorkspace),
 			result: changed
 		};
 	});
@@ -118,13 +118,13 @@ export async function appendTranscriptOnlyChatTurnToSession(
 		return false;
 	}
 	const sessionId: string = session.sessionId;
-	return updateSessionTranscript(sessionId, (stored): { messages: ChatMessage[]; metadata: ReturnType<typeof createWorkspaceMetadataSnapshot>; result: boolean } => {
+	return updateSessionTranscript(sessionId, (stored): { messages: ChatMessage[]; metadata: ReturnType<typeof createWorkspaceMetadataBackfill>; result: boolean } => {
 		const nextMessages: ChatMessage[] = stored.messages.map((message: StoredMessage): ChatMessage => ({ ...message }));
 		if (nextMessages.some((message: ChatMessage): boolean => message.requestId === requestId)) {
 			session.messages = nextMessages;
 			return {
 				messages: nextMessages,
-				metadata: createWorkspaceMetadataSnapshot(session.activeWorkspace),
+				metadata: createWorkspaceMetadataBackfill(stored.metadata, session.activeWorkspace),
 				result: false
 			};
 		}
@@ -155,7 +155,7 @@ export async function appendTranscriptOnlyChatTurnToSession(
 		session.messages = messages;
 		return {
 			messages,
-			metadata: createWorkspaceMetadataSnapshot(session.activeWorkspace),
+			metadata: createWorkspaceMetadataBackfill(stored.metadata, session.activeWorkspace),
 			result: true
 		};
 	});

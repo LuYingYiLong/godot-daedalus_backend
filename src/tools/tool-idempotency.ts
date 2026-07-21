@@ -336,10 +336,15 @@ async function executeImageGenerationTool(args: Record<string, unknown>, session
 	const { generateImage, parseImageGenerationToolArgs } = await import("../providers/image-generation.js");
 	const { getGeneratedImageArtifactLocalPath } = await import("../session/session-attachments.js");
 	const imageGeneration: ImageGenerationResult = await generateImage(parseImageGenerationToolArgs(args, sessionId));
-	const artifactsForToolResult = imageGeneration.artifacts.map((artifact) => ({
-		...artifact,
-		localPath: getGeneratedImageArtifactLocalPath(artifact)
-	}));
+	const artifactsForToolResult = imageGeneration.artifacts.map((artifact) => {
+		const absolutePath: string = getGeneratedImageArtifactLocalPath(artifact);
+		return {
+			...artifact,
+			absolutePath,
+			localPath: absolutePath,
+			markdownImage: `![generated image](<${absolutePath.replaceAll("\\", "/")}>)`
+		};
+	});
 	const content: string = JSON.stringify({
 		ok: true,
 		type: "image_generation",
@@ -347,6 +352,7 @@ async function executeImageGenerationTool(args: Record<string, unknown>, session
 		provider: imageGeneration.provider,
 		model: imageGeneration.model,
 		prompt: imageGeneration.prompt,
+		usageHint: "When referencing a generated image in the final answer, use artifacts[n].absolutePath or artifacts[n].markdownImage. Do not use fileName by itself.",
 		artifacts: artifactsForToolResult
 	});
 	return {

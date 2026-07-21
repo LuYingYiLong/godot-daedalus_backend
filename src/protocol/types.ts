@@ -109,6 +109,7 @@ export type ServerEvent = {
 		| "guide.added"
 		| "guide.updated"
 		| "guide.deleted"
+		| "guide.reordered"
 		| "guide.applied"
 		| "session.renamed"
 		| "editor.tool.requested"

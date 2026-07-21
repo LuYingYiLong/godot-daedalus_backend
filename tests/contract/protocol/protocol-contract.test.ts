@@ -14,7 +14,9 @@ const BACKEND_ONLY_OR_STUDIO_RPC_METHODS: Set<string> = new Set([
 	"generalSettings.update",
 	"ai.toolBudget.continue",
 	"ai.toolBudget.stop",
+	"message.queue.reorder",
 	"session.context.estimate",
+	"session.guide.reorder",
 	"session.integrity.check",
 	"session.model.set",
 	"session.overview.get",
@@ -142,6 +144,67 @@ test("tool budget decision requests are accepted", (): void => {
 		method: "ai.toolBudget.stop",
 		params: {
 			budgetId: "tool-budget-a"
+		}
+	}).success, true);
+});
+
+test("queued message requests accept send snapshots and reorder", (): void => {
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "message-queue-add",
+		method: "message.queue.add",
+		params: {
+			text: "排队修复 useDiskSpaceCheck",
+			mode: "agent",
+			provider: "moonshot",
+			model: "kimi-k3",
+			skillRefs: ["builtin:backend-helper"],
+			webSearchEnabled: true,
+			additionalContext: [
+				{
+					id: "ctx-a",
+					kind: "file",
+					title: "useDiskSpaceCheck.ts",
+					source: "manual",
+					resourcePath: "src/renderer/src/hooks/useDiskSpaceCheck.ts"
+				}
+			]
+		}
+	}).success, true);
+
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "message-queue-reorder",
+		method: "message.queue.reorder",
+		params: {
+			queueIds: [2, 1]
+		}
+	}).success, true);
+});
+
+test("pending guide requests accept reorder", (): void => {
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "guide-reorder",
+		method: "session.guide.reorder",
+		params: {
+			guideIds: ["guide-a", "guide-b"]
+		}
+	}).success, true);
+});
+
+test("ai chat accepts queued run identity", (): void => {
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "queued-ai-chat",
+		method: "ai.chat",
+		params: {
+			message: "执行队列消息",
+			mode: "agent",
+			options: {
+				stream: true,
+				queueItemId: 7
+			}
 		}
 	}).success, true);
 });

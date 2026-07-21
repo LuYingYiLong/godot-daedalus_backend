@@ -6,7 +6,9 @@ import { sendJson } from "../send-json.js";
 import {
 	emitMessageQueueUpdated,
 	enqueueMessage,
+	persistMessageQueueEvent,
 	removeQueuedMessage,
+	reorderQueuedMessages,
 	type QueueMutationResult,
 	serializeMessageQueue,
 	serializeQueuedMessage,
@@ -33,14 +35,26 @@ function parseQueueId(value: unknown): number {
 	return Number.isInteger(queueId) && queueId > 0 ? queueId : 0;
 }
 
-export function handleMessageQueueRequest(socket: WebSocket, request: ClientRequest, session: ClientSession, _mcpHost: McpHost): void {
+function scheduleQueueDrain(socket: WebSocket, requestId: string, session: ClientSession, mcpHost: McpHost): void {
+	void import("../chat-orchestrator.js").then(({ drainMessageQueue }) => {
+		return drainMessageQueue(socket, requestId, session, mcpHost);
+	}).catch((error: unknown): void => {
+		console.error("[message.queue] drain failed", error);
+	});
+}
+
+export async function handleMessageQueueRequest(socket: WebSocket, request: ClientRequest, session: ClientSession, mcpHost: McpHost): Promise<void> {
 	switch (request.method) {
 	case "message.queue.list":
 		sendQueueResult(socket, request, session);
 		break;
 
 	case "message.queue.add": {
-		const item: QueuedMessage = enqueueMessage(session, request.params.text, request.params.additionalContext);
+		const item: QueuedMessage = enqueueMessage(session, request.params);
+		await persistMessageQueueEvent(session, request.id, "message.queue.added", {
+			type: "message.queue.added",
+			item: serializeQueuedMessage(item)
+		});
 		bumpWorkbenchRevision(session);
 		sendQueueResult(socket, request, session, {
 			queueAdded: true,
@@ -48,6 +62,7 @@ export function handleMessageQueueRequest(socket: WebSocket, request: ClientRequ
 		});
 		emitMessageQueueUpdated(socket, request.id, session);
 		emitWorkbenchUpdated(socket, request.id, session);
+		scheduleQueueDrain(socket, request.id, session, mcpHost);
 		break;
 	}
 
@@ -55,8 +70,7 @@ export function handleMessageQueueRequest(socket: WebSocket, request: ClientRequ
 		const result: QueueMutationResult = updateQueuedMessage(
 			session,
 			parseQueueId(request.params.queueId),
-			request.params.text,
-			request.params.additionalContext
+			request.params
 		);
 		if (result.item === undefined) {
 			sendJson(socket, {
@@ -67,7 +81,23 @@ export function handleMessageQueueRequest(socket: WebSocket, request: ClientRequ
 			});
 			break;
 		}
+		if (result.errorCode !== undefined) {
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: false,
+				error: {
+					code: result.errorCode,
+					message: result.errorMessage ?? "Queued message cannot be updated."
+				}
+			});
+			break;
+		}
 		if (result.changed) {
+			await persistMessageQueueEvent(session, request.id, "message.queue.updated", {
+				type: "message.queue.updated",
+				item: serializeQueuedMessage(result.item)
+			});
 			bumpWorkbenchRevision(session);
 		}
 		sendQueueResult(socket, request, session, {
@@ -82,8 +112,14 @@ export function handleMessageQueueRequest(socket: WebSocket, request: ClientRequ
 	}
 
 	case "message.queue.remove": {
-		const removed: boolean = removeQueuedMessage(session, parseQueueId(request.params.queueId));
+		const queueId: number = parseQueueId(request.params.queueId);
+		const removed: boolean = removeQueuedMessage(session, queueId);
 		if (removed) {
+			await persistMessageQueueEvent(session, request.id, "message.queue.removed", {
+				type: "message.queue.removed",
+				queueId,
+				removedAt: new Date().toISOString()
+			});
 			bumpWorkbenchRevision(session);
 		}
 		sendQueueResult(socket, request, session, {
@@ -98,9 +134,10 @@ export function handleMessageQueueRequest(socket: WebSocket, request: ClientRequ
 	}
 
 	case "message.queue.status": {
+		const queueId: number = parseQueueId(request.params.queueId);
 		const result: QueueMutationResult = setQueuedMessageStatus(
 			session,
-			parseQueueId(request.params.queueId),
+			queueId,
 			request.params.status as QueuedMessageStatus
 		);
 		if (result.item === undefined) {
@@ -113,11 +150,49 @@ export function handleMessageQueueRequest(socket: WebSocket, request: ClientRequ
 			break;
 		}
 		if (result.changed) {
+			await persistMessageQueueEvent(session, request.id, "message.queue.status", {
+				type: "message.queue.status",
+				queueId,
+				status: request.params.status,
+				updatedAt: result.item.updatedAt
+			});
 			bumpWorkbenchRevision(session);
 		}
 		sendQueueResult(socket, request, session, {
 			queueStatusUpdated: result.changed,
 			item: serializeQueuedMessage(result.item)
+		});
+		if (result.changed) {
+			emitMessageQueueUpdated(socket, request.id, session);
+			emitWorkbenchUpdated(socket, request.id, session);
+		}
+		break;
+	}
+
+	case "message.queue.reorder": {
+		const result: QueueMutationResult = reorderQueuedMessages(session, request.params.queueIds);
+		if (result.errorCode !== undefined) {
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: false,
+				error: {
+					code: result.errorCode,
+					message: result.errorMessage ?? "Invalid queue order."
+				}
+			});
+			break;
+		}
+		if (result.changed) {
+			await persistMessageQueueEvent(session, request.id, "message.queue.reordered", {
+				type: "message.queue.reordered",
+				queueIds: session.queuedMessages.map((message: QueuedMessage): number => message.id),
+				reorderedAt: new Date().toISOString()
+			});
+			bumpWorkbenchRevision(session);
+		}
+		sendQueueResult(socket, request, session, {
+			queueReordered: result.changed
 		});
 		if (result.changed) {
 			emitMessageQueueUpdated(socket, request.id, session);

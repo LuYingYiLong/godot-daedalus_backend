@@ -57,6 +57,7 @@ export type TimelinePlanRecommendedReply = {
 
 export type TimelinePlanClarification = {
 	planId: string;
+	requestId: string;
 	title: string;
 	question: string;
 	recommendedReplies: TimelinePlanRecommendedReply[];
@@ -64,6 +65,7 @@ export type TimelinePlanClarification = {
 
 export type TimelinePlanApproval = {
 	planId: string;
+	requestId: string;
 	title: string;
 	status: string;
 	previewMarkdown: string;
@@ -487,8 +489,10 @@ function createPlanClarificationSnapshot(data: Record<string, unknown>): Timelin
 	}
 
 	const title: string = asString(data.title).trim();
+	const requestId: string = asString(data.requestId).trim();
 	return {
 		planId,
+		requestId: requestId.length > 0 ? requestId : planId,
 		title: title.length > 0 ? title : "Plan clarification",
 		question,
 		recommendedReplies: parsePlanRecommendedReplies(data.recommendedReplies)
@@ -531,6 +535,7 @@ function createPlanApprovalSnapshot(eventData: Record<string, unknown>): Timelin
 
 	return {
 		planId: planPart.planId,
+		requestId: asString(eventData.requestId).trim() || planPart.planId,
 		title: planPart.title,
 		status: planPart.status,
 		previewMarkdown: planPart.previewMarkdown,
@@ -970,6 +975,25 @@ function shouldClearDismissedSnapshot(snapshot: unknown | null, dismissedIdentit
 	return snapshotIdentity === null || snapshotIdentity === dismissedIdentity;
 }
 
+function shouldClearPlanClarificationForEvent(event: StoredSessionEvent, clarification: TimelinePlanClarification | null): boolean {
+	if (clarification === null || !isRecord(event.data)) {
+		return false;
+	}
+
+	if (event.event === "plan.generated" || event.event === "plan.revised" || event.event === "plan.approved" || event.event === "plan.execution.started" || event.event === "plan.error") {
+		const planId: string = asString(event.data.planId);
+		return planId.length === 0 || planId === clarification.planId;
+	}
+
+	if (event.event === "agent.run.error") {
+		const planId: string = asString(event.data.planId);
+		const requestId: string = asString(event.data.requestId);
+		return planId === clarification.planId || requestId === clarification.requestId;
+	}
+
+	return false;
+}
+
 function findLatestSnapshots(events: StoredSessionEvent[]): { latestWorkflowSnapshot: unknown | null; latestAgentSnapshot: unknown | null; latestPlanClarification: TimelinePlanClarification | null; latestPlanApproval: TimelinePlanApproval | null } {
 	let latestWorkflowSnapshot: unknown | null = null;
 	let latestAgentSnapshot: unknown | null = null;
@@ -989,11 +1013,11 @@ function findLatestSnapshots(events: StoredSessionEvent[]): { latestWorkflowSnap
 		if ((event.event === "plan.generated" || event.event === "plan.revised") && isRecord(event.data)) {
 			latestPlanApproval = createPlanApprovalSnapshot(event.data);
 		}
+		if (shouldClearPlanClarificationForEvent(event, latestPlanClarification)) {
+			latestPlanClarification = null;
+		}
 		if ((event.event === "plan.generated" || event.event === "plan.revised" || event.event === "plan.approved" || event.event === "plan.execution.started") && isRecord(event.data)) {
 			const planId: string = asString(event.data.planId);
-			if (planId.length === 0 || planId === latestPlanClarification?.planId) {
-				latestPlanClarification = null;
-			}
 			if ((event.event === "plan.approved" || event.event === "plan.execution.started") && (planId.length === 0 || planId === latestPlanApproval?.planId)) {
 				latestPlanApproval = null;
 			}
