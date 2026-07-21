@@ -108,11 +108,42 @@ test("workbench snapshot derives active run and pending approval shape", (): voi
 	const workbench = serializeWorkbench(session);
 	assert.deepEqual(workbench.activeRun, {
 		status: "streaming",
-		requestId: "run-1"
+		requestId: "run-1",
+		sequence: 0
 	});
 	assert.deepEqual(workbench.pendingApproval, {
 		count: 0,
 		first: null
+	});
+});
+
+test("workbench active run sequence is monotonic across state changes", (): void => {
+	const session = createClientSession(undefined);
+
+	const firstRun = applyWorkbenchPatch(session, {
+		activeRun: {
+			status: "streaming",
+			requestId: "run-1"
+		}
+	});
+	assert.equal(firstRun, true);
+	assert.equal(session.workbenchActiveRun.sequence, 1);
+
+	const idleRun = applyWorkbenchPatch(session, {
+		activeRun: {
+			status: "idle"
+		}
+	});
+	assert.equal(idleRun, true);
+	assert.deepEqual(session.workbenchActiveRun, {
+		status: "idle",
+		sequence: 2
+	});
+
+	const workbench = serializeWorkbench(session);
+	assert.deepEqual(workbench.activeRun, {
+		status: "idle",
+		sequence: 2
 	});
 });
 

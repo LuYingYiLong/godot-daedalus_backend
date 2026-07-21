@@ -376,6 +376,26 @@ export function createToolProtocolCorrectionMessage(allowedToolNames: readonly s
 	return lines.join("\n");
 }
 
+export function createMissingRequiredToolCallCorrectionMessage(allowedToolNames: readonly string[], hadVisibleText: boolean = false): string {
+	const lines: string[] = [
+		hadVisibleText
+			? "上一条 assistant 响应输出了正文，但没有通过 API tool_calls 调用工具。"
+			: "上一条 assistant 响应没有返回用户可见正文，也没有通过 API tool_calls 调用工具。",
+		"当前阶段要求先调用工具；不要只在正文、thinking/reasoning_content 中说明准备调用工具。"
+	];
+	if (allowedToolNames.length > 0) {
+		lines.push("下一步必须通过 Chat Completions API 的 tool_calls 字段调用真实工具。");
+		lines.push("本阶段可用工具名如下：");
+		for (const toolName of allowedToolNames) {
+			lines.push(`- ${toolName}`);
+		}
+	} else {
+		lines.push("当前阶段没有可用工具，请输出面向用户的自然语言结果。");
+	}
+
+	return lines.join("\n");
+}
+
 function containsKnownToolSyntax(text: string | null | undefined): boolean {
 	return containsDsmlToolCalls(text) || containsLooseToolCalls(text);
 }
@@ -1009,6 +1029,7 @@ async function runAgentLoop(
 		let reasoningContent: string = "";
 		let emittedContentText: string = "";
 		let suppressedStreamToolSyntax: boolean = false;
+		const requiredToolCallOnStep: boolean = shouldRequireToolCallOnStep(params, step, startStep);
 		if (streamAssistant) {
 			const streamedMessage: StreamedAssistantMessage = await readStreamingAssistantMessage(
 				client,
@@ -1020,7 +1041,7 @@ async function runAgentLoop(
 				step,
 				startStep,
 				onEvent,
-				true,
+				!requiredToolCallOnStep,
 				abortSignal
 			);
 			toolCalls = streamedMessage.toolCalls;
@@ -1071,6 +1092,26 @@ async function runAgentLoop(
 
 		if (!toolCalls || toolCalls.length === 0) {
 			const text: string | null = contentText;
+
+			if (requiredToolCallOnStep && allowedToolNames.size > 0) {
+				if (toolProtocolViolationRetries < TOOL_PROTOCOL_VIOLATION_RETRY_LIMIT) {
+					toolProtocolViolationRetries += 1;
+					messages.push({
+						role: "system",
+						content: createMissingRequiredToolCallCorrectionMessage(Array.from(allowedToolNames), text !== null && text.length > 0)
+					});
+					step -= 1;
+					continue;
+				}
+
+				return {
+					status: "protocol_violation",
+					text: "",
+					reason: text
+						? "模型返回了正文，但没有通过 API tool_calls 调用当前阶段要求的工具。"
+						: "模型没有通过 API tool_calls 调用当前阶段要求的工具，且没有返回用户可见正文。"
+				};
+			}
 
 			if (!text) {
 				if (reasoningContent.trim().length > 0 && hasToolResultMessages(messages)) {

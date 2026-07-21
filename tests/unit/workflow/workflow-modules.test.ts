@@ -69,7 +69,20 @@ test("workflow proposal phases satisfy write guard with propose tools", (): void
 
 	updateWorkflowPhaseToolStats(stats, {
 		type: "tool.call",
+		step: 0,
+		toolCallId: "proposal-1",
 		toolName: "mcp_godot_propose_replace_text_in_file"
+	} as ToolEvent);
+	updateWorkflowPhaseToolStats(stats, {
+		type: "tool.result",
+		step: 0,
+		toolCallId: "proposal-1",
+		toolName: "mcp_godot_propose_replace_text_in_file",
+		resultChars: 120,
+		truncated: false,
+		ok: true,
+		validationStatus: "passed",
+		summary: "proposal valid"
 	} as ToolEvent);
 
 	assert.equal(isWorkflowProposalPhase(phase), true);
@@ -128,6 +141,50 @@ test("workflow write guard rejects ordinary write phases that only proposed chan
 		toolName: "mcp_godot_propose_attach_script_to_node"
 	} as ToolEvent);
 
+	assert.equal(didWorkflowWritePhaseExecute(phase, stats), false);
+});
+
+test("workflow write guard rejects failed write tool results", (): void => {
+	const phase: WorkflowPhase = {
+		id: "create-scene",
+		title: "创建场景",
+		instruction: "实际创建场景",
+		status: "pending",
+		toolGroup: "write",
+		toolBudget: "project_edit",
+		allowedTools: []
+	} as WorkflowPhase;
+	const stats = createEmptyWorkflowPhaseToolStats();
+
+	updateWorkflowPhaseToolStats(stats, {
+		type: "tool.call",
+		step: 0,
+		toolCallId: "create-scene-1",
+		toolName: "mcp_godot_create_text_file",
+		args: { relativePath: "scenes/tic_tac_toe.tscn" },
+		serverId: "godot",
+		serverName: "Godot",
+		category: "write",
+		title: "创建文件",
+		summary: "scenes/tic_tac_toe.tscn",
+		target: { kind: "file", path: "scenes/tic_tac_toe.tscn", label: "scenes/tic_tac_toe.tscn" }
+	} as ToolEvent);
+	updateWorkflowPhaseToolStats(stats, {
+		type: "tool.result",
+		step: 0,
+		toolCallId: "create-scene-1",
+		toolName: "mcp_godot_create_text_file",
+		resultChars: 120,
+		truncated: false,
+		ok: false,
+		validationStatus: "failed",
+		summary: "mcp_godot_create_text_file failed: File already exists: scenes/tic_tac_toe.tscn",
+		failedChecks: ["File already exists: scenes/tic_tac_toe.tscn"],
+		artifactRefs: ["scenes/tic_tac_toe.tscn"]
+	} as ToolEvent);
+
+	assert.equal(stats.writeToolEvents, 1);
+	assert.equal(stats.successfulWriteToolEvents, 0);
 	assert.equal(didWorkflowWritePhaseExecute(phase, stats), false);
 });
 
@@ -291,6 +348,13 @@ test("Godot template workflow uses narrow phase tools for script scene attach", 
 });
 
 test("LLM planned write tools are narrowed by phase semantics", (): void => {
+	const readTools = getAllowedToolsForLlmPlannedStep(
+		"read",
+		"读取当前项目文件列表",
+		"读取项目中的脚本和场景文件。"
+	);
+	assert.equal(readTools.includes("mcp_godot_list_project_files"), true);
+
 	const attachTools = getAllowedToolsForLlmPlannedStep(
 		"write",
 		"Attach script to root",
@@ -306,7 +370,25 @@ test("LLM planned write tools are narrowed by phase semantics", (): void => {
 		toolGroup: "write"
 	});
 	assert.equal(sceneTools.includes("mcp_godot_create_scene"), true);
+	assert.equal(sceneTools.includes("mcp_godot_overwrite_text_file"), true);
+	assert.equal(sceneTools.includes("mcp_godot_apply_scene_patch"), true);
 	assert.equal(sceneTools.includes("mcp_godot_attach_script_to_node"), false);
+
+	const uiTools = getAllowedToolsForLlmPlannedStep(
+		"write",
+		"Build scene UI",
+		"Build the tic tac toe UI in scenes/tic_tac_toe.tscn with buttons and labels"
+	);
+	assert.equal(uiTools.includes("mcp_godot_apply_scene_patch"), true);
+	assert.equal(uiTools.includes("mcp_godot_overwrite_text_file"), true);
+
+	const mainSceneTools = getAllowedToolsForLlmPlannedStep(
+		"write",
+		"Set main scene",
+		"Set application/run/main_scene to res://scenes/tic_tac_toe.tscn"
+	);
+	assert.equal(mainSceneTools.includes("mcp_godot_set_project_setting"), true);
+	assert.equal(mainSceneTools.includes("mcp_godot_apply_scene_patch"), false);
 });
 
 test("workflow events map to agent event compatibility surface", (): void => {

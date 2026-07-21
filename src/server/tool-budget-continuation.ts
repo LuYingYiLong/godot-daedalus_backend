@@ -63,6 +63,10 @@ export function registerPendingToolBudget(session: ClientSession, pending: Pendi
 export function sendToolBudgetRequired(socket: WebSocket, requestId: string, session: ClientSession, runId: string, pending: PendingToolBudget, persistRequestId: string = requestId): void {
 	sendSessionEvent(socket, requestId, session, "agent.run.tool_budget_required", {
 		runId,
+		requestId: pending.requestId,
+		status: "paused",
+		statusCode: "tool_budget",
+		sequence: session.workbenchActiveRun.sequence ?? session.workbenchActiveRunSequence,
 		reason: pending.reason,
 		budgetId: pending.budgetId,
 		limitKind: pending.limitKind,

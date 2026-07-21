@@ -38,6 +38,7 @@ import {
 const FINALIZE_AFTER_TOOL_LIMIT_PROMPT: string =
 	"工具调用阶段已经达到后端限制。请停止请求更多工具，基于目前已经获得的工具结果直接回答用户。"
 	+ "如果信息不完整，请明确说明哪些部分是根据已有信息总结的，哪些部分还需要进一步检查。";
+const TOOL_PROTOCOL_VIOLATION_RETRY_LIMIT: number = 1;
 
 type ResponsesAssistantMessage = {
 	text: string;
@@ -89,6 +90,32 @@ function getAllowedToolNames(tools: ChatCompletionTool[]): ReadonlySet<string> {
 		}
 	}
 	return allowedToolNames;
+}
+
+function createMissingRequiredToolCallCorrectionMessage(allowedToolNames: readonly string[], hadVisibleText: boolean = false): string {
+	const lines: string[] = [
+		hadVisibleText
+			? "上一条 assistant 响应输出了正文，但没有通过 API function_call 调用工具。"
+			: "上一条 assistant 响应没有通过 API function_call 调用工具。",
+		"当前阶段要求先调用工具；不要只在正文中说明准备调用工具。"
+	];
+	if (allowedToolNames.length > 0) {
+		lines.push("下一步必须调用真实工具。");
+		lines.push("本阶段可用工具名如下：");
+		for (const toolName of allowedToolNames) {
+			lines.push(`- ${toolName}`);
+		}
+	}
+
+	return lines.join("\n");
+}
+
+function appendMissingRequiredToolCallCorrection(inputItems: ResponseInputItem[], allowedToolNames: readonly string[], hadVisibleText: boolean = false): void {
+	inputItems.push({
+		type: "message",
+		role: "user",
+		content: createMissingRequiredToolCallCorrectionMessage(allowedToolNames, hadVisibleText)
+	} as ResponseInputItem);
 }
 
 function isAllowedFunctionCall(toolCall: ResponseFunctionToolCall, allowedToolNames: ReadonlySet<string>): boolean {
@@ -214,7 +241,9 @@ async function readResponsesAssistantMessage(
 		const streamEvent: ResponseStreamEvent = event as ResponseStreamEvent;
 		if (streamEvent.type === "response.output_text.delta" && streamEvent.delta.length > 0) {
 			text += streamEvent.delta;
-			onEvent?.({ type: "ai.delta", text: streamEvent.delta });
+			if (!requireToolCall) {
+				onEvent?.({ type: "ai.delta", text: streamEvent.delta });
+			}
 			continue;
 		}
 		if (streamEvent.type === "response.output_item.done") {
@@ -274,6 +303,7 @@ async function runResponsesAgentLoop(
 	let totalToolResultChars: number = initialToolResultChars;
 	const tools: Tool[] = convertToolDefinitions(chatTools);
 	const allowedToolNames: ReadonlySet<string> = getAllowedToolNames(chatTools);
+	let toolProtocolViolationRetries: number = 0;
 
 	for (let step: number = startStep; step < maxSteps; step += 1) {
 		if (abortSignal?.aborted) {
@@ -294,13 +324,30 @@ async function runResponsesAgentLoop(
 		const toolCalls: ChatCompletionMessageToolCall[] = convertResponsesToolCalls(assistantMessage.toolCalls, allowedToolNames);
 
 		if (toolCalls.length === 0) {
+			if (shouldRequireToolCallOnStep(params, step, startStep) && allowedToolNames.size > 0) {
+				if (toolProtocolViolationRetries < TOOL_PROTOCOL_VIOLATION_RETRY_LIMIT) {
+					toolProtocolViolationRetries += 1;
+					appendMissingRequiredToolCallCorrection(inputItems, Array.from(allowedToolNames), assistantMessage.text.length > 0);
+					step -= 1;
+					continue;
+				}
+
+				return {
+					status: "protocol_violation",
+					text: "",
+					reason: assistantMessage.text.length > 0
+						? "模型返回了正文，但没有通过 API function_call 调用当前阶段要求的工具。"
+						: "模型没有通过 API function_call 调用当前阶段要求的工具，且没有返回用户可见正文。"
+				};
+			}
+
 			if (assistantMessage.text.length === 0) {
 				throw new Error("LLM returned empty response");
 			}
 			return { status: "completed", text: assistantMessage.text };
 		}
 
-		if (!streamAssistant && assistantMessage.text.trim().length > 0) {
+		if ((!streamAssistant || shouldRequireToolCallOnStep(params, step, startStep)) && assistantMessage.text.trim().length > 0) {
 			onEvent?.({ type: "ai.delta", text: `\n\n${assistantMessage.text.trim()}\n\n` });
 		}
 

@@ -240,6 +240,7 @@ export async function continueWorkflowExecution(
 				agentResult = agentResultOverride;
 				phaseToolStats.approvalEvents = 1;
 				phaseToolStats.writeToolEvents = 1;
+				phaseToolStats.successfulWriteToolEvents = 1;
 				phaseToolObservations = agentResultOverrideToolObservations.length > 0 ? agentResultOverrideToolObservations : [{
 					toolCallId: `${phaseRunId}-approved-continuation`,
 					toolName: "approved_tool_continuation",
@@ -519,6 +520,8 @@ export async function continueWorkflowExecution(
 			);
 			sendWorkflowEvent(socket, requestId, session, "workflow.done", {
 				workflowId: plan.id,
+				requestId: persistRequestId,
+				sequence: session.workbenchActiveRun.sequence ?? session.workbenchActiveRunSequence,
 				title: plan.title
 			}, persistRequestId);
 

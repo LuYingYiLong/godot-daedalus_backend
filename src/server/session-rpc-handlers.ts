@@ -86,6 +86,7 @@ import { countWorkflowAutoRepairRounds, insertWorkflowAutoRepairPhases } from ".
 import type { WorkflowPhase, WorkflowPhaseOutput, WorkflowPlan, WorkflowRunState, WorkflowToolObservation } from "../workflow/types.js";
 import {
 	applySessionMetadata,
+	applyWorkspaceToSession,
 	clearActiveSession,
 	createClientSession,
 	type ClientSession,
@@ -187,6 +188,22 @@ function restoreWorkspaceFromSessionMetadata(metadata: SessionMetadata): Workspa
 		kind: metadata.workspaceKind ?? "godot",
 		rootPath: metadata.workspaceRoot,
 		godotExecutablePath: metadata.godotExecutablePath
+	});
+}
+
+function applyWorkspaceToSessionRuntime(socket: WebSocket, session: ClientSession, workspace: WorkspaceConfig | undefined): void {
+	applyWorkspaceToSession(session, workspace);
+	if (workspace === undefined) {
+		updateClientConnection(socket, {
+			workspaceId: null,
+			workspaceRoot: null
+		});
+		return;
+	}
+
+	updateClientConnection(socket, {
+		workspaceId: workspace.id,
+		workspaceRoot: workspace.rootPath
 	});
 }
 
@@ -594,32 +611,10 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 			session.workbenchActiveRun = { status: "idle" };
 			session.workbenchNextStepHints = { hints: [] };
 
-			if (workspace) {
-				session.activeWorkspace = workspace;
-				session.godotProjectPath = workspace.rootPath;
-
-				if (workspace.godotExecutablePath) {
-					session.godotExecutablePath = workspace.godotExecutablePath;
-				}
-			} else if (requestedWorkspaceId === null) {
-				session.activeWorkspace = undefined;
-				session.godotProjectPath = undefined;
-				session.godotExecutablePath = undefined;
-				updateClientConnection(socket, {
-					workspaceId: null,
-					workspaceRoot: null
-				});
-			} else if (workspace === undefined && !shouldUseConnectionWorkspace) {
-				session.activeWorkspace = undefined;
-				session.godotProjectPath = undefined;
-				session.godotExecutablePath = undefined;
-				updateClientConnection(socket, {
-					workspaceId: null,
-					workspaceRoot: null
-				});
-			}
-
 			session = bindConnectionToSessionRuntime(socket, metadata.id, session);
+			if (workspace !== undefined || requestedWorkspaceId === null || !shouldUseConnectionWorkspace) {
+				applyWorkspaceToSessionRuntime(socket, session, workspace);
+			}
 			subscribeSocketToSession(socket, metadata.id);
 
 			sendJson(socket, {
@@ -697,29 +692,12 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 					session.summaryMessage = summary !== null ? createSummaryMessage(summary) : undefined;
 					session.summaryCoveredMessageCount = summary?.messageCount;
 
-					if (workspace) {
-						session.activeWorkspace = workspace;
-						session.godotProjectPath = workspace.rootPath;
-
-						if (workspace.godotExecutablePath) {
-							session.godotExecutablePath = workspace.godotExecutablePath;
-						}
-					} else {
-						session.activeWorkspace = undefined;
-						session.godotProjectPath = undefined;
-						session.godotExecutablePath = undefined;
-					}
-
 					session = bindConnectionToSessionRuntime(socket, timeline.metadata.id, session);
 				}
 				if (timeline.metadata.workspaceId === undefined) {
-					session.activeWorkspace = undefined;
-					session.godotProjectPath = undefined;
-					session.godotExecutablePath = undefined;
-					updateClientConnection(socket, {
-						workspaceId: null,
-						workspaceRoot: null
-					});
+					applyWorkspaceToSessionRuntime(socket, session, undefined);
+				} else {
+					applyWorkspaceToSessionRuntime(socket, session, workspace);
 				}
 				applySessionMetadata(session, timeline.metadata);
 				await applySessionApprovalMode(session, timeline.metadata);

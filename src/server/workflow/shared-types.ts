@@ -6,7 +6,10 @@ export type WorkflowPhaseToolStats = {
 	toolEvents: number;
 	proposeToolEvents: number;
 	writeToolEvents: number;
+	successfulProposeToolEvents: number;
+	successfulWriteToolEvents: number;
 	approvalEvents: number;
+	toolCallRisks: Record<string, string | undefined>;
 };
 
 export type WorkflowPhaseRunResult = {

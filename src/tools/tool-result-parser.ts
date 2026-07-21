@@ -242,15 +242,16 @@ function parseGenericJsonSummary(toolName: string, record: Record<string, unknow
 			failedChecks.push(String(error));
 		}
 	}
-	if (ok === false && failedChecks.length === 0) {
+	const effectiveOk: boolean | undefined = ok ?? (failedChecks.length > 0 ? false : undefined);
+	if (effectiveOk === false && failedChecks.length === 0) {
 		failedChecks.push(createFailureMessage(record, `${toolName} returned ok=false`));
 	}
 	const environmentIssue: boolean = isDiagnosticsEnvironmentIssue(toolName, record);
 
 	return {
-		ok,
-		validationStatus: ok === false ? "failed" : ok === true ? "passed" : "unknown",
-		summary: getString(record.summary) ?? `${toolName}${ok === undefined ? "" : ok ? " passed" : ` failed: ${createFailureMessage(record, "ok=false")}`}`,
+		ok: effectiveOk,
+		validationStatus: effectiveOk === false ? "failed" : effectiveOk === true ? "passed" : "unknown",
+		summary: getString(record.summary) ?? `${toolName}${effectiveOk === undefined ? "" : effectiveOk ? " passed" : ` failed: ${createFailureMessage(record, "ok=false")}`}`,
 		failedChecks: failedChecks.length > 0 ? failedChecks : undefined,
 		environmentIssue: environmentIssue || undefined,
 		artifactRefs: collectArtifactRefs(args, record)

@@ -157,6 +157,13 @@ test("chat orchestrator constrains hidden read-only tool answers", async (): Pro
 	assert.equal(source.includes("routeDecision,"), true);
 });
 
+test("llm workflow planner only requires first tool calls for write and verify phases", async (): Promise<void> => {
+	const source: string = await readFile(new URL("../../../src/workflow/llm-planner.ts", import.meta.url), "utf8");
+
+	assert.equal(source.includes('toolGroup === "read" || toolGroup === "write"'), false);
+	assert.equal(source.includes('toolGroup === "write" || toolGroup === "verify" ? true : undefined'), true);
+});
+
 test("chat orchestrator emits run started before workflow routing", async (): Promise<void> => {
 	const source: string = await readFile(new URL("../../../src/server/chat-orchestrator.ts", import.meta.url), "utf8");
 	const registerIndex: number = source.indexOf("registerSessionRunController(runSessionId, request.id, abortController)");
@@ -203,4 +210,17 @@ test("chat orchestrator preserves workflow failures instead of reclassifying the
 	assert.ok(providerErrorIndex > workflowErrorIndex);
 	assert.equal(source.slice(workflowErrorIndex, providerErrorIndex).includes("code: \"agent_run_error\""), true);
 	assert.equal(source.slice(workflowErrorIndex, providerErrorIndex).includes("workflow_failed"), true);
+});
+
+test("approval continuation workflow failures emit terminal run errors on the original request", async (): Promise<void> => {
+	const source: string = await readFile(new URL("../../../src/server/handlers/approval-handlers.ts", import.meta.url), "utf8");
+	const catchIndex: number = source.indexOf("if (error instanceof WorkflowExecutionError)");
+	const responseIndex: number = source.indexOf("sendJson(socket, {", catchIndex);
+	const errorBlock: string = source.slice(catchIndex, responseIndex);
+
+	assert.ok(catchIndex >= 0);
+	assert.equal(errorBlock.includes("sendWorkflowEvent(socket, continuationRequestId, session, \"workflow.error\""), true);
+	assert.equal(errorBlock.includes("requestId: continuationRequestId"), true);
+	assert.equal(errorBlock.includes("code: \"agent_run_error\""), true);
+	assert.equal(source.includes("sendAgentCancelled(socket, continuationRequestId, session);"), true);
 });

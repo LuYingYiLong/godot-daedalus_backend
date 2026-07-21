@@ -276,6 +276,10 @@ export function createApprovedWorkflowToolObservation(pendingApproval: PendingAp
 export function sendAgentPaused(socket: WebSocket, requestId: string, session: ClientSession, runId: string, agentResult: Extract<ProviderAgentResult, { status: "approval_required" }>, persistRequestId: string = requestId): void {
 	sendSessionEvent(socket, requestId, session, "agent.run.paused", {
 		runId,
+		requestId,
+		status: "paused",
+		statusCode: "approval_required",
+		sequence: session.workbenchActiveRun.sequence ?? session.workbenchActiveRunSequence,
 		reason: "approval_required",
 		approvalId: agentResult.approvalId,
 		toolName: agentResult.toolName,
@@ -358,6 +362,12 @@ export async function sendContinuedAgentResult(
 			historyBudgetTokens,
 			mcpServers: mcpHost.getConnectedServerIds()
 		}
+	}, pendingContinuation.requestId);
+	sendSessionEvent(socket, requestId, session, "agent.run.done", {
+		runId,
+		requestId: pendingContinuation.requestId,
+		status: "done",
+		sequence: session.workbenchActiveRun.sequence ?? session.workbenchActiveRunSequence
 	}, pendingContinuation.requestId);
 	sendJson(socket, {
 		type: "response",

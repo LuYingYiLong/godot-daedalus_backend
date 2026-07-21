@@ -126,6 +126,15 @@ export function bumpWorkbenchRevision(session: ClientSession): number {
 	return session.workbenchRevision;
 }
 
+function nextWorkbenchActiveRunSequence(session: ClientSession): number {
+	session.workbenchActiveRunSequence += 1;
+	return session.workbenchActiveRunSequence;
+}
+
+export function getCurrentWorkbenchActiveRunSequence(session: ClientSession): number {
+	return session.workbenchActiveRun.sequence ?? session.workbenchActiveRunSequence;
+}
+
 export function clearWorkbenchComposer(session: ClientSession, preservePinnedContext: boolean = true): void {
 	const now: string = new Date().toISOString();
 	session.workbenchComposer = {
@@ -139,15 +148,18 @@ export function clearWorkbenchComposer(session: ClientSession, preservePinnedCon
 	bumpWorkbenchRevision(session);
 }
 
-export function setWorkbenchActiveRun(session: ClientSession, activeRun: Partial<WorkbenchActiveRun>): void {
+export function setWorkbenchActiveRun(session: ClientSession, activeRun: Partial<WorkbenchActiveRun>): WorkbenchActiveRun {
+	const sequence: number = nextWorkbenchActiveRunSequence(session);
 	session.workbenchActiveRun = {
 		...session.workbenchActiveRun,
-		...activeRun
+		...activeRun,
+		sequence
 	};
 	if (activeRun.status === "idle") {
-		session.workbenchActiveRun = { status: "idle" };
+		session.workbenchActiveRun = { status: "idle", sequence };
 	}
 	bumpWorkbenchRevision(session);
+	return session.workbenchActiveRun;
 }
 
 export function setWorkbenchNextStepHints(
@@ -184,11 +196,13 @@ function getFirstPendingToolBudget(session: ClientSession): PendingToolBudget | 
 }
 
 function deriveActiveRun(session: ClientSession): WorkbenchActiveRun {
+	const sequence: number = getCurrentWorkbenchActiveRunSequence(session);
 	if (session.approvalGateway.listPending().length > 0) {
 		return {
 			...session.workbenchActiveRun,
 			status: "approval",
-			requestId: session.workbenchActiveRun.requestId ?? session.activeRunRequestId
+			requestId: session.workbenchActiveRun.requestId ?? session.activeRunRequestId,
+			sequence
 		};
 	}
 	const pendingToolBudget: PendingToolBudget | undefined = getFirstPendingToolBudget(session);
@@ -197,20 +211,25 @@ function deriveActiveRun(session: ClientSession): WorkbenchActiveRun {
 			...session.workbenchActiveRun,
 			status: "paused",
 			statusCode: "tool_budget",
-			requestId: pendingToolBudget.requestId
+			requestId: pendingToolBudget.requestId,
+			sequence
 		};
 	}
 	if (session.activeRunRequestId !== undefined) {
 		return {
 			...session.workbenchActiveRun,
 			status: session.workbenchActiveRun.status === "cancelling" ? "cancelling" : "streaming",
-			requestId: session.activeRunRequestId
+			requestId: session.activeRunRequestId,
+			sequence
 		};
 	}
 	if (session.workbenchActiveRun.status === "idle") {
-		return { status: "idle" };
+		return { status: "idle", sequence };
 	}
-	return session.workbenchActiveRun;
+	return {
+		...session.workbenchActiveRun,
+		sequence
+	};
 }
 
 function applyWorkbenchModelSelection(
@@ -325,12 +344,14 @@ export function applyWorkbenchPatch(session: ClientSession, patch: WorkbenchPatc
 		changed = true;
 	}
 	if (patch.activeRun !== undefined) {
+		const sequence: number = nextWorkbenchActiveRunSequence(session);
 		session.workbenchActiveRun = {
 			...session.workbenchActiveRun,
-			...patch.activeRun
+			...patch.activeRun,
+			sequence
 		};
 		if (patch.activeRun.status === "idle") {
-			session.workbenchActiveRun = { status: "idle" };
+			session.workbenchActiveRun = { status: "idle", sequence };
 		}
 		changed = true;
 	}

@@ -513,6 +513,12 @@ async function runHiddenAnswerExecution(params: {
 			mcpServers: params.mcpHost.getConnectedServerIds()
 		}
 	});
+	sendSessionEvent(params.socket, params.requestId, params.session, "agent.run.done", {
+		runId,
+		requestId: params.requestId,
+		status: "done",
+		sequence: params.session.workbenchActiveRun.sequence ?? params.session.workbenchActiveRunSequence
+	});
 	sendJson(params.socket, {
 		type: "response",
 		id: params.requestId,
@@ -688,9 +694,16 @@ import { createProviderRuntimeContext, createSafeMarkdownFence, createMcpSystemC
 type ToolBudgetDecision = "continue" | "stop";
 
 function cloneToolBudgetPhaseStats(stats: PendingToolBudgetPhaseStats | undefined): PendingToolBudgetPhaseStats {
-	return stats === undefined
-		? createEmptyWorkflowPhaseToolStats()
-		: { ...stats };
+	const fallback: PendingToolBudgetPhaseStats = createEmptyWorkflowPhaseToolStats();
+	if (stats === undefined) {
+		return fallback;
+	}
+
+	return {
+		...fallback,
+		...stats,
+		toolCallRisks: { ...(stats.toolCallRisks ?? {}) }
+	};
 }
 
 function getQueueItemIdFromParams(params: AiChatParams): number | undefined {
@@ -1016,12 +1029,41 @@ async function handleToolBudgetDecision(
 		}
 		setWorkbenchActiveRun(session, { status: "idle" });
 		await finishQueueItemForRun(socket, pending.requestId, session, queueItemId, "failed");
+		if (error instanceof WorkflowExecutionError) {
+			const workflowErrorMessage: string = error.message.length > 0
+				? error.message
+				: error.originalError instanceof Error
+					? error.originalError.message
+					: "Workflow failed";
+			sendWorkflowEvent(socket, pending.requestId, session, "workflow.error", {
+				workflowId: error.plan.id,
+				requestId: pending.requestId,
+				title: error.plan.title,
+				code: "agent_run_error",
+				message: workflowErrorMessage,
+				sequence: session.workbenchActiveRun.sequence ?? session.workbenchActiveRunSequence
+			}, pending.requestId);
+			emitWorkbenchUpdated(socket, responseId, session);
+			sendJson(socket, {
+				type: "response",
+				id: responseId,
+				ok: false,
+				error: {
+					code: "agent_run_error",
+					message: workflowErrorMessage
+				}
+			});
+			return;
+		}
 		emitWorkbenchUpdated(socket, responseId, session);
 		const toolBudgetErrorStatus = classifyProviderError(error);
 		sendSessionEvent(socket, responseId, session, "agent.run.error", {
 			runId,
+			requestId: pending.requestId,
+			status: "error",
 			code: toolBudgetErrorStatus.code,
-			message: toolBudgetErrorStatus.message
+			message: toolBudgetErrorStatus.message,
+			sequence: session.workbenchActiveRun.sequence ?? session.workbenchActiveRunSequence
 		}, pending.requestId);
 		sendJson(socket, {
 			type: "response",
@@ -1229,16 +1271,18 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 			const turnStartedAt: string = new Date().toISOString();
 			let persistedParams: AiChatParams = params;
 			let queuedRunForcedStatus: "failed" | "cancelled" | undefined;
-			sendSessionEvent(socket, request.id, session, "agent.run.started", {
-				runId: request.id,
-				requestId: request.id
-			});
 			await setQueueStatusForRun(socket, request.id, session, queueItemId, "sending");
-			setWorkbenchActiveRun(session, {
+			const startedActiveRun = setWorkbenchActiveRun(session, {
 				status: "streaming",
 				requestId: request.id,
 				startedAt: turnStartedAt,
 				queueItemId
+			});
+			sendSessionEvent(socket, request.id, session, "agent.run.started", {
+				runId: request.id,
+				requestId: request.id,
+				status: "streaming",
+				sequence: startedActiveRun.sequence
 			});
 			emitWorkbenchUpdated(socket, request.id, session);
 
@@ -1534,6 +1578,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 						workspaceId: session.activeWorkspace?.id,
 						durationMs: Date.now() - runStartedAtMs
 					});
+					sendAgentCancelled(socket, request.id, session);
 					sendJson(socket, {
 						type: "response",
 						id: request.id,
@@ -1552,6 +1597,14 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 						sessionId: session.sessionId,
 						code: error.code,
 						message: error.message
+					});
+					sendSessionEvent(socket, request.id, session, "agent.run.error", {
+						runId: request.id,
+						requestId: request.id,
+						status: "error",
+						code: error.code,
+						message: error.message,
+						sequence: session.workbenchActiveRun.sequence ?? session.workbenchActiveRunSequence
 					});
 					sendJson(socket, {
 						type: "response",
@@ -1574,8 +1627,11 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 					});
 					sendSessionEvent(socket, request.id, session, "agent.run.error", {
 						runId: request.id,
+						requestId: request.id,
+						status: "error",
 						code: error.code,
-						message: error.message
+						message: error.message,
+						sequence: session.workbenchActiveRun.sequence ?? session.workbenchActiveRunSequence
 					});
 					await waitForSessionEventPersistence(session);
 					await appendFailedChatTurnToSession(
@@ -1614,6 +1670,15 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 						workspaceId: session.activeWorkspace?.id,
 						durationMs: Date.now() - runStartedAtMs
 					});
+					sendSessionEvent(socket, request.id, session, "agent.run.error", {
+						runId: error.plan.id,
+						requestId: request.id,
+						status: "error",
+						title: error.plan.title,
+						code: "agent_run_error",
+						message: workflowErrorMessage,
+						sequence: session.workbenchActiveRun.sequence ?? session.workbenchActiveRunSequence
+					});
 					await waitForSessionEventPersistence(session);
 					await appendFailedChatTurnToSession(
 						session,
@@ -1650,8 +1715,11 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				});
 				sendSessionEvent(socket, request.id, session, "agent.run.error", {
 					runId: request.id,
+					requestId: request.id,
+					status: "error",
 					code: providerError.code,
-					message: providerError.message
+					message: providerError.message,
+					sequence: session.workbenchActiveRun.sequence ?? session.workbenchActiveRunSequence
 				});
 				await waitForSessionEventPersistence(session);
 				await appendFailedChatTurnToSession(

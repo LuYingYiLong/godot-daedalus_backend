@@ -22,7 +22,9 @@ export function sendAgentCancelled(socket: WebSocket, requestId: string, session
 	sendSessionEvent(socket, requestId, session, "agent.run.cancelled", {
 		runId,
 		requestId,
-		reason
+		status: "cancelled",
+		reason,
+		sequence: session.workbenchActiveRun.sequence ?? session.workbenchActiveRunSequence
 	}, requestId);
 }
 

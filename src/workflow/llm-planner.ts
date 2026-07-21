@@ -261,7 +261,8 @@ function createPhaseFromStep(step: LlmPlanStep, index: number, usedIds: Set<stri
 		toolBudget: getToolBudgetForToolGroup(toolGroup),
 		allowedTools: getAllowedToolsForLlmPlannedStep(toolGroup, step.title, step.instruction),
 		instruction: clipText(step.instruction, MAX_PHASE_INSTRUCTION_CHARS),
-		acceptanceCriteria: normalizeAcceptanceCriteria(step.acceptanceCriteria, toolGroup)
+		acceptanceCriteria: normalizeAcceptanceCriteria(step.acceptanceCriteria, toolGroup),
+		requireToolCallOnFirstStep: toolGroup === "write" || toolGroup === "verify" ? true : undefined
 	};
 }
 

@@ -320,6 +320,33 @@ test("session terminal errors are emitted once per request and message", (): voi
 	assert.equal(studioSocket.sent.filter((message: Record<string, unknown>): boolean => message.event === "agent.run.error").length, 1);
 });
 
+test("session terminal cancellations are emitted once per request", (): void => {
+	const originSocket = createSocket();
+	const studioSocket = createSocket();
+	const originSession = createClientSession(undefined);
+	const studioSession = createClientSession(undefined);
+	originSession.sessionId = "session-terminal-cancel";
+	studioSession.sessionId = "session-terminal-cancel";
+	registerClientConnection(originSocket, originSession);
+	registerClientConnection(studioSocket, studioSession);
+	subscribeSocketToSession(originSocket, "session-terminal-cancel");
+	subscribeSocketToSession(studioSocket, "session-terminal-cancel");
+
+	sendSessionEvent(originSocket, "request-cancel", originSession, "agent.run.cancelled", {
+		runId: "request-cancel",
+		requestId: "request-cancel",
+		reason: "cancelled"
+	});
+	sendSessionEvent(originSocket, "request-cancel", originSession, "agent.run.cancelled", {
+		runId: "request-cancel",
+		requestId: "request-cancel",
+		reason: "cancelled"
+	});
+
+	assert.equal(originSocket.sent.filter((message: Record<string, unknown>): boolean => message.event === "agent.run.cancelled").length, 1);
+	assert.equal(studioSocket.sent.filter((message: Record<string, unknown>): boolean => message.event === "agent.run.cancelled").length, 1);
+});
+
 test("opening the same session binds frontend connections to one runtime", (): void => {
 	const firstSocket = createSocket();
 	const secondSocket = createSocket();

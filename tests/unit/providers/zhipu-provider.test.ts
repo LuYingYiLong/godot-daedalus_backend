@@ -202,7 +202,7 @@ test("Zhipu OpenAI-compatible requests preserve image input, streaming, and mode
 			new ApprovalGateway(),
 			["mcp_godot_read_text_file"]
 		);
-		assert.equal(agentResult.status, "completed");
+		assert.equal(agentResult.status, "protocol_violation");
 		assert.equal(requests[1]?.body.tool_choice, "auto");
 
 		const chunks: string[] = [];
@@ -210,7 +210,8 @@ test("Zhipu OpenAI-compatible requests preserve image input, streaming, and mode
 			chunks.push(chunk);
 		}
 		assert.deepEqual(chunks, ["stream"]);
-		assert.equal(requests[2]?.body.stream, true);
+		const streamRequest = requests.find((record: RecordedRequest): boolean => record.body.stream === true);
+		assert.equal(streamRequest?.body.stream, true);
 
 		const models = await fetchOpenAICompatibleModels({ provider: "zhipu", apiKey: "zhipu-test-key", baseUrl });
 		assert.equal(models[0]?.id, "glm-5.2");

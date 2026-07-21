@@ -161,7 +161,10 @@ export function createEmptyWorkflowPhaseToolStats(): WorkflowPhaseToolStats {
 		toolEvents: 0,
 		proposeToolEvents: 0,
 		writeToolEvents: 0,
-		approvalEvents: 0
+		successfulProposeToolEvents: 0,
+		successfulWriteToolEvents: 0,
+		approvalEvents: 0,
+		toolCallRisks: {}
 	};
 }
 
@@ -181,11 +184,26 @@ export function updateWorkflowPhaseToolStats(stats: WorkflowPhaseToolStats, even
 		return;
 	}
 
+	if (event.type === "tool.result") {
+		if (event.validationStatus === "failed" || event.ok === false) {
+			return;
+		}
+		const resultRisk: string | undefined = stats.toolCallRisks[event.toolCallId] ?? getToolPolicy(toolName)?.risk;
+		if (resultRisk === "propose") {
+			stats.successfulProposeToolEvents += 1;
+		}
+		if (resultRisk === "write" || resultRisk === "destructive") {
+			stats.successfulWriteToolEvents += 1;
+		}
+		return;
+	}
+
 	if (event.type !== "tool.call" && event.type !== "tool.approval_required") {
 		return;
 	}
 
 	const policy = getEffectiveToolPolicy(toolName, event.args);
+	stats.toolCallRisks[event.toolCallId] = policy?.risk;
 	if (policy?.risk === "propose") {
 		stats.proposeToolEvents += 1;
 	}
@@ -199,11 +217,11 @@ export function shouldRequireWorkflowWriteTool(phase: WorkflowPhase): boolean {
 }
 
 export function didWorkflowWritePhaseExecute(phase: WorkflowPhase, stats: WorkflowPhaseToolStats): boolean {
-	if (stats.writeToolEvents > 0 || stats.approvalEvents > 0) {
+	if (stats.successfulWriteToolEvents > 0 || stats.approvalEvents > 0) {
 		return true;
 	}
 
-	return isWorkflowProposalPhase(phase) && stats.proposeToolEvents > 0;
+	return isWorkflowProposalPhase(phase) && stats.successfulProposeToolEvents > 0;
 }
 
 export function isWorkflowProposalPhase(phase: WorkflowPhase): boolean {

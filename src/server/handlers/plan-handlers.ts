@@ -136,16 +136,18 @@ function beginPlanOperationRun(
 	session.activeAbortControllers.set(runRequestId, abortController);
 	session.activeRunRequestId = runRequestId;
 	registerSessionRunController(session.sessionId, runRequestId, abortController);
+	const startedActiveRun = setWorkbenchActiveRun(session, {
+		status: "streaming",
+		requestId: runRequestId
+	});
 	sendSessionEvent(socket, runRequestId, session, "agent.run.started", {
 		runId: runRequestId,
 		requestId: runRequestId,
+		status: "streaming",
+		sequence: startedActiveRun.sequence,
 		operationRequestId: requestId,
 		planId: plan.metadata.planId,
 		mode: "plan"
-	});
-	setWorkbenchActiveRun(session, {
-		status: "streaming",
-		requestId: runRequestId
 	});
 	emitWorkbenchUpdated(socket, requestId, session);
 	return {
@@ -227,6 +229,14 @@ export async function handlePlanRequest(socket: WebSocket, request: ClientReques
 					);
 					await emitPlanUpdate(socket, request.id, session, updatedPlan, false);
 					sendPlanResponse(socket, request.id, updatedPlan);
+					sendSessionEvent(socket, activePlanOperation.runRequestId, session, "agent.run.done", {
+						runId: activePlanOperation.runRequestId,
+						requestId: activePlanOperation.runRequestId,
+						status: "done",
+						sequence: session.workbenchActiveRun.sequence ?? session.workbenchActiveRunSequence,
+						operationRequestId: request.id,
+						planId: plan.metadata.planId
+					});
 				} finally {
 					finishPlanOperationRun(socket, session, activePlanOperation);
 					activePlanOperation = null;
@@ -268,6 +278,14 @@ export async function handlePlanRequest(socket: WebSocket, request: ClientReques
 					);
 					await emitPlanUpdate(socket, request.id, session, updatedPlan, true);
 					sendPlanResponse(socket, request.id, updatedPlan);
+					sendSessionEvent(socket, activePlanOperation.runRequestId, session, "agent.run.done", {
+						runId: activePlanOperation.runRequestId,
+						requestId: activePlanOperation.runRequestId,
+						status: "done",
+						sequence: session.workbenchActiveRun.sequence ?? session.workbenchActiveRunSequence,
+						operationRequestId: request.id,
+						planId: plan.metadata.planId
+					});
 				} finally {
 					finishPlanOperationRun(socket, session, activePlanOperation);
 					activePlanOperation = null;
@@ -361,8 +379,11 @@ export async function handlePlanRequest(socket: WebSocket, request: ClientReques
 						const message: string = error instanceof Error ? error.message : String(error);
 						sendSessionEvent(socket, executionRequestId, session, "agent.run.error", {
 							runId: executionRequestId,
+							requestId: executionRequestId,
+							status: "error",
 							code: "plan_execution_failed",
-							message
+							message,
+							sequence: session.workbenchActiveRun.sequence ?? session.workbenchActiveRunSequence
 						});
 						logger.error("plan", "approved_plan_execution_failed", error, {
 							planId: plan.metadata.planId,
@@ -406,6 +427,8 @@ export async function handlePlanRequest(socket: WebSocket, request: ClientReques
 			sendSessionEvent(socket, failedRunRequestId, session, "agent.run.error", {
 				runId: failedRunRequestId,
 				requestId: failedRunRequestId,
+				status: "error",
+				sequence: session.workbenchActiveRun.sequence ?? session.workbenchActiveRunSequence,
 				operationRequestId: request.id,
 				planId: failedPlanId ?? null,
 				code: "plan_error",

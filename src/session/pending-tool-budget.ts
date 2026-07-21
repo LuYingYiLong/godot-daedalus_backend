@@ -1,13 +1,9 @@
 import type { ToolBudgetLimitKind } from "../providers/agent-types.js";
 import type { PendingAiContinuation } from "./pending-continuation.js";
 import type { WorkflowToolObservation } from "../workflow/types.js";
+import type { WorkflowPhaseToolStats } from "../server/workflow/shared-types.js";
 
-export type PendingToolBudgetPhaseStats = {
-	toolEvents: number;
-	proposeToolEvents: number;
-	writeToolEvents: number;
-	approvalEvents: number;
-};
+export type PendingToolBudgetPhaseStats = WorkflowPhaseToolStats;
 
 export type PendingToolBudget = {
 	budgetId: string;

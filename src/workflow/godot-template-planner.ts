@@ -26,18 +26,37 @@ const SCENE_READ_TOOLS: string[] = [
 ];
 
 const SCRIPT_WRITE_TOOLS: string[] = [
+	"mcp_godot_propose_create_text_file",
 	"mcp_godot_create_text_file",
+	"mcp_godot_propose_overwrite_text_file",
 	"mcp_godot_overwrite_text_file",
+	"mcp_godot_propose_replace_text_in_file",
 	"mcp_godot_replace_text_in_file"
 ];
 
 const SCENE_CREATE_WRITE_TOOLS: string[] = [
+	"mcp_godot_propose_create_scene",
 	"mcp_godot_create_scene",
+	"mcp_godot_propose_create_text_file",
 	"mcp_godot_create_text_file"
 ];
 
+const SCENE_EDIT_WRITE_TOOLS: string[] = [
+	"mcp_godot_propose_overwrite_text_file",
+	"mcp_godot_overwrite_text_file",
+	"mcp_godot_propose_apply_scene_patch",
+	"mcp_godot_apply_scene_patch",
+	"mcp_godot_editor_apply_scene_patch",
+	"mcp_godot_propose_add_node_to_scene",
+	"mcp_godot_add_node_to_scene",
+	"mcp_godot_propose_connect_signal_in_scene",
+	"mcp_godot_connect_signal_in_scene"
+];
+
 const SCENE_ATTACH_WRITE_TOOLS: string[] = [
+	"mcp_godot_propose_attach_script_to_node",
 	"mcp_godot_attach_script_to_node",
+	"mcp_godot_propose_apply_scene_patch",
 	"mcp_godot_apply_scene_patch"
 ];
 
@@ -308,11 +327,11 @@ function narrowWriteToolsForText(text: string): string[] {
 	if (includesAny(normalized, ["attach", "挂载", "脚本引用"])) {
 		return ["mcp_godot_inspect_scene_tree", "mcp_godot_read_text_file", ...SCENE_ATTACH_WRITE_TOOLS];
 	}
-	if (includesAny(normalized, ["create scene", "创建场景", ".tscn", "scene root", "根节点"])) {
-		return ["mcp_godot_read_text_file", "mcp_godot_inspect_scene_tree", ...SCENE_CREATE_WRITE_TOOLS];
-	}
-	if (includesAny(normalized, ["project.godot", "项目设置", "project setting", "inputmap", "display/window", "application/config"])) {
+	if (includesAny(normalized, ["project.godot", "项目设置", "project setting", "projectsettings", "inputmap", "display/window", "application/config", "application/run/main_scene", "run/main_scene", "main_scene", "main scene", "主场景", "启动场景"])) {
 		return ["mcp_godot_get_project_settings", ...PROJECT_SETTING_WRITE_TOOLS];
+	}
+	if (includesAny(normalized, ["create scene", "创建场景", "scene root", "根节点", ".tscn", "场景", "ui", "界面"])) {
+		return ["mcp_godot_read_text_file", "mcp_godot_inspect_scene_tree", ...SCENE_CREATE_WRITE_TOOLS, ...SCENE_EDIT_WRITE_TOOLS];
 	}
 	if (includesAny(normalized, [".gd", "script", "脚本", "gdscript"])) {
 		return ["mcp_godot_read_text_file", ...SCRIPT_WRITE_TOOLS];

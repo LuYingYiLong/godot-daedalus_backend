@@ -28,16 +28,7 @@ export function mapWorkflowEventToAgentEvent(eventName: ServerEvent["event"], da
 	const record: Record<string, unknown> = data as Record<string, unknown>;
 	const workflowId: string = String(record.workflowId ?? record.runId ?? "");
 	if (eventName === "workflow.started") {
-		return {
-			eventName: "agent.run.started",
-			data: {
-				runId: workflowId,
-				requestId: record.requestId ?? null,
-				title: record.title,
-				source: record.source,
-				steps: record.phases
-			}
-		};
+		return null;
 	}
 	if (eventName === "workflow.todo.updated") {
 		return {
@@ -77,7 +68,10 @@ export function mapWorkflowEventToAgentEvent(eventName: ServerEvent["event"], da
 			eventName: "agent.run.done",
 			data: {
 				runId: workflowId,
-				title: record.title
+				requestId: record.requestId ?? null,
+				status: "done",
+				title: record.title,
+				sequence: record.sequence
 			}
 		};
 	}
@@ -86,9 +80,12 @@ export function mapWorkflowEventToAgentEvent(eventName: ServerEvent["event"], da
 			eventName: "agent.run.error",
 			data: {
 				runId: workflowId,
+				requestId: record.requestId ?? null,
+				status: "error",
 				title: record.title,
 				code: record.code ?? "agent_run_error",
-				message: record.message
+				message: record.message,
+				sequence: record.sequence
 			}
 		};
 	}

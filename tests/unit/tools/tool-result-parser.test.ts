@@ -23,6 +23,23 @@ test("terminal preset failed result becomes structured failed validation", (): v
 	assert.match(summary.failedChecks?.[0] ?? "", /Unexpected token/);
 });
 
+test("generic valid false result with errors becomes failed validation", (): void => {
+	const summary = parseToolResultSummary(
+		"mcp_godot_create_text_file",
+		{ relativePath: "scenes/tic_tac_toe.tscn" },
+		JSON.stringify({
+			valid: false,
+			path: "scenes/tic_tac_toe.tscn",
+			errors: ["File already exists: scenes/tic_tac_toe.tscn"]
+		})
+	);
+
+	assert.equal(summary.ok, false);
+	assert.equal(summary.validationStatus, "failed");
+	assert.deepEqual(summary.failedChecks, ["File already exists: scenes/tic_tac_toe.tscn"]);
+	assert.deepEqual(summary.artifactRefs, ["scenes/tic_tac_toe.tscn"]);
+});
+
 test("Godot terminal spawn errors are marked as environment issues", (): void => {
 	const summary = parseToolResultSummary(
 		"mcp_terminal_run_safe_preset",

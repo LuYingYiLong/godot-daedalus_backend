@@ -523,16 +523,42 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 				const queueHelpers = await import("../chat-orchestrator.js");
 				await queueHelpers.finishQueueItemForRun(socket, continuationRequestId, session, queueItemId, "cancelled");
 				emitWorkbenchUpdated(socket, request.id, session);
-				sendAgentCancelled(socket, request.id, session);
+				sendAgentCancelled(socket, continuationRequestId, session);
 				break;
 			}
 			setWorkbenchActiveRun(session, { status: "idle" });
 			const queueHelpers = await import("../chat-orchestrator.js");
 			await queueHelpers.finishQueueItemForRun(socket, continuationRequestId, session, queueItemId, "failed");
+			const errorMessage: string = error instanceof Error ? error.message : "Approval failed";
+			if (error instanceof WorkflowExecutionError) {
+				const workflowErrorMessage: string = error.message.length > 0
+					? error.message
+					: error.originalError instanceof Error
+						? error.originalError.message
+						: "Workflow failed";
+				sendWorkflowEvent(socket, continuationRequestId, session, "workflow.error", {
+					workflowId: error.plan.id,
+					requestId: continuationRequestId,
+					title: error.plan.title,
+					code: "agent_run_error",
+					message: workflowErrorMessage,
+					sequence: session.workbenchActiveRun.sequence ?? session.workbenchActiveRunSequence
+				}, continuationRequestId);
+			} else {
+				const approvalErrorStatus = classifyProviderError(error);
+				sendSessionEvent(socket, continuationRequestId, session, "agent.run.error", {
+					runId: continuationRequestId,
+					requestId: continuationRequestId,
+					status: "error",
+					code: approvalErrorStatus.code,
+					message: approvalErrorStatus.message,
+					sequence: session.workbenchActiveRun.sequence ?? session.workbenchActiveRunSequence
+				}, continuationRequestId);
+			}
 			emitWorkbenchUpdated(socket, request.id, session);
 			if (session.sessionId !== undefined) {
-				await appendApprovalEvent(session.sessionId, request.params.approvalId, request.id, "failed", {
-					message: error instanceof Error ? error.message : "Approval failed"
+				await appendApprovalEvent(session.sessionId, request.params.approvalId, continuationRequestId, "failed", {
+					message: errorMessage
 				});
 			}
 			sendJson(socket, {
@@ -541,7 +567,7 @@ export async function handleApprovalRequest(socket: WebSocket, request: ClientRe
 				ok: false,
 				error: {
 					code: "approval_error",
-					message: error instanceof Error ? error.message : "Approval failed"
+					message: errorMessage
 				}
 			});
 		} finally {

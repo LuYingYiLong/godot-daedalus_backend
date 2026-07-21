@@ -49,6 +49,7 @@ export type WorkbenchActiveRun = {
 	startedAt?: string | undefined;
 	queueItemId?: number | undefined;
 	statusCode?: string | undefined;
+	sequence?: number | undefined;
 };
 
 export type WorkbenchNextStepHint = {
@@ -101,6 +102,7 @@ export type ClientSession = {
 	messageQueueNextId: number;
 	messageQueueDrainActive: boolean;
 	workbenchRevision: number;
+	workbenchActiveRunSequence: number;
 	workbenchComposer: WorkbenchComposer;
 	workbenchActiveRun: WorkbenchActiveRun;
 	workbenchNextStepHints: WorkbenchNextStepHints;
@@ -129,6 +131,7 @@ export function createClientSession(defaultWorkspace: WorkspaceConfig | undefine
 		messageQueueNextId: 0,
 		messageQueueDrainActive: false,
 		workbenchRevision: 0,
+		workbenchActiveRunSequence: 0,
 		workbenchComposer: {
 			text: "",
 			additionalContext: [],
@@ -145,6 +148,19 @@ export function createClientSession(defaultWorkspace: WorkspaceConfig | undefine
 	};
 }
 
+export function applyWorkspaceToSession(session: ClientSession, workspace: WorkspaceConfig | undefined): void {
+	if (workspace === undefined) {
+		session.activeWorkspace = undefined;
+		session.godotProjectPath = undefined;
+		session.godotExecutablePath = undefined;
+		return;
+	}
+
+	session.activeWorkspace = workspace;
+	session.godotProjectPath = workspace.rootPath;
+	session.godotExecutablePath = workspace.godotExecutablePath;
+}
+
 export function clearActiveSession(session: ClientSession): void {
 	session.sessionId = undefined;
 	session.sessionTitle = undefined;
@@ -158,6 +174,7 @@ export function clearActiveSession(session: ClientSession): void {
 	session.messageQueueNextId = 0;
 	session.messageQueueDrainActive = false;
 	session.workbenchRevision = 0;
+	session.workbenchActiveRunSequence = 0;
 	session.workbenchComposer = {
 		text: "",
 		additionalContext: [],

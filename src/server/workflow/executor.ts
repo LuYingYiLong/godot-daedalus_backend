@@ -28,6 +28,7 @@ export async function startWorkflowExecution(
 	sendWorkflowEvent(socket, requestId, session, "workflow.started", {
 		workflowId: plan.id,
 		requestId,
+		sequence: session.workbenchActiveRun.sequence ?? session.workbenchActiveRunSequence,
 		title: plan.title,
 		source: plan.source ?? "fixed",
 		revision: plan.revision ?? 0,
@@ -62,7 +63,10 @@ export async function startWorkflowExecution(
 		sendWorkflowTodoSnapshot(socket, requestId, session, failedPlan, requestId, latestPhaseOutputs);
 		sendWorkflowEvent(socket, requestId, session, "workflow.error", {
 			workflowId: latestPlan.id,
+			requestId,
+			sequence: session.workbenchActiveRun.sequence ?? session.workbenchActiveRunSequence,
 			title: latestPlan.title,
+			code: "agent_run_error",
 			message: error instanceof Error ? error.message : "Workflow failed"
 		});
 		throw error;
