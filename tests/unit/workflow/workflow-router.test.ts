@@ -157,6 +157,20 @@ test("chat orchestrator constrains hidden read-only tool answers", async (): Pro
 	assert.equal(source.includes("routeDecision,"), true);
 });
 
+test("chat orchestrator prefers deterministic Godot templates before LLM workflow planning", async (): Promise<void> => {
+	const source: string = await readFile(new URL("../../../src/server/chat-orchestrator.ts", import.meta.url), "utf8");
+	const plannerFunctionStart: number = source.indexOf("async function createWorkflowPlanForRoute");
+	const preferredTemplateIndex: number = source.indexOf("const preferredTemplate", plannerFunctionStart);
+	const llmPlannerIndex: number = source.indexOf("createLlmWorkflowPlan", plannerFunctionStart);
+	const runtimeProbeIndex: number = source.indexOf("hasGodotProjectFile", plannerFunctionStart);
+
+	assert.ok(plannerFunctionStart >= 0);
+	assert.ok(preferredTemplateIndex > plannerFunctionStart);
+	assert.ok(llmPlannerIndex > preferredTemplateIndex);
+	assert.ok(runtimeProbeIndex > plannerFunctionStart);
+	assert.equal(source.includes('params.options?.workflow !== "llm_planned"'), true);
+});
+
 test("llm workflow planner only requires first tool calls for write and verify phases", async (): Promise<void> => {
 	const source: string = await readFile(new URL("../../../src/workflow/llm-planner.ts", import.meta.url), "utf8");
 
@@ -223,4 +237,13 @@ test("approval continuation workflow failures emit terminal run errors on the or
 	assert.equal(errorBlock.includes("requestId: continuationRequestId"), true);
 	assert.equal(errorBlock.includes("code: \"agent_run_error\""), true);
 	assert.equal(source.includes("sendAgentCancelled(socket, continuationRequestId, session);"), true);
+});
+
+test("workflow runtime phases keep workspace-scoped tools during execution", async (): Promise<void> => {
+	const continuationSource: string = await readFile(new URL("../../../src/server/workflow/continuation.ts", import.meta.url), "utf8");
+	const phaseRunnerSource: string = await readFile(new URL("../../../src/server/workflow/phase-runner.ts", import.meta.url), "utf8");
+
+	assert.equal(continuationSource.includes("createRuntimeWorkflowPhase(phase, mcpHost, session)"), true);
+	assert.equal(phaseRunnerSource.includes("phase.allowedTools.includes(SKILL_LOAD_TOOL) ? [...phase.allowedTools] : [...phase.allowedTools, SKILL_LOAD_TOOL]"), false);
+	assert.equal(phaseRunnerSource.includes("runtimePhase.allowedTools.includes(SKILL_LOAD_TOOL)"), true);
 });

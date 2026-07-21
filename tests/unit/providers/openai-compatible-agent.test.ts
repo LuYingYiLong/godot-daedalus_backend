@@ -207,6 +207,126 @@ async function withMissingToolCallRetryMockServer(run: (baseUrl: string, request
 	}
 }
 
+async function withRepeatedMissingToolCallRetryMockServer(run: (baseUrl: string, requests: RecordedRequest[]) => Promise<void>): Promise<void> {
+	const requests: RecordedRequest[] = [];
+	const server: Server = createServer(async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
+		const body: Record<string, unknown> = await readRequestBody(request);
+		requests.push({ url: request.url ?? "", body });
+		assert.equal(request.url, "/chat/completions");
+
+		response.writeHead(200, { "Content-Type": "text/event-stream" });
+		if (requests.length <= 2) {
+			writeSseChunk(response, {
+				id: "chatcmpl-prelude-only",
+				object: "chat.completion.chunk",
+				created: 1,
+				model: "glm-5.2",
+				choices: [{
+					index: 0,
+					delta: {
+						content: "我会调用 mcp_godot_read_text_file 读取文件。"
+					},
+					finish_reason: null
+				}]
+			});
+			response.end("data: [DONE]\n\n");
+			return;
+		}
+
+		if (requests.length === 3) {
+			writeSseChunk(response, {
+				id: "chatcmpl-tool-after-second-retry",
+				object: "chat.completion.chunk",
+				created: 1,
+				model: "glm-5.2",
+				choices: [{
+					index: 0,
+					delta: {
+						tool_calls: [{
+							index: 0,
+							id: "call-read",
+							type: "function",
+							function: {
+								name: "mcp_godot_read_text_file",
+								arguments: "{\"relativePath\":\"tic_tac_toe_game.gd\"}"
+							}
+						}]
+					},
+					finish_reason: null
+				}]
+			});
+			response.end("data: [DONE]\n\n");
+			return;
+		}
+
+		writeSseChunk(response, {
+			id: "chatcmpl-final",
+			object: "chat.completion.chunk",
+			created: 1,
+			model: "glm-5.2",
+			choices: [{
+				index: 0,
+				delta: {
+					content: "读取完成。"
+				},
+				finish_reason: null
+			}]
+		});
+		response.end("data: [DONE]\n\n");
+	});
+	server.listen(0, "127.0.0.1");
+	await once(server, "listening");
+	const address = server.address();
+	if (address === null || typeof address === "string") {
+		throw new Error("Mock server did not expose a TCP port");
+	}
+
+	try {
+		await run(`http://127.0.0.1:${address.port}`, requests);
+	} finally {
+		server.close();
+		await once(server, "close");
+	}
+}
+
+async function withReasoningOnlyMockServer(run: (baseUrl: string, requests: RecordedRequest[]) => Promise<void>): Promise<void> {
+	const requests: RecordedRequest[] = [];
+	const server: Server = createServer(async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
+		const body: Record<string, unknown> = await readRequestBody(request);
+		requests.push({ url: request.url ?? "", body });
+		assert.equal(request.url, "/chat/completions");
+
+		response.writeHead(200, { "Content-Type": "text/event-stream" });
+		writeSseChunk(response, {
+			id: "chatcmpl-thinking-only",
+			object: "chat.completion.chunk",
+			created: 1,
+			model: "glm-5.2",
+			choices: [{
+				index: 0,
+				delta: {
+					reasoning_content: "我知道下一步应该调用工具，但这次响应没有真实工具调用。"
+				},
+				finish_reason: null
+			}]
+		});
+		response.end("data: [DONE]\n\n");
+	});
+	server.listen(0, "127.0.0.1");
+	await once(server, "listening");
+	const address = server.address();
+	if (address === null || typeof address === "string") {
+		throw new Error("Mock server did not expose a TCP port");
+	}
+
+	try {
+		await run(`http://127.0.0.1:${address.port}`, requests);
+	} finally {
+		server.close();
+		await once(server, "close");
+	}
+}
+
 async function withMiniMaxThinkTagMockServer(streaming: boolean, run: (baseUrl: string, requests: RecordedRequest[]) => Promise<void>, streamChunks: string[] = ["<thi", "nk>先分析一下", "</thi", "nk>最终答案。"]): Promise<void> {
 	const requests: RecordedRequest[] = [];
 	const server: Server = createServer(async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
@@ -558,6 +678,32 @@ test("streaming agent finalizes when tool follow-up only returns reasoning conte
 	});
 });
 
+test("streaming agent reports protocol violation when first response only returns reasoning content", async (): Promise<void> => {
+	await withReasoningOnlyMockServer(async (baseUrl: string, requests: RecordedRequest[]): Promise<void> => {
+		const params: AiChatParams = {
+			message: "读取项目结构",
+			options: {
+				stream: true
+			}
+		};
+
+		const result = await runOpenAICompatibleAgentStreaming(
+			params,
+			{ provider: "zhipu", apiKey: "test-key", baseUrl, model: "glm-5.2" },
+			[],
+			"System prompt",
+			createMockMcpHost(),
+			new ApprovalGateway(),
+			["mcp_godot_get_project_summary"]
+		);
+
+		assert.equal(result.status, "protocol_violation");
+		assert.match(result.reason, /thinking\/reasoning_content/);
+		assert.equal(requests.length, 3);
+		assert.match(JSON.stringify(requests[1]?.body.messages), /二选一/);
+	});
+});
+
 test("streaming agent retries when required first tool call returns only reasoning", async (): Promise<void> => {
 	await withMissingToolCallRetryMockServer(async (baseUrl: string, requests: RecordedRequest[]): Promise<void> => {
 		const params: AiChatParams = {
@@ -619,5 +765,33 @@ test("streaming agent retries when required first tool call returns only prelude
 		assert.match(JSON.stringify(requests[1]?.body.messages), /输出了正文/);
 	}, {
 		content: "先确认 Godot 版本，同时运行语法检查。"
+	});
+});
+
+test("streaming agent tolerates two required tool-call prelude retries", async (): Promise<void> => {
+	await withRepeatedMissingToolCallRetryMockServer(async (baseUrl: string, requests: RecordedRequest[]): Promise<void> => {
+		const params: AiChatParams = {
+			message: "验证脚本语法",
+			options: {
+				stream: true
+			}
+		};
+		(params.options as Record<string, unknown>).requireToolCallOnFirstStep = true;
+
+		const result = await runOpenAICompatibleAgentStreaming(
+			params,
+			{ provider: "zhipu", apiKey: "test-key", baseUrl, model: "glm-5.2" },
+			[],
+			"System prompt",
+			createMockMcpHost(),
+			new ApprovalGateway(),
+			["mcp_godot_read_text_file"]
+		);
+
+		assert.equal(result.status, "completed");
+		assert.equal(result.text, "读取完成。");
+		assert.equal(requests.length, 4);
+		assert.match(JSON.stringify(requests[1]?.body.messages), /当前阶段要求先调用工具/);
+		assert.match(JSON.stringify(requests[2]?.body.messages), /当前阶段要求先调用工具/);
 	});
 });

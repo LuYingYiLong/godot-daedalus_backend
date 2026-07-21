@@ -261,6 +261,26 @@ function appendMarkdownPart(parts: TimelineBodyPart[], text: string): void {
 	parts.push({ type: "markdown", text });
 }
 
+function appendFinalMarkdownPart(parts: TimelineBodyPart[], text: string): void {
+	if (text.length === 0) {
+		return;
+	}
+
+	const existingMarkdown: string = parts
+		.filter((part): part is TimelineMarkdownPart => part.type === "markdown")
+		.map((part: TimelineMarkdownPart): string => part.text)
+		.join("");
+	if (existingMarkdown === text || existingMarkdown.endsWith(text)) {
+		return;
+	}
+	if (existingMarkdown.length > 0 && text.startsWith(existingMarkdown)) {
+		appendMarkdownPart(parts, text.slice(existingMarkdown.length));
+		return;
+	}
+
+	appendMarkdownPart(parts, text);
+}
+
 function appendThinkingPart(parts: TimelineBodyPart[], text: string, done: boolean): void {
 	for (let index: number = parts.length - 1; index >= 0; index -= 1) {
 		const part: TimelineBodyPart = parts[index]!;
@@ -726,6 +746,8 @@ function buildAssistantBodyParts(
 				appendMarkdownPart(parts, deltaText);
 				hasMarkdownDelta = true;
 			}
+		} else if (event.event === "agent.message.done") {
+			appendFinalMarkdownPart(parts, asString(eventData.text));
 		} else if (event.event.startsWith("tool.") || event.event.startsWith("agent.tool.")) {
 			const normalizedToolEvent: Record<string, unknown> = normalizeToolEventData(event.event, eventData, event.id);
 			appendToolPart(parts, normalizedToolEvent, requestId);

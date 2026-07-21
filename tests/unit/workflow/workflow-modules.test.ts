@@ -262,6 +262,12 @@ test("Godot task classifier does not upgrade explicit read-only script requests 
 	assert.equal(classifyGodotTask("修改 scripts/a.gd 添加方法").type, "script_create_or_edit");
 });
 
+test("Godot task classifier only treats generic local game requests as Godot work inside a Godot project", (): void => {
+	assert.equal(classifyGodotTask("帮我写一个本地井字棋").type, "general_edit");
+	assert.equal(classifyGodotTask("帮我写一个本地井字棋", { isGodotProject: true }).type, "local_game_create");
+	assert.equal(classifyGodotTask("只读：看看本地井字棋应该怎么设计，不要修改", { isGodotProject: true }).type, "general_edit");
+});
+
 test("Godot template workflow is disabled for ask and plan modes", (): void => {
 	assert.equal(createGodotTemplateWorkflowPlan({
 		message: "修改 scripts/a.gd 添加方法",
@@ -345,6 +351,43 @@ test("Godot template workflow uses narrow phase tools for script scene attach", 
 	assert.equal(attachPhase.allowedTools.includes("mcp_godot_apply_scene_patch"), true);
 	assert.equal(attachPhase.allowedTools.includes("mcp_godot_create_text_file"), false);
 	assert.equal(attachPhase.allowedTools.includes("mcp_terminal_run_write_preset"), false);
+});
+
+test("Godot template workflow creates a narrow local tic tac toe plan in Godot projects", (): void => {
+	const plan = createGodotTemplateWorkflowPlan({
+		message: "帮我写一个本地井字棋",
+		mode: "agent",
+		options: {
+			workflow: "auto"
+		}
+	}, { isGodotProject: true });
+
+	assert.equal(plan?.source, "godot_template");
+	assert.deepEqual(plan?.phases.map((phase: WorkflowPhase): string => phase.id), [
+		"inspect-project",
+		"write-game-script",
+		"write-game-scene",
+		"set-main-scene",
+		"verify-game",
+		"summarize"
+	]);
+	assert.equal(plan?.phases.find((phase: WorkflowPhase): boolean => phase.id === "inspect-project")?.requireToolCallOnFirstStep, undefined);
+	assert.equal(plan?.phases.find((phase: WorkflowPhase): boolean => phase.id === "write-game-script")?.requireToolCallOnFirstStep, true);
+	assert.equal(plan?.phases.find((phase: WorkflowPhase): boolean => phase.id === "verify-game")?.requireToolCallOnFirstStep, undefined);
+	assert.equal(plan?.phases.find((phase: WorkflowPhase): boolean => phase.id === "summarize")?.requireToolCallOnFirstStep, undefined);
+	const scriptPhase = plan?.phases.find((phase: WorkflowPhase): boolean => phase.id === "write-game-script");
+	const scenePhase = plan?.phases.find((phase: WorkflowPhase): boolean => phase.id === "write-game-scene");
+	const settingPhase = plan?.phases.find((phase: WorkflowPhase): boolean => phase.id === "set-main-scene");
+	assert.equal(scriptPhase?.allowedTools.includes("mcp_godot_read_text_file"), false);
+	assert.equal(scriptPhase?.allowedTools.includes("mcp_godot_create_text_file"), true);
+	assert.equal(scriptPhase?.allowedTools.includes("mcp_terminal_run_write_preset"), false);
+	assert.equal(scenePhase?.allowedTools.includes("mcp_godot_read_text_file"), false);
+	assert.equal(scenePhase?.allowedTools.includes("mcp_godot_inspect_scene_tree"), false);
+	assert.equal(scenePhase?.allowedTools.includes("mcp_godot_create_text_file"), true);
+	assert.equal(scenePhase?.allowedTools.includes("mcp_godot_apply_scene_patch"), true);
+	assert.equal(settingPhase?.allowedTools.includes("mcp_godot_get_project_settings"), false);
+	assert.equal(settingPhase?.allowedTools.includes("mcp_godot_set_project_setting"), true);
+	assert.equal(settingPhase?.allowedTools.includes("mcp_godot_apply_scene_patch"), false);
 });
 
 test("LLM planned write tools are narrowed by phase semantics", (): void => {

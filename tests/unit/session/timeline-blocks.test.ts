@@ -599,6 +599,52 @@ test("canonical timeline inserts summary start marker before final summary markd
 	}
 });
 
+test("canonical timeline restores final message done text after earlier workflow deltas", (): void => {
+	const stored: StoredSession = session(
+		[
+			{
+				role: "user",
+				requestId: "workflow-summary-done",
+				content: "实现并总结",
+				createdAt: "2026-07-09T00:04:00.000Z"
+			},
+			{
+				role: "assistant",
+				requestId: "workflow-summary-done",
+				content: "最终总结。",
+				createdAt: "2026-07-09T00:04:20.000Z"
+			}
+		],
+		[
+			event("event-early-delta", "workflow-summary-done", "agent.message.delta", "2026-07-09T00:04:01.000Z", {
+				text: "前置阶段说明。"
+			}),
+			event("event-summary-start", "workflow-summary-done", "agent.summary.started", "2026-07-09T00:04:10.000Z", {
+				runId: "workflow-b",
+				stepId: "summarize",
+				stepRunId: "phase-run-summary-done",
+				title: "总结交付",
+				foldTitle: "总结前的过程"
+			}),
+			event("event-summary-done", "workflow-summary-done", "agent.message.done", "2026-07-09T00:04:20.000Z", {
+				runId: "workflow-b",
+				stepRunId: "phase-run-summary-done",
+				text: "最终总结。"
+			})
+		]
+	);
+
+	const result = buildCanonicalTimelineBlocks(stored);
+	const assistant = assistantBlock(result.blocks[1]);
+
+	assert.deepEqual(assistant.bodyParts.map((part) => part.type), ["markdown", "summary_start", "markdown"]);
+	const markdownParts = assistant.bodyParts.filter((part) => part.type === "markdown");
+	assert.equal(markdownParts[0]?.type, "markdown");
+	assert.equal(markdownParts[0]?.text, "前置阶段说明。");
+	assert.equal(markdownParts[1]?.type, "markdown");
+	assert.equal(markdownParts[1]?.text, "最终总结。");
+});
+
 test("canonical timeline groups tool progress with its tool call", (): void => {
 	const stored: StoredSession = session(
 		[

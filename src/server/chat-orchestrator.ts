@@ -387,8 +387,23 @@ async function createWorkflowPlanForRoute(
 	options: ProviderChatOptions,
 	history: ChatMessage[],
 	planningContext: string,
-	abortSignal?: AbortSignal | undefined
+	abortSignal?: AbortSignal | undefined,
+	runtimeContext?: { activeWorkspace?: WorkspaceConfig | undefined } | undefined
 ): Promise<WorkflowPlan | null> {
+	const templateParams: AiChatParams = {
+		...params,
+		options: {
+			...(params.options ?? {}),
+			workflow: "auto"
+		}
+	};
+	if (params.options?.workflow !== "llm_planned") {
+		const preferredTemplate: WorkflowPlan | null = await createGodotTemplateWorkflowPlanForRuntime(templateParams, runtimeContext);
+		if (preferredTemplate !== null) {
+			return preferredTemplate;
+		}
+	}
+
 	try {
 		const plannerOptions: ProviderChatOptions = (await resolveProviderTaskModelOptions("workflowPlanner", options)).options;
 		const plan: WorkflowPlan | null = await createLlmWorkflowPlan(params, plannerOptions, history, planningContext, abortSignal);
@@ -401,13 +416,7 @@ async function createWorkflowPlanForRoute(
 		});
 	}
 
-	const templateFallback: WorkflowPlan | null = createGodotTemplateWorkflowPlan({
-		...params,
-		options: {
-			...(params.options ?? {}),
-			workflow: "auto"
-		}
-	});
+	const templateFallback: WorkflowPlan | null = await createGodotTemplateWorkflowPlanForRuntime(templateParams, runtimeContext);
 	if (templateFallback !== null) {
 		return templateFallback;
 	}
@@ -423,6 +432,27 @@ async function createWorkflowPlanForRoute(
 	}
 
 	return planWorkflowAfterLlmPlannerFailure(params);
+}
+
+async function createGodotTemplateWorkflowPlanForRuntime(
+	params: AiChatParams,
+	runtimeContext?: { activeWorkspace?: WorkspaceConfig | undefined } | undefined
+): Promise<WorkflowPlan | null> {
+	const isGodotProject: boolean = await hasGodotProjectFile(runtimeContext?.activeWorkspace);
+	return createGodotTemplateWorkflowPlan(params, { isGodotProject });
+}
+
+async function hasGodotProjectFile(workspace: WorkspaceConfig | undefined): Promise<boolean> {
+	if (workspace === undefined) {
+		return false;
+	}
+
+	try {
+		await fs.access(path.join(workspace.rootPath, "project.godot"));
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 async function runHiddenAnswerExecution(params: {
@@ -1491,7 +1521,8 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 							options,
 							history,
 							[planningContext, routeDecision.planningHint].filter((section: string): boolean => section.length > 0).join("\n\n"),
-							abortController.signal
+							abortController.signal,
+							{ activeWorkspace: session.activeWorkspace }
 						);
 						if (workflowPlan !== null && !webSearchEnabled) {
 							workflowPlan = filterWebSearchFromWorkflowPlan(workflowPlan);

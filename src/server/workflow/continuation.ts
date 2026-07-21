@@ -224,7 +224,7 @@ export async function continueWorkflowExecution(
 			carriedGuidePromptSection,
 			pendingGuidePromptSection
 		].filter((section: string): boolean => section.length > 0).join("\n\n");
-		const runtimePhase: WorkflowPhase = createRuntimeWorkflowPhase(phase, mcpHost);
+		const runtimePhase: WorkflowPhase = createRuntimeWorkflowPhase(phase, mcpHost, session);
 		const fullSystemPrompt: string = await createWorkflowPhasePrompt(runtimePhase, phaseParams, mcpHost, session, requestId, guidePromptSection);
 		let agentResult: ProviderAgentResult;
 		let phaseToolStats: WorkflowPhaseToolStats = createEmptyWorkflowPhaseToolStats();

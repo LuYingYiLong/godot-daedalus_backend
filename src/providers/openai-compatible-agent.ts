@@ -40,7 +40,7 @@ import {
 const FINALIZE_AFTER_TOOL_LIMIT_PROMPT: string =
 	"工具调用阶段已经达到后端限制。请停止请求更多工具，基于目前已经获得的工具结果直接回答用户。"
 	+ "如果信息不完整，请明确说明哪些部分是根据已有信息总结的，哪些部分还需要进一步检查。";
-const TOOL_PROTOCOL_VIOLATION_RETRY_LIMIT: number = 1;
+const TOOL_PROTOCOL_VIOLATION_RETRY_LIMIT: number = 2;
 export type OpenAICompatibleAgentContinuation = ChatCompletionsAgentContinuation;
 export type OpenAICompatibleAgentResult = ProviderAgentResult;
 
@@ -391,6 +391,22 @@ export function createMissingRequiredToolCallCorrectionMessage(allowedToolNames:
 		}
 	} else {
 		lines.push("当前阶段没有可用工具，请输出面向用户的自然语言结果。");
+	}
+
+	return lines.join("\n");
+}
+
+export function createReasoningOnlyCorrectionMessage(allowedToolNames: readonly string[]): string {
+	const lines: string[] = [
+		"上一条 assistant 响应只返回了 thinking/reasoning_content，没有用户可见正文，也没有通过 API tool_calls 调用工具。",
+		"下一步必须二选一：如果需要项目事实或文件内容，通过 API tool_calls 调用真实工具；如果已经有足够信息，输出用户可见正文。",
+		"不要只返回 thinking/reasoning_content。"
+	];
+	if (allowedToolNames.length > 0) {
+		lines.push("当前阶段可用工具名如下：");
+		for (const toolName of allowedToolNames) {
+			lines.push(`- ${toolName}`);
+		}
 	}
 
 	return lines.join("\n");
@@ -1129,6 +1145,24 @@ async function runAgentLoop(
 					}
 
 					return { status: "completed", text: finalText };
+				}
+
+				if (reasoningContent.trim().length > 0) {
+					if (allowedToolNames.size > 0 && toolProtocolViolationRetries < TOOL_PROTOCOL_VIOLATION_RETRY_LIMIT) {
+						toolProtocolViolationRetries += 1;
+						messages.push({
+							role: "system",
+							content: createReasoningOnlyCorrectionMessage(Array.from(allowedToolNames))
+						});
+						step -= 1;
+						continue;
+					}
+
+					return {
+						status: "protocol_violation",
+						text: "",
+						reason: "模型只返回了 thinking/reasoning_content，没有返回用户可见正文，也没有通过 API tool_calls 调用工具。"
+					};
 				}
 
 				throw new Error("LLM returned empty response");

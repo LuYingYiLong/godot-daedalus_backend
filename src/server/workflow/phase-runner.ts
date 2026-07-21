@@ -30,7 +30,7 @@ const WEB_SEARCH_TOOL: string = "mcp_web_search";
 export function createRuntimeWorkflowPhase(phase: WorkflowPhase, mcpHost: McpHost, session?: ClientSession | undefined): WorkflowPhase {
 	const workspaceId: string | undefined = session?.activeWorkspace?.id;
 	const allowedTools: string[] = filterToolNamesForWorkspace(
-		phase.allowedTools.includes(SKILL_LOAD_TOOL) ? [...phase.allowedTools] : [...phase.allowedTools, SKILL_LOAD_TOOL],
+		[...phase.allowedTools],
 		workspaceId
 	);
 	if (allowedTools.includes(SCENE_VIEW_CAPTURE_TOOL) && !mcpHost.getEditorBridge().supportsTool("capture_scene_view", session?.activeWorkspace?.id, session?.editorInstanceId)) {
@@ -127,7 +127,9 @@ export async function createWorkflowPhasePrompt(
 	const explicitSkillPrompt: string = skillWorkspace !== undefined
 		? composeExplicitSkillPrompt(await resolveExplicitSkills(skillWorkspace, params.skillRefs ?? []))
 		: "";
-	const skillCatalogPrompt: string = skillWorkspace !== undefined ? await composeSkillCatalogPrompt(skillWorkspace) : "";
+	const skillCatalogPrompt: string = skillWorkspace !== undefined && runtimePhase.allowedTools.includes(SKILL_LOAD_TOOL)
+		? await composeSkillCatalogPrompt(skillWorkspace)
+		: "";
 	const skillPrompt: string = [phaseSkillPrompt, explicitSkillPrompt, skillCatalogPrompt].filter((section): boolean => section.length > 0).join("\n\n");
 	const mcpSystemContext: string = await createMcpSystemContext(mcpHost, session);
 	const additionalContextSection: string = createAdditionalContextPromptSection(params.additionalContext);
