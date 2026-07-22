@@ -7,7 +7,9 @@ import type { ClientSession } from "./client-session.js";
 import { sendJson } from "./send-json.js";
 import { appendApprovalEvent } from "../session/session-store.js";
 import { createPersistedApprovalRequestedData } from "../session/approval-persistence.js";
-import { emitWorkbenchUpdated } from "./workbench.js";
+import { getBackendRuntimeMode } from "./backend-runtime.js";
+import { enqueueMessage, emitMessageQueueUpdated, persistMessageQueueEvent, serializeQueuedMessage } from "./message-queue.js";
+import { bumpWorkbenchRevision, emitWorkbenchUpdated } from "./workbench.js";
 import { sendSessionEvent, waitForSessionEventPersistence } from "./session-events.js";
 import { createGlobalSkillWorkspace } from "../skills/runtime.js";
 
@@ -27,7 +29,7 @@ export type SlashCommandResult =
 
 export type SessionInfoFactory = (session: ClientSession, mcpHost: McpHost) => Record<string, unknown>;
 
-const SLASH_COMMANDS: readonly SlashCommandDefinition[] = [
+const BASE_SLASH_COMMANDS: readonly SlashCommandDefinition[] = [
 	{
 		command: "/help",
 		usage: "/help",
@@ -51,14 +53,6 @@ const SLASH_COMMANDS: readonly SlashCommandDefinition[] = [
 		description: "显示待审批工具调用。",
 		requiresArgument: false,
 		examples: ["/approvals"]
-	},
-	{
-		command: "/test-approval",
-		usage: "/test-approval",
-		insertText: "/test-approval",
-		description: "创建一个用于 Studio UI 调试的待审批文件写入。",
-		requiresArgument: false,
-		examples: ["/test-approval"]
 	},
 	{
 		command: "/skills",
@@ -102,8 +96,45 @@ const SLASH_COMMANDS: readonly SlashCommandDefinition[] = [
 	}
 ] as const;
 
+const DEV_SLASH_COMMANDS: readonly SlashCommandDefinition[] = [
+	{
+		command: "/test-approval",
+		usage: "/test-approval",
+		insertText: "/test-approval",
+		description: "创建一个用于 Studio UI 调试的待审批文件写入。",
+		requiresArgument: false,
+		examples: ["/test-approval"]
+	},
+	{
+		command: "/test-message-queue",
+		usage: "/test-message-queue",
+		insertText: "/test-message-queue",
+		description: "创建几条不会自动执行的 Studio 消息队列测试项。",
+		requiresArgument: false,
+		examples: ["/test-message-queue"]
+	},
+	{
+		command: "/test-todo-list",
+		usage: "/test-todo-list",
+		insertText: "/test-todo-list",
+		description: "发送一个不会执行工具的 Studio Todo 浮层测试快照。",
+		requiresArgument: false,
+		examples: ["/test-todo-list"]
+	}
+] as const;
+
+function isDevelopmentSlashCommandEnabled(): boolean {
+	return getBackendRuntimeMode() === "development";
+}
+
+function getVisibleSlashCommands(): readonly SlashCommandDefinition[] {
+	return isDevelopmentSlashCommandEnabled()
+		? [...BASE_SLASH_COMMANDS.slice(0, 3), ...DEV_SLASH_COMMANDS, ...BASE_SLASH_COMMANDS.slice(3)]
+		: BASE_SLASH_COMMANDS;
+}
+
 export function listSlashCommands(): SlashCommandDefinition[] {
-	return SLASH_COMMANDS.map((command: SlashCommandDefinition): SlashCommandDefinition => ({
+	return getVisibleSlashCommands().map((command: SlashCommandDefinition): SlashCommandDefinition => ({
 		...command,
 		examples: [...command.examples]
 	}));
@@ -118,7 +149,7 @@ export function createSlashCommandListResult(): { commands: SlashCommandDefiniti
 export function createSlashHelpText(): string {
 	return [
 		"## 可用指令",
-		...SLASH_COMMANDS.map((command: SlashCommandDefinition): string => {
+		...getVisibleSlashCommands().map((command: SlashCommandDefinition): string => {
 			return `- \`${command.usage}\`：${command.description}`;
 		})
 	].join("\n");
@@ -191,6 +222,77 @@ async function createTestApproval(socket: WebSocket, request: ClientRequest, ses
 
 	emitWorkbenchUpdated(socket, request.id, session);
 	return `已创建测试审批：\`${pending.approvalId}\`。请在 Studio 审批面板中 Approve 或 Reject。`;
+}
+
+async function createTestMessageQueue(socket: WebSocket, request: ClientRequest, session: ClientSession): Promise<string> {
+	const testTexts: string[] = [
+		"测试队列消息 A：检查队列卡片基础样式。",
+		"测试队列消息 B：拖拽我来调整优先级。",
+		"测试队列消息 C：删除我来检查关闭按钮。"
+	];
+	const items = testTexts.map((text: string) => enqueueMessage(session, {
+		text
+	}));
+
+	for (const item of items) {
+		await persistMessageQueueEvent(session, request.id, "message.queue.added", {
+			type: "message.queue.added",
+			item: serializeQueuedMessage(item)
+		});
+	}
+
+	bumpWorkbenchRevision(session);
+	emitMessageQueueUpdated(socket, request.id, session);
+	emitWorkbenchUpdated(socket, request.id, session);
+	await waitForSessionEventPersistence(session);
+
+	return `已创建 ${items.length} 条消息队列 UI 测试项；它们不会自动开始执行。`;
+}
+
+async function createTestTodoList(socket: WebSocket, request: ClientRequest, session: ClientSession): Promise<string> {
+	const runId: string = `slash-test-todo-${Date.now().toString(36)}`;
+	sendSessionEvent(socket, request.id, session, "agent.run.snapshot", {
+		runId,
+		title: "Todo UI test",
+		source: "slash",
+		revision: 1,
+		activeStepRunId: `${runId}-write`,
+		steps: [
+			{
+				id: "inspect",
+				title: "读取上下文",
+				status: "done",
+				text: "模拟已完成的只读阶段。"
+			},
+			{
+				id: "write",
+				title: "实现修改",
+				status: "running",
+				text: "模拟正在进行的写入阶段。"
+			},
+			{
+				id: "verify",
+				title: "验证结果",
+				status: "pending",
+				text: "模拟等待执行的验证阶段。"
+			},
+			{
+				id: "summarize",
+				title: "总结交付",
+				status: "pending",
+				text: "模拟最终总结阶段。"
+			}
+		],
+		todos: [
+			{ id: "todo-inspect", phaseId: "inspect", title: "读取上下文", status: "done", text: "读取上下文" },
+			{ id: "todo-write", phaseId: "write", title: "实现修改", status: "running", text: "实现修改" },
+			{ id: "todo-verify", phaseId: "verify", title: "验证结果", status: "pending", text: "验证结果" },
+			{ id: "todo-summarize", phaseId: "summarize", title: "总结交付", status: "pending", text: "总结交付" }
+		]
+	});
+	await waitForSessionEventPersistence(session);
+
+	return "已发送 Todo 浮层 UI 测试快照；不会调用模型或工具。";
 }
 
 function getSkillWorkspace(session: ClientSession): SkillWorkspace {
@@ -340,7 +442,29 @@ export async function handleSlashCommand(params: {
 	}
 
 	if (command === "/test-approval") {
+		if (!isDevelopmentSlashCommandEnabled()) {
+			await sendChatText(socket, request, `未知指令：\`${command}\`\n\n${createSlashHelpText()}`, session, mcpHost, createSessionInfo);
+			return { type: "handled" };
+		}
 		await sendChatText(socket, request, await createTestApproval(socket, request, session), session, mcpHost, createSessionInfo);
+		return { type: "handled" };
+	}
+
+	if (command === "/test-message-queue") {
+		if (!isDevelopmentSlashCommandEnabled()) {
+			await sendChatText(socket, request, `未知指令：\`${command}\`\n\n${createSlashHelpText()}`, session, mcpHost, createSessionInfo);
+			return { type: "handled" };
+		}
+		await sendChatText(socket, request, await createTestMessageQueue(socket, request, session), session, mcpHost, createSessionInfo);
+		return { type: "handled" };
+	}
+
+	if (command === "/test-todo-list") {
+		if (!isDevelopmentSlashCommandEnabled()) {
+			await sendChatText(socket, request, `未知指令：\`${command}\`\n\n${createSlashHelpText()}`, session, mcpHost, createSessionInfo);
+			return { type: "handled" };
+		}
+		await sendChatText(socket, request, await createTestTodoList(socket, request, session), session, mcpHost, createSessionInfo);
 		return { type: "handled" };
 	}
 

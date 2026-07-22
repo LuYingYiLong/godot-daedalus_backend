@@ -200,29 +200,23 @@ test("message queue no-op remove does not bump workbench revision", async (): Pr
 	assert.equal(result.removed, false);
 });
 
-test("message queue stores send snapshots and reorders pending messages", (): void => {
+test("message queue stores text context and reorders pending messages", (): void => {
 	const session = createClientSession(undefined);
 	const first = enqueueMessage(session, {
 		text: "先解释这个 hook",
-		mode: "ask",
-		provider: "openai",
-		model: "gpt-test",
 		skillRefs: ["skill-a"],
 		additionalContext: [makeContext("ctx-a", "src/hooks/useDiskSpaceCheck.ts")]
 	});
 	const second = enqueueMessage(session, {
 		text: "再修复按钮状态",
-		mode: "agent",
-		provider: "moonshot",
-		model: "kimi-k3",
 		additionalContext: [makeContext("ctx-b", "src/app/App.tsx", true)]
 	});
 
 	assert.equal(first.id, 1);
 	assert.equal(second.id, 2);
 	const serialized = serializeMessageQueue(session);
-	assert.equal((serialized[0] as Record<string, unknown>).provider, "openai");
-	assert.equal((serialized[0] as Record<string, unknown>).model, "gpt-test");
+	assert.equal((serialized[0] as Record<string, unknown>).provider, null);
+	assert.equal((serialized[0] as Record<string, unknown>).model, null);
 	assert.deepEqual((serialized[0] as Record<string, unknown>).skillRefs, ["skill-a"]);
 
 	const result = reorderQueuedMessages(session, [2, 1]);
@@ -234,7 +228,7 @@ test("message queue stores send snapshots and reorders pending messages", (): vo
 	assert.equal(invalid.errorCode, "invalid_queue_order");
 });
 
-test("queued chat request reuses the captured send snapshot", (): void => {
+test("queued chat request follows the current session model and mode", (): void => {
 	const session = createClientSession(undefined);
 	const item = enqueueMessage(session, {
 		text: "排队执行",
@@ -248,9 +242,9 @@ test("queued chat request reuses the captured send snapshot", (): void => {
 	assert.equal(request.method, "ai.chat");
 	const params = request.params as Record<string, unknown>;
 	assert.equal(params.message, "排队执行");
-	assert.equal(params.mode, "agent");
-	assert.equal(params.provider, "deepseek");
-	assert.equal(params.model, "deepseek-chat");
+	assert.equal(params.mode, undefined);
+	assert.equal(params.provider, undefined);
+	assert.equal(params.model, undefined);
 	assert.deepEqual(params.options, {
 		stream: true,
 		queueItemId: 1

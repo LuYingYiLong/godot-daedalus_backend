@@ -42,21 +42,13 @@ function cloneQueuedMessage(message: QueuedMessage): QueuedMessage {
 	};
 }
 
-function getDefaultQueueMode(session: ClientSession): "agent" | "ask" | "plan" {
-	return session.workbenchComposer.chatMode ?? "ask";
-}
-
-function getDefaultQueueModel(session: ClientSession): string {
-	return session.providerModel ?? session.modelProfile.model;
-}
-
-function normalizeQueueInput(session: ClientSession, input: QueueMessageInput, existing?: QueuedMessage | undefined): QueueMessageInput {
+function normalizeQueueInput(input: QueueMessageInput, existing?: QueuedMessage | undefined): QueueMessageInput {
 	return {
 		text: input.text.trim().slice(0, MAX_QUEUE_TEXT_CHARS),
 		additionalContext: cloneAdditionalContextItems(input.additionalContext ?? existing?.additionalContext) ?? [],
-		mode: input.mode ?? existing?.mode ?? getDefaultQueueMode(session),
-		provider: input.provider ?? existing?.provider ?? session.activeProvider,
-		model: input.model ?? existing?.model ?? getDefaultQueueModel(session),
+		mode: input.mode ?? existing?.mode,
+		provider: input.provider ?? existing?.provider,
+		model: input.model ?? existing?.model,
 		skillRefs: cloneSkillRefs(input.skillRefs ?? existing?.skillRefs)
 	};
 }
@@ -253,7 +245,7 @@ export function hydrateMessageQueue(events: StoredSessionEvent[]): { messages: Q
 
 export function enqueueMessage(session: ClientSession, input: QueueMessageInput): QueuedMessage {
 	const now: string = new Date().toISOString();
-	const normalized: QueueMessageInput = normalizeQueueInput(session, input);
+	const normalized: QueueMessageInput = normalizeQueueInput(input);
 	session.messageQueueNextId += 1;
 	const message: QueuedMessage = {
 		id: session.messageQueueNextId,
@@ -305,7 +297,7 @@ export function updateQueuedMessage(
 		};
 	}
 
-	const normalized: QueueMessageInput = normalizeQueueInput(session, input, existing);
+	const normalized: QueueMessageInput = normalizeQueueInput(input, existing);
 	if (
 		existing.text === normalized.text
 		&& JSON.stringify(existing.additionalContext ?? []) === JSON.stringify(normalized.additionalContext ?? [])
@@ -413,9 +405,6 @@ export function createQueuedChatRequest(queueItem: QueuedMessage, requestId: str
 		method: "ai.chat",
 		params: {
 			message: queueItem.text,
-			mode: queueItem.mode,
-			provider: queueItem.provider,
-			model: queueItem.model,
 			skillRefs: queueItem.skillRefs,
 			additionalContext: cloneAdditionalContextItems(queueItem.additionalContext),
 			options: {
