@@ -29,7 +29,6 @@ export type SessionMetadata = {
 	chatMode?: SessionChatMode | undefined;
 	approvalMode?: "manual" | "auto-safe" | "full-trust" | undefined;
 	workflowTodoCollapsed?: boolean | undefined;
-	webSearchEnabled?: boolean | undefined;
 	archivedAt?: string | undefined;
 	createdAt: string;
 	updatedAt: string;
@@ -268,6 +267,7 @@ function mergeSessionMetadata(existing: SessionMetadata, metadata?: Partial<Sess
 		...existing,
 		updatedAt: new Date().toISOString()
 	};
+	delete (updated as SessionMetadata & { webSearchEnabled?: unknown }).webSearchEnabled;
 
 	if (metadata === undefined) {
 		return updated;

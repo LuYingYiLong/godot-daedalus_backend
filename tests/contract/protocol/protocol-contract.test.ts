@@ -159,7 +159,6 @@ test("queued message requests accept send snapshots and reorder", (): void => {
 			provider: "moonshot",
 			model: "kimi-k3",
 			skillRefs: ["builtin:backend-helper"],
-			webSearchEnabled: true,
 			additionalContext: [
 				{
 					id: "ctx-a",
@@ -280,6 +279,7 @@ test("web search settings get and update are accepted", (): void => {
 		id: "web-search-settings-update",
 		method: "webSearchSettings.update",
 		params: {
+			enabled: true,
 			provider: "zhipu",
 			model: "glm-5.2"
 		}

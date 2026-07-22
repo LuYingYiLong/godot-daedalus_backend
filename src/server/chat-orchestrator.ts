@@ -194,7 +194,7 @@ import { createInitialPlan } from "./plan-mode.js";
 import { createPlanGetResult, type StoredPlan } from "./plan-store.js";
 import { getUserPrompt } from "../user-prompt-store.js";
 import { compressSessionHistory } from "./session-compression.js";
-import { getWebSearchSettingsStatus, isWebSearchToolAvailable } from "../web-search-settings-store.js";
+import { getWebSearchSettingsStatus, isWebSearchEnabled, isWebSearchToolAvailable } from "../web-search-settings-store.js";
 
 const WEB_SEARCH_TOOL_NAME: string = "mcp_web_search";
 
@@ -1228,7 +1228,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 			if (modelSnapshotChanged && session.sessionId !== undefined) {
 				await updateSessionMetadata(session.sessionId, createRuntimeSessionUiMetadata(session));
 			}
-			const webSearchEnabled: boolean = params.webSearchEnabled === true;
+			const webSearchEnabled: boolean = await isWebSearchEnabled();
 			const webSearchAvailable: boolean = webSearchEnabled ? await isWebSearchToolAvailable() : false;
 			if (webSearchEnabled && !webSearchAvailable) {
 				await finishQueueItemForRun(socket, request.id, session, queueItemId, "failed");

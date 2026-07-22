@@ -208,7 +208,6 @@ test("message queue stores send snapshots and reorders pending messages", (): vo
 		provider: "openai",
 		model: "gpt-test",
 		skillRefs: ["skill-a"],
-		webSearchEnabled: true,
 		additionalContext: [makeContext("ctx-a", "src/hooks/useDiskSpaceCheck.ts")]
 	});
 	const second = enqueueMessage(session, {
@@ -224,7 +223,6 @@ test("message queue stores send snapshots and reorders pending messages", (): vo
 	const serialized = serializeMessageQueue(session);
 	assert.equal((serialized[0] as Record<string, unknown>).provider, "openai");
 	assert.equal((serialized[0] as Record<string, unknown>).model, "gpt-test");
-	assert.equal((serialized[0] as Record<string, unknown>).webSearchEnabled, true);
 	assert.deepEqual((serialized[0] as Record<string, unknown>).skillRefs, ["skill-a"]);
 
 	const result = reorderQueuedMessages(session, [2, 1]);
@@ -243,7 +241,6 @@ test("queued chat request reuses the captured send snapshot", (): void => {
 		mode: "agent",
 		provider: "deepseek",
 		model: "deepseek-chat",
-		webSearchEnabled: true,
 		additionalContext: [makeContext("ctx-a", "res://scripts/a.gd")]
 	});
 
@@ -254,7 +251,6 @@ test("queued chat request reuses the captured send snapshot", (): void => {
 	assert.equal(params.mode, "agent");
 	assert.equal(params.provider, "deepseek");
 	assert.equal(params.model, "deepseek-chat");
-	assert.equal(params.webSearchEnabled, true);
 	assert.deepEqual(params.options, {
 		stream: true,
 		queueItemId: 1

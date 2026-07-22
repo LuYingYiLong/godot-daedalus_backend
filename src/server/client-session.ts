@@ -26,7 +26,6 @@ export type QueuedMessage = {
 	provider?: ProviderId | undefined;
 	model?: string | undefined;
 	skillRefs?: AiChatParams["skillRefs"];
-	webSearchEnabled?: boolean | undefined;
 	status: QueuedMessageStatus;
 	createdAt: string;
 	updatedAt: string;

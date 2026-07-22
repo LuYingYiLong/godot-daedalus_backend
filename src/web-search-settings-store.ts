@@ -13,6 +13,7 @@ import { loadProviderConfigWithSecret } from "./providers/provider-config-store.
 
 export type WebSearchSettings = {
 	schemaVersion: 1;
+	enabled: boolean;
 	provider: ProviderId;
 	model: string;
 	maxResults: number;
@@ -20,6 +21,7 @@ export type WebSearchSettings = {
 };
 
 export type WebSearchSettingsPatch = {
+	enabled?: boolean | undefined;
 	provider?: ProviderId | undefined;
 	model?: string | undefined;
 	maxResults?: number | undefined;
@@ -62,6 +64,7 @@ const MAX_MAX_RESULTS: number = 100;
 
 export const DEFAULT_WEB_SEARCH_SETTINGS: WebSearchSettings = {
 	schemaVersion: 1,
+	enabled: false,
 	provider: FALLBACK_PROVIDER,
 	model: FALLBACK_MODEL,
 	maxResults: DEFAULT_MAX_RESULTS,
@@ -129,6 +132,7 @@ export function normalizeWebSearchSettings(value: unknown): WebSearchSettings {
 
 	return {
 		schemaVersion: 1,
+		enabled: typeof value.enabled === "boolean" ? value.enabled : DEFAULT_WEB_SEARCH_SETTINGS.enabled,
 		provider,
 		model,
 		maxResults: normalizeMaxResults(value.maxResults),
@@ -164,6 +168,7 @@ export async function updateWebSearchSettings(patch: WebSearchSettingsPatch): Pr
 		: current.model);
 	const next: WebSearchSettings = {
 		schemaVersion: 1,
+		enabled: patch.enabled ?? current.enabled,
 		provider,
 		model,
 		maxResults: patch.maxResults === undefined ? current.maxResults : normalizeMaxResults(patch.maxResults),
@@ -209,7 +214,7 @@ export async function getWebSearchSettingsStatus(): Promise<WebSearchSettingsSta
 	const selectedSupported: boolean = isProviderNativeWebSearchModel(settings.provider, settings.model);
 	return {
 		...settings,
-		available: configured && selectedSupported,
+		available: settings.enabled && configured && selectedSupported,
 		configured,
 		selectedSupported,
 		apiKeyMasked,
@@ -219,6 +224,9 @@ export async function getWebSearchSettingsStatus(): Promise<WebSearchSettingsSta
 
 export async function resolveWebSearchRuntimeConfig(): Promise<WebSearchRuntimeConfig | null> {
 	const settings: WebSearchSettings = await getWebSearchSettings();
+	if (!settings.enabled) {
+		return null;
+	}
 	if (!isProviderNativeWebSearchModel(settings.provider, settings.model)) {
 		return null;
 	}
@@ -235,6 +243,10 @@ export async function resolveWebSearchRuntimeConfig(): Promise<WebSearchRuntimeC
 		apiKey: config.apiKey,
 		baseUrl: config.baseUrl
 	};
+}
+
+export async function isWebSearchEnabled(): Promise<boolean> {
+	return (await getWebSearchSettings()).enabled;
 }
 
 export async function isWebSearchToolAvailable(): Promise<boolean> {

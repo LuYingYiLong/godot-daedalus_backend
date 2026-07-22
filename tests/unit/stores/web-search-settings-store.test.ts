@@ -31,6 +31,7 @@ test("web search settings expose supported catalog models", async (): Promise<vo
 
 		assert.equal(status.provider, "zhipu");
 		assert.equal(status.model, "glm-5.2");
+		assert.equal(status.enabled, false);
 		assert.equal(status.maxResults, 5);
 		assert.equal(status.available, false);
 		assert.equal(status.configured, false);
@@ -49,20 +50,39 @@ test("web search settings persist search model and report configured availabilit
 		const appPaths = await import(`../../../src/app-paths.js?case=${Date.now()}-${Math.random()}`);
 
 		const saved = await store.updateWebSearchSettings({
+			enabled: true,
 			provider: "zhipu",
 			model: "glm-5.2",
 			maxResults: 20
 		});
 
 		assert.equal(saved.available, true);
+		assert.equal(saved.enabled, true);
 		assert.equal(saved.configured, true);
 		assert.equal(saved.maxResults, 20);
 		assert.equal(saved.apiKeyMasked, "zhi...-key");
 		const rawConfig: string = await readFile(appPaths.getWebSearchSettingsConfigPath(), "utf8");
-		assert.doesNotMatch(rawConfig, /"enabled"/u);
+		assert.match(rawConfig, /"enabled": true/u);
 		assert.match(rawConfig, /"provider": "zhipu"/u);
 		assert.match(rawConfig, /"model": "glm-5\.2"/u);
 		assert.match(rawConfig, /"maxResults": 20/u);
+	});
+});
+
+test("web search settings disable runtime config until globally enabled", async (): Promise<void> => {
+	await withTempAppData(async (): Promise<void> => {
+		mock.method(keytar, "getPassword", async (_service: string, account: string): Promise<string | null> => {
+			return account === "provider:zhipu:api_key" ? "zhipu-test-key" : null;
+		});
+		const store = await import(`../../../src/web-search-settings-store.js?case=${Date.now()}-${Math.random()}`);
+
+		assert.equal(await store.resolveWebSearchRuntimeConfig(), null);
+
+		await store.updateWebSearchSettings({ enabled: true });
+
+		const runtimeConfig = await store.resolveWebSearchRuntimeConfig();
+		assert.equal(runtimeConfig?.provider, "zhipu");
+		assert.equal(runtimeConfig?.model, "glm-5.2");
 	});
 });
 

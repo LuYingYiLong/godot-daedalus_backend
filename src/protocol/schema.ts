@@ -55,8 +55,7 @@ const sessionUiMetadataParamsSchema = z.object({
 	model: z.string().min(1).optional(),
 	chatMode: z.enum(["agent", "ask", "plan"]).optional(),
 	approvalMode: z.enum(["manual", "auto-safe", "full-trust"]).optional(),
-	workflowTodoCollapsed: z.boolean().optional(),
-	webSearchEnabled: z.boolean().optional()
+	workflowTodoCollapsed: z.boolean().optional()
 }).strict();
 
 export const additionalContextItemSchema = z.object({
@@ -115,7 +114,6 @@ export const aiChatParamsSchema = z.object({
 	systemPrompt: z.string().optional(),
 	retryFromRequestId: z.string().min(1).optional(),
 	additionalContext: z.array(additionalContextItemSchema).max(32).optional(),
-	webSearchEnabled: z.boolean().optional(),
 	options: z.object({
 		temperature: z.number().min(0).max(2).optional(),
 		topP: z.number().min(0).max(1).optional(),
@@ -136,7 +134,6 @@ const queuedMessageSnapshotSchema = z.object({
 	provider: providerIdSchema.optional(),
 	model: z.string().min(1).optional(),
 	skillRefs: z.array(skillRefSchema).max(4).optional(),
-	webSearchEnabled: z.boolean().optional(),
 	additionalContext: z.array(additionalContextItemSchema).max(32).optional(),
 }).strict();
 const workbenchAdditionalContextActionSchema = z.discriminatedUnion("action", [
@@ -425,8 +422,9 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 	z.object({
 		type: z.literal("request"),
 		id: z.string(),
-	method: z.literal("webSearchSettings.update"),
-	params: z.object({
+		method: z.literal("webSearchSettings.update"),
+		params: z.object({
+			enabled: z.boolean().optional(),
 			provider: providerIdSchema.optional(),
 			model: z.string().min(1).optional(),
 			maxResults: z.number().min(0).max(100).optional(),

@@ -309,6 +309,7 @@ test("Zhipu web search tool uses provider-native web_search and returns sources"
 			});
 			const { updateWebSearchSettings } = await import("../../../src/web-search-settings-store.js");
 			await updateWebSearchSettings({
+				enabled: true,
 				provider: "zhipu",
 				model: "glm-5.2",
 				maxResults: 20
@@ -369,6 +370,7 @@ test("Zhipu web search tool lets explicit maxResults override settings", async (
 			});
 			const { updateWebSearchSettings } = await import("../../../src/web-search-settings-store.js");
 			await updateWebSearchSettings({
+				enabled: true,
 				provider: "zhipu",
 				model: "glm-5.2",
 				maxResults: 50
@@ -434,6 +436,7 @@ test("Zhipu web search forwards abort signal to provider request", async (): Pro
 			});
 			const { updateWebSearchSettings } = await import("../../../src/web-search-settings-store.js");
 			await updateWebSearchSettings({
+				enabled: true,
 				provider: "zhipu",
 				model: "glm-5.2"
 			});

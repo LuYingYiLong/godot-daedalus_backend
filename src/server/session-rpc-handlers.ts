@@ -213,7 +213,6 @@ function createSessionUiMetadata(params: {
 	chatMode?: SessionChatMode | undefined;
 	approvalMode?: "manual" | "auto-safe" | "full-trust" | undefined;
 	workflowTodoCollapsed?: boolean | undefined;
-	webSearchEnabled?: boolean | undefined;
 } | undefined): Partial<SessionMetadata> {
 	if (params === undefined) {
 		return {};
@@ -234,9 +233,6 @@ function createSessionUiMetadata(params: {
 	}
 	if (params.workflowTodoCollapsed !== undefined) {
 		metadata.workflowTodoCollapsed = params.workflowTodoCollapsed;
-	}
-	if (params.webSearchEnabled !== undefined) {
-		metadata.webSearchEnabled = params.webSearchEnabled;
 	}
 
 	return metadata;

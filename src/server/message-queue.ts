@@ -21,7 +21,6 @@ export type QueueMessageInput = {
 	provider?: string | undefined;
 	model?: string | undefined;
 	skillRefs?: AiChatParams["skillRefs"];
-	webSearchEnabled?: boolean | undefined;
 };
 
 export type QueueMutationResult = {
@@ -58,8 +57,7 @@ function normalizeQueueInput(session: ClientSession, input: QueueMessageInput, e
 		mode: input.mode ?? existing?.mode ?? getDefaultQueueMode(session),
 		provider: input.provider ?? existing?.provider ?? session.activeProvider,
 		model: input.model ?? existing?.model ?? getDefaultQueueModel(session),
-		skillRefs: cloneSkillRefs(input.skillRefs ?? existing?.skillRefs),
-		webSearchEnabled: input.webSearchEnabled ?? existing?.webSearchEnabled ?? false
+		skillRefs: cloneSkillRefs(input.skillRefs ?? existing?.skillRefs)
 	};
 }
 
@@ -96,10 +94,6 @@ function readString(value: unknown): string | undefined {
 	return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-function readBoolean(value: unknown): boolean | undefined {
-	return typeof value === "boolean" ? value : undefined;
-}
-
 function readAdditionalContext(value: unknown): AdditionalContextItem[] {
 	return Array.isArray(value) ? value as AdditionalContextItem[] : [];
 }
@@ -132,7 +126,6 @@ function readQueuedMessage(value: unknown): QueuedMessage | null {
 		provider: readString(record.provider),
 		model: readString(record.model),
 		skillRefs: readSkillRefs(record.skillRefs),
-		webSearchEnabled: readBoolean(record.webSearchEnabled),
 		status: normalizeHydratedStatus(readStatus(record.status)),
 		createdAt,
 		updatedAt
@@ -167,7 +160,6 @@ export function serializeQueuedMessage(message: QueuedMessage): Record<string, u
 		provider: message.provider ?? null,
 		model: message.model ?? null,
 		skillRefs: message.skillRefs ?? [],
-		webSearchEnabled: message.webSearchEnabled === true,
 		status: message.status,
 		createdAt: message.createdAt,
 		updatedAt: message.updatedAt
@@ -271,7 +263,6 @@ export function enqueueMessage(session: ClientSession, input: QueueMessageInput)
 		provider: normalized.provider,
 		model: normalized.model,
 		skillRefs: normalized.skillRefs,
-		webSearchEnabled: normalized.webSearchEnabled,
 		status: "pending",
 		createdAt: now,
 		updatedAt: now
@@ -322,7 +313,6 @@ export function updateQueuedMessage(
 		&& existing.provider === normalized.provider
 		&& existing.model === normalized.model
 		&& JSON.stringify(existing.skillRefs ?? []) === JSON.stringify(normalized.skillRefs ?? [])
-		&& existing.webSearchEnabled === normalized.webSearchEnabled
 	) {
 		return { item: existing, changed: false };
 	}
@@ -335,7 +325,6 @@ export function updateQueuedMessage(
 		provider: normalized.provider,
 		model: normalized.model,
 		skillRefs: normalized.skillRefs,
-		webSearchEnabled: normalized.webSearchEnabled,
 		status: "pending",
 		updatedAt: new Date().toISOString()
 	};
@@ -428,7 +417,6 @@ export function createQueuedChatRequest(queueItem: QueuedMessage, requestId: str
 			provider: queueItem.provider,
 			model: queueItem.model,
 			skillRefs: queueItem.skillRefs,
-			webSearchEnabled: queueItem.webSearchEnabled,
 			additionalContext: cloneAdditionalContextItems(queueItem.additionalContext),
 			options: {
 				stream: true,
