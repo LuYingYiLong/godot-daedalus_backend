@@ -249,7 +249,7 @@ async function createTestMessageQueue(socket: WebSocket, request: ClientRequest,
 	return `已创建 ${items.length} 条消息队列 UI 测试项；它们不会自动开始执行。`;
 }
 
-async function createTestTodoList(socket: WebSocket, request: ClientRequest, session: ClientSession): Promise<string> {
+async function emitTestTodoListSnapshot(socket: WebSocket, request: ClientRequest, session: ClientSession): Promise<void> {
 	const runId: string = `slash-test-todo-${Date.now().toString(36)}`;
 	sendSessionEvent(socket, request.id, session, "agent.run.snapshot", {
 		runId,
@@ -291,8 +291,6 @@ async function createTestTodoList(socket: WebSocket, request: ClientRequest, ses
 		]
 	});
 	await waitForSessionEventPersistence(session);
-
-	return "已发送 Todo 浮层 UI 测试快照；不会调用模型或工具。";
 }
 
 function getSkillWorkspace(session: ClientSession): SkillWorkspace {
@@ -464,7 +462,8 @@ export async function handleSlashCommand(params: {
 			await sendChatText(socket, request, `未知指令：\`${command}\`\n\n${createSlashHelpText()}`, session, mcpHost, createSessionInfo);
 			return { type: "handled" };
 		}
-		await sendChatText(socket, request, await createTestTodoList(socket, request, session), session, mcpHost, createSessionInfo);
+		await sendChatText(socket, request, "已发送 Todo 浮层 UI 测试快照；不会调用模型或工具。", session, mcpHost, createSessionInfo);
+		await emitTestTodoListSnapshot(socket, request, session);
 		return { type: "handled" };
 	}
 
