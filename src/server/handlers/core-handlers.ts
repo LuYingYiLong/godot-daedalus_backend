@@ -15,6 +15,7 @@ import { getUserPromptConfig, setUserPrompt } from "../../user-prompt-store.js";
 import { getGeneralSettings, updateGeneralSettings } from "../../general-settings-store.js";
 import { getWebSearchSettingsStatus, updateWebSearchSettings } from "../../web-search-settings-store.js";
 import { getDaedalusDir } from "../../app-paths.js";
+import { getUsageMetricsSummary, getUsageMetricsTrends, listUsageMetricsLogs } from "../../usage/metrics-store.js";
 
 function getActiveSkillWorkspace(session: ClientSession): SkillWorkspace | undefined {
 	if (session.activeWorkspace !== undefined) {
@@ -77,6 +78,33 @@ export async function handleCoreRequest(socket: WebSocket, request: ClientReques
 			id: request.id,
 			ok: true,
 			result: await installBackendUpdate(request.params)
+		});
+		break;
+
+	case "usage.metrics.summary.get":
+		sendJson(socket, {
+			type: "response",
+			id: request.id,
+			ok: true,
+			result: await getUsageMetricsSummary(request.params)
+		});
+		break;
+
+	case "usage.metrics.logs.list":
+		sendJson(socket, {
+			type: "response",
+			id: request.id,
+			ok: true,
+			result: await listUsageMetricsLogs(request.params)
+		});
+		break;
+
+	case "usage.metrics.trends.get":
+		sendJson(socket, {
+			type: "response",
+			id: request.id,
+			ok: true,
+			result: await getUsageMetricsTrends(request.params)
 		});
 		break;
 

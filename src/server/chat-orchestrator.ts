@@ -195,6 +195,7 @@ import { createPlanGetResult, type StoredPlan } from "./plan-store.js";
 import { getUserPrompt } from "../user-prompt-store.js";
 import { compressSessionHistory } from "./session-compression.js";
 import { getWebSearchSettingsStatus, isWebSearchEnabled, isWebSearchToolAvailable } from "../web-search-settings-store.js";
+import { withProviderUsageContext } from "../usage/provider-recorder.js";
 
 const WEB_SEARCH_TOOL_NAME: string = "mcp_web_search";
 
@@ -405,7 +406,10 @@ async function createWorkflowPlanForRoute(
 	}
 
 	try {
-		const plannerOptions: ProviderChatOptions = (await resolveProviderTaskModelOptions("workflowPlanner", options)).options;
+		const plannerOptions: ProviderChatOptions = withProviderUsageContext(
+			(await resolveProviderTaskModelOptions("workflowPlanner", options)).options,
+			{ operation: "workflow_planner" }
+		);
 		const plan: WorkflowPlan | null = await createLlmWorkflowPlan(params, plannerOptions, history, planningContext, abortSignal);
 		if (plan !== null) {
 			return plan;
@@ -485,7 +489,9 @@ async function runHiddenAnswerExecution(params: {
 	);
 	const agentResult: ProviderAgentResult = await runProviderAgentStreaming(
 		chatParams,
-		params.options,
+		withProviderUsageContext(params.options, {
+			operation: params.routeDecision.execution === "direct_answer" ? "direct_answer" : "tool_answer"
+		}),
 		params.history,
 		fullSystemPrompt,
 		params.mcpHost,
@@ -508,7 +514,9 @@ async function runHiddenAnswerExecution(params: {
 		const pendingBudget = createPendingToolBudget({
 			agentResult,
 			chatParams,
-			options: params.options,
+			options: withProviderUsageContext(params.options, {
+				operation: params.routeDecision.execution === "direct_answer" ? "direct_answer" : "tool_answer"
+			}),
 			allowedToolNames: params.allowedToolNames,
 			userMessage: chatParams.message,
 			requestId: params.requestId,
@@ -654,7 +662,7 @@ async function maybeAutoCompressContextBeforeRun(
 			usedTokens: estimate.usedTokens,
 			contextWindowTokens: estimate.contextWindowTokens
 		});
-		const compression = await compressSessionHistory(session, apiKey, 8);
+		const compression = await compressSessionHistory(session, apiKey, 8, requestId);
 		sendSessionEvent(socket, requestId, session, "ai.status", {
 			stage: "context_compress_done",
 			title: compression.compressed ? "Context compressed" : "Context compression skipped",
@@ -1317,7 +1325,13 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 			emitWorkbenchUpdated(socket, request.id, session);
 
 			try {
-				const options: ProviderChatOptions = createProviderChatOptions(session, apiKey);
+				const options: ProviderChatOptions = withProviderUsageContext(createProviderChatOptions(session, apiKey), {
+					requestId: request.id,
+					runId: request.id,
+					sessionId: session.sessionId,
+					workspaceId: session.activeWorkspace?.id,
+					operation: "chat"
+				});
 				const isFirstUserTurn: boolean = isFirstSessionUserTurn(session.messages, request.id);
 				maybeScheduleSessionTitleGeneration(socket, request.id, session, params, options, isFirstUserTurn);
 				const hydratedParams: AiChatParams = await hydrateImageAttachmentContexts(session.sessionId, params);
@@ -1479,7 +1493,10 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 					};
 				} else {
 					try {
-						const routerOptions: ProviderChatOptions = (await resolveProviderTaskModelOptions("workflowPlanner", options)).options;
+						const routerOptions: ProviderChatOptions = withProviderUsageContext(
+							(await resolveProviderTaskModelOptions("workflowPlanner", options)).options,
+							{ operation: "workflow_router" }
+						);
 						routeDecision = await routeWorkflowExecution(
 							effectiveParams,
 							routerOptions,
@@ -1842,7 +1859,13 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 			try {
 				const hints: NextStepHint[] = await createNextStepHints(
 					session,
-					createProviderChatOptions(session, apiKey),
+					withProviderUsageContext(createProviderChatOptions(session, apiKey), {
+						requestId: request.id,
+						runId: request.id,
+						sessionId: session.sessionId,
+						workspaceId: session.activeWorkspace?.id,
+						operation: "next_step_hints"
+					}),
 					request.params?.maxHints ?? DEFAULT_NEXT_STEP_HINT_COUNT,
 					request.params?.trigger ?? "done",
 					request.params?.anchorRequestId,

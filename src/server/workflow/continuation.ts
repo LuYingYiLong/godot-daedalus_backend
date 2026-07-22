@@ -28,6 +28,7 @@ import { sendWorkflowEvent, sendWorkflowTodoSnapshot } from "./events.js";
 import { createRuntimeWorkflowPhase, createWorkflowPhasePrompt, runWorkflowPhase } from "./phase-runner.js";
 import { scheduleWorkflowApproval, scheduleWorkflowPhaseOutcome, scheduleWorkflowPhaseStart } from "../../workflow/scheduler.js";
 import { logger } from "../../logger.js";
+import { withProviderUsageContext } from "../../usage/provider-recorder.js";
 
 const MAX_WORKFLOW_WRITE_GUARD_RETRY_ATTEMPTS: number = 2;
 
@@ -598,7 +599,9 @@ export async function continueWorkflowExecution(
 					index,
 					state.originalParams,
 					phaseOutputs,
-					options,
+					withProviderUsageContext(options, {
+						operation: "workflow_planner_revision"
+					}),
 					state.history,
 					revisionPlanningContext,
 					abortSignal

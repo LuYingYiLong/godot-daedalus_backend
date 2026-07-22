@@ -32,6 +32,7 @@ import { updateSessionMetadata } from "../../session/session-store.js";
 import { createRuntimeSessionUiMetadata } from "../session-ui-metadata.js";
 import { isCancellationError, sendAgentCancelled } from "../request-lifecycle.js";
 import { bumpWorkbenchRevision, emitWorkbenchUpdated, serializeWorkbench, setWorkbenchActiveRun } from "../workbench.js";
+import { withProviderUsageContext } from "../../usage/provider-recorder.js";
 
 const PLAN_EXECUTION_SLOT_WAIT_TIMEOUT_MS: number = 2000;
 const PLAN_EXECUTION_SLOT_WAIT_INTERVAL_MS: number = 25;
@@ -213,7 +214,13 @@ export async function handlePlanRequest(socket: WebSocket, request: ClientReques
 					return;
 				}
 				failedAbortSignal = activePlanOperation.abortController.signal;
-				const options = createProviderChatOptions(session, apiKey);
+				const options = withProviderUsageContext(createProviderChatOptions(session, apiKey), {
+					requestId: request.id,
+					runId: activePlanOperation.runRequestId,
+					sessionId: session.sessionId,
+					workspaceId: session.activeWorkspace?.id,
+					operation: "plan_clarify"
+				});
 				try {
 					const updatedPlan: StoredPlan = await applyPlanClarification(
 						plan,
@@ -262,7 +269,13 @@ export async function handlePlanRequest(socket: WebSocket, request: ClientReques
 					return;
 				}
 				failedAbortSignal = activePlanOperation.abortController.signal;
-				const options = createProviderChatOptions(session, apiKey);
+				const options = withProviderUsageContext(createProviderChatOptions(session, apiKey), {
+					requestId: request.id,
+					runId: activePlanOperation.runRequestId,
+					sessionId: session.sessionId,
+					workspaceId: session.activeWorkspace?.id,
+					operation: "plan_revise"
+				});
 				try {
 					const updatedPlan: StoredPlan = await applyPlanRevision(
 						plan,

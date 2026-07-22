@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getBackendPortFromEnv, getBackendRuntimeMode, type BackendRuntimeMode } from "./backend-runtime.js";
 import { getCurrentBackendLogPath } from "../logger.js";
+import { getUsageMetricsAvailabilitySnapshot } from "../usage/metrics-store.js";
 
 const BACKEND_HEALTH_NAME: string = "godot-daedalus-backend";
 const PACKAGE_ROOT: string = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -24,6 +25,12 @@ export type BackendHealthResult = {
 		protocolVersion: number;
 	};
 	logPath: string | null;
+	metrics: {
+		usage: {
+			available: boolean | null;
+			errorMessage?: string | undefined;
+		};
+	};
 };
 
 let cachedPackageVersion: string | null = null;
@@ -65,6 +72,9 @@ export function createBackendHealthResult(): BackendHealthResult {
 			enabled: true,
 			protocolVersion: 2
 		},
-		logPath: getCurrentBackendLogPath()
+		logPath: getCurrentBackendLogPath(),
+		metrics: {
+			usage: getUsageMetricsAvailabilitySnapshot()
+		}
 	};
 }

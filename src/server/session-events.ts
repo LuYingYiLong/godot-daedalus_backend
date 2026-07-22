@@ -8,6 +8,7 @@ import type { ClientSession, ThinkingEventBuffer } from "./client-session.js";
 import { sendJson } from "./send-json.js";
 import { broadcastSessionEvent } from "./client-connections.js";
 import { logger } from "../logger.js";
+import { withProviderUsageContext } from "../usage/provider-recorder.js";
 
 const THINKING_EVENT_FLUSH_CHARS = 800;
 const MAX_TERMINAL_EVENT_FINGERPRINTS = 512;
@@ -347,7 +348,10 @@ export function maybeScheduleSessionTitleGeneration(
 
 		let generatedTitle: string;
 		try {
-			const titleOptions = (await resolveProviderTaskModelOptions("sessionTitle", options)).options;
+			const titleOptions = withProviderUsageContext(
+				(await resolveProviderTaskModelOptions("sessionTitle", options)).options,
+				{ operation: "session_title" }
+			);
 			generatedTitle = await generateSessionTitle(params.message, titleOptions);
 		} catch (error: unknown) {
 			generatedTitle = createFallbackSessionTitle(params.message);

@@ -4,6 +4,9 @@ import { getImageAttachments, type ProviderImageAttachment } from "./provider-im
 import { normalizeConfiguredProviderBaseUrl, resolveProviderBaseUrl } from "./provider-base-url.js";
 import type { ProviderChatOptions } from "./provider-types.js";
 import { getProviderDefaultModel } from "./provider-registry.js";
+import type { NormalizedLlmUsage } from "../usage/metrics-types.js";
+import { getProviderUsageErrorCode, getProviderUsageStatusForError, recordProviderUsage } from "../usage/provider-recorder.js";
+import { parseAnthropicUsage } from "../usage/usage-parser.js";
 
 export type AnthropicTextBlock = {
 	type: "text";
@@ -57,6 +60,7 @@ export type AnthropicMessageResponse = {
 	model?: string | undefined;
 	content: AnthropicContentBlock[];
 	stop_reason?: string | null | undefined;
+	usage?: unknown | undefined;
 };
 
 export type StreamedAnthropicMessage = {
@@ -253,7 +257,8 @@ function parseMessageResponse(body: unknown): AnthropicMessageResponse {
 		role: body.role === "assistant" ? "assistant" : undefined,
 		model: typeof body.model === "string" ? body.model : undefined,
 		content: normalizeContentBlocks(body.content),
-		stop_reason: typeof body.stop_reason === "string" ? body.stop_reason : null
+		stop_reason: typeof body.stop_reason === "string" ? body.stop_reason : null,
+		usage: isRecord(body.usage) ? body.usage : undefined
 	};
 }
 
@@ -276,24 +281,60 @@ export async function createAnthropicMessage(
 	tools?: readonly AnthropicToolDefinition[] | undefined,
 	abortSignal?: AbortSignal | undefined
 ): Promise<AnthropicMessageResponse> {
+	const requestBody: AnthropicRequestBody = createRequestBody(params, options, messages, systemPrompt, tools);
 	const requestInit: RequestInit = {
 		method: "POST",
 		headers: {
 			"Authorization": `Bearer ${options.apiKey}`,
 			"Content-Type": "application/json"
 		},
-		body: JSON.stringify(createRequestBody(params, options, messages, systemPrompt, tools))
+		body: JSON.stringify(requestBody)
 	};
 	if (abortSignal !== undefined) {
 		requestInit.signal = abortSignal;
 	}
-	const response: Response = await fetch(createAnthropicEndpoint(options), requestInit);
-
-	if (!response.ok) {
-		throw new Error(await readErrorMessage(response));
+	const startedAtMs: number = Date.now();
+	let response: Response;
+	try {
+		response = await fetch(createAnthropicEndpoint(options), requestInit);
+	} catch (error: unknown) {
+		await recordProviderUsage({
+			options,
+			requestBody,
+			startedAtMs,
+			status: getProviderUsageStatusForError(error),
+			errorCode: getProviderUsageErrorCode(error),
+			streaming: false
+		});
+		throw error;
 	}
 
-	return parseMessageResponse(await response.json() as unknown);
+	if (!response.ok) {
+		const errorMessage: string = await readErrorMessage(response);
+		await recordProviderUsage({
+			options,
+			requestBody,
+			startedAtMs,
+			status: "error",
+			errorCode: `http_${response.status}`,
+			streaming: false
+		});
+		throw new Error(errorMessage);
+	}
+
+	const body: unknown = await response.json() as unknown;
+	const message: AnthropicMessageResponse = parseMessageResponse(body);
+	await recordProviderUsage({
+		options,
+		requestBody,
+		responseBody: body,
+		outputText: extractAnthropicText(message.content),
+		startedAtMs,
+		status: "success",
+		streaming: false,
+		usage: parseAnthropicUsage(body)
+	});
+	return message;
 }
 
 export async function* streamAnthropicMessageText(
@@ -324,23 +365,57 @@ export async function* streamAnthropicMessage(
 	tools?: readonly AnthropicToolDefinition[] | undefined,
 	abortSignal?: AbortSignal | undefined
 ): AsyncGenerator<AnthropicStreamEvent> {
+	const requestBody: AnthropicRequestBody = createRequestBody(params, options, messages, systemPrompt, tools, true);
 	const requestInit: RequestInit = {
 		method: "POST",
 		headers: {
 			"Authorization": `Bearer ${options.apiKey}`,
 			"Content-Type": "application/json"
 		},
-		body: JSON.stringify(createRequestBody(params, options, messages, systemPrompt, tools, true))
+		body: JSON.stringify(requestBody)
 	};
 	if (abortSignal !== undefined) {
 		requestInit.signal = abortSignal;
 	}
-	const response: Response = await fetch(createAnthropicEndpoint(options), requestInit);
+	const startedAtMs: number = Date.now();
+	let firstTokenAtMs: number | undefined;
+	let finalUsage: NormalizedLlmUsage | null = null;
+	let response: Response;
+	try {
+		response = await fetch(createAnthropicEndpoint(options), requestInit);
+	} catch (error: unknown) {
+		await recordProviderUsage({
+			options,
+			requestBody,
+			startedAtMs,
+			status: getProviderUsageStatusForError(error),
+			errorCode: getProviderUsageErrorCode(error),
+			streaming: true
+		});
+		throw error;
+	}
 
 	if (!response.ok) {
-		throw new Error(await readErrorMessage(response));
+		const errorMessage: string = await readErrorMessage(response);
+		await recordProviderUsage({
+			options,
+			requestBody,
+			startedAtMs,
+			status: "error",
+			errorCode: `http_${response.status}`,
+			streaming: true
+		});
+		throw new Error(errorMessage);
 	}
 	if (response.body === null) {
+		await recordProviderUsage({
+			options,
+			requestBody,
+			startedAtMs,
+			status: "error",
+			errorCode: "empty_stream_body",
+			streaming: true
+		});
 		throw new Error("Anthropic-compatible streaming response has no body");
 	}
 
@@ -369,7 +444,11 @@ export async function* streamAnthropicMessage(
 						continue;
 					}
 					const parsed: unknown = JSON.parse(dataLine) as unknown;
+					finalUsage = parseAnthropicUsage(parsed) ?? finalUsage;
 					for (const event of applyStreamEvent(parsed, contentBlocks)) {
+						if (firstTokenAtMs === undefined && (event.type === "text_delta" || event.type === "thinking_delta")) {
+							firstTokenAtMs = Date.now();
+						}
 						if (event.type === "text_delta") {
 							text += event.text;
 						}
@@ -393,6 +472,16 @@ export async function* streamAnthropicMessage(
 			}
 			return block;
 		});
+	await recordProviderUsage({
+		options,
+		requestBody,
+		outputText: text,
+		startedAtMs,
+		firstTokenAtMs,
+		status: "success",
+		streaming: true,
+		usage: finalUsage
+	});
 	yield {
 		type: "message_stop",
 		message: {

@@ -36,6 +36,9 @@ import {
 	getInitialMaxToolSteps,
 	shouldPauseForToolBudget
 } from "./agent-tool-budget.js";
+import type { NormalizedLlmUsage } from "../usage/metrics-types.js";
+import { getProviderUsageErrorCode, getProviderUsageStatusForError, recordProviderUsage } from "../usage/provider-recorder.js";
+import { parseOpenAIChatUsage } from "../usage/usage-parser.js";
 
 const FINALIZE_AFTER_TOOL_LIMIT_PROMPT: string =
 	"工具调用阶段已经达到后端限制。请停止请求更多工具，基于目前已经获得的工具结果直接回答用户。"
@@ -845,7 +848,9 @@ async function readStreamingAssistantMessage(
 	applyDeepSeekToolMode(requestBody, options, requestTools);
 	applyProviderToolRequestOptions(requestBody, options, requestTools);
 
-	const stream = await client.chat.completions.create(requestBody, { signal: abortSignal });
+	const startedAtMs: number = Date.now();
+	let firstTokenAtMs: number | undefined;
+	let finalUsage: NormalizedLlmUsage | null = null;
 	const toolCallAccumulators: Map<number, ToolCallAccumulator> = new Map();
 	const contentFilter: ToolSyntaxStreamFilter = new ToolSyntaxStreamFilter();
 	const thinkTagFilter: MiniMaxThinkTagStreamFilter | null = shouldSplitThinkTags(options) ? new MiniMaxThinkTagStreamFilter() : null;
@@ -854,52 +859,73 @@ async function readStreamingAssistantMessage(
 	let emittedReasoning = false;
 	let openThinkTagReasoning = false;
 
-	for await (const chunk of stream) {
-		const delta: unknown = (chunk as ChatCompletionChunk).choices[0]?.delta;
-		if (delta === undefined || delta === null) {
-			continue;
-		}
+	try {
+		const stream = await client.chat.completions.create(requestBody, { signal: abortSignal });
+		for await (const chunk of stream) {
+			finalUsage = parseOpenAIChatUsage(chunk) ?? finalUsage;
+			const delta: unknown = (chunk as ChatCompletionChunk).choices[0]?.delta;
+			if (delta === undefined || delta === null) {
+				continue;
+			}
 
-		const reasoningDelta: string = getReasoningContent(delta);
-		if (reasoningDelta.length > 0) {
-			reasoningContent += reasoningDelta;
-			emittedReasoning = true;
-			onEvent?.({ type: "ai.thinking.delta", text: reasoningDelta });
-		}
+			if (firstTokenAtMs === undefined && (getReasoningContent(delta).length > 0 || getContentDelta(delta).length > 0 || getToolCallDeltaList(delta).length > 0)) {
+				firstTokenAtMs = Date.now();
+			}
 
-		const contentDelta: string = getContentDelta(delta);
-		if (contentDelta.length > 0) {
-			const splitContent: ThinkTagSplitResult = thinkTagFilter?.push(contentDelta) ?? {
-				visibleText: contentDelta,
-				thinkingText: "",
-				thinkingStarted: false,
-				thinkingDone: false
-			};
-			if (splitContent.thinkingStarted && splitContent.thinkingText.length === 0 && !splitContent.thinkingDone && !openThinkTagReasoning) {
-				openThinkTagReasoning = true;
-				onEvent?.({ type: "ai.thinking.delta", text: "" });
+			const reasoningDelta: string = getReasoningContent(delta);
+			if (reasoningDelta.length > 0) {
+				reasoningContent += reasoningDelta;
+				emittedReasoning = true;
+				onEvent?.({ type: "ai.thinking.delta", text: reasoningDelta });
 			}
-			if (splitContent.thinkingText.length > 0) {
-				reasoningContent = appendReasoningContent(reasoningContent, splitContent.thinkingText);
-				openThinkTagReasoning = true;
-				onEvent?.({ type: "ai.thinking.delta", text: splitContent.thinkingText });
-			}
-			if (splitContent.thinkingDone && openThinkTagReasoning) {
-				onEvent?.({ type: "ai.thinking.done" });
-				openThinkTagReasoning = false;
-			}
-			contentText += splitContent.visibleText;
-			if (emitContentDeltas) {
-				const visibleDelta: string = contentFilter.push(splitContent.visibleText);
-				if (visibleDelta.length > 0) {
-					onEvent?.({ type: "ai.delta", text: visibleDelta });
+
+			const contentDelta: string = getContentDelta(delta);
+			if (contentDelta.length > 0) {
+				const splitContent: ThinkTagSplitResult = thinkTagFilter?.push(contentDelta) ?? {
+					visibleText: contentDelta,
+					thinkingText: "",
+					thinkingStarted: false,
+					thinkingDone: false
+				};
+				if (splitContent.thinkingStarted && splitContent.thinkingText.length === 0 && !splitContent.thinkingDone && !openThinkTagReasoning) {
+					openThinkTagReasoning = true;
+					onEvent?.({ type: "ai.thinking.delta", text: "" });
+				}
+				if (splitContent.thinkingText.length > 0) {
+					reasoningContent = appendReasoningContent(reasoningContent, splitContent.thinkingText);
+					openThinkTagReasoning = true;
+					onEvent?.({ type: "ai.thinking.delta", text: splitContent.thinkingText });
+				}
+				if (splitContent.thinkingDone && openThinkTagReasoning) {
+					onEvent?.({ type: "ai.thinking.done" });
+					openThinkTagReasoning = false;
+				}
+				contentText += splitContent.visibleText;
+				if (emitContentDeltas) {
+					const visibleDelta: string = contentFilter.push(splitContent.visibleText);
+					if (visibleDelta.length > 0) {
+						onEvent?.({ type: "ai.delta", text: visibleDelta });
+					}
 				}
 			}
-		}
 
-		for (const toolCallDelta of getToolCallDeltaList(delta)) {
-			applyToolCallDelta(toolCallAccumulators, toolCallDelta, step);
+			for (const toolCallDelta of getToolCallDeltaList(delta)) {
+				applyToolCallDelta(toolCallAccumulators, toolCallDelta, step);
+			}
 		}
+	} catch (error: unknown) {
+		await recordProviderUsage({
+			options,
+			requestBody,
+			outputText: contentText,
+			startedAtMs,
+			firstTokenAtMs,
+			status: getProviderUsageStatusForError(error),
+			errorCode: getProviderUsageErrorCode(error),
+			streaming: true,
+			usage: finalUsage
+		});
+		throw error;
 	}
 
 	if (emittedReasoning) {
@@ -939,6 +965,17 @@ async function readStreamingAssistantMessage(
 			contentText += flushedThinkTags.visibleText;
 		}
 	}
+
+	await recordProviderUsage({
+		options,
+		requestBody,
+		outputText: contentText,
+		startedAtMs,
+		firstTokenAtMs,
+		status: "success",
+		streaming: true,
+		usage: finalUsage
+	});
 
 	return {
 		contentText,
@@ -997,8 +1034,33 @@ async function createFinalAnswer(
 
 	applyChatOptions(requestBody, params, options);
 
-	const completion = await client.chat.completions.create(requestBody, { signal: abortSignal });
+	const startedAtMs: number = Date.now();
+	let completion;
+	try {
+		completion = await client.chat.completions.create(requestBody, { signal: abortSignal });
+	} catch (error: unknown) {
+		await recordProviderUsage({
+			options,
+			requestBody,
+			startedAtMs,
+			status: getProviderUsageStatusForError(error),
+			errorCode: getProviderUsageErrorCode(error),
+			streaming: false
+		});
+		throw error;
+	}
 	const text: string | null | undefined = completion.choices[0]?.message.content;
+	await recordProviderUsage({
+		options,
+		requestBody,
+		responseBody: completion,
+		outputText: text ?? JSON.stringify(completion.choices[0]?.message ?? {}),
+		startedAtMs,
+		status: text ? "success" : "error",
+		errorCode: text ? undefined : "empty_response",
+		streaming: false,
+		usage: parseOpenAIChatUsage(completion)
+	});
 
 	if (!text) {
 		return createToolResultLimitFallback(reason);
@@ -1078,14 +1140,48 @@ async function runAgentLoop(
 			applyDeepSeekToolMode(requestBody, options, requestTools);
 			applyProviderToolRequestOptions(requestBody, options, requestTools);
 
-			const completion = await client.chat.completions.create(requestBody, { signal: abortSignal });
+			const startedAtMs: number = Date.now();
+			let completion;
+			try {
+				completion = await client.chat.completions.create(requestBody, { signal: abortSignal });
+			} catch (error: unknown) {
+				await recordProviderUsage({
+					options,
+					requestBody,
+					startedAtMs,
+					status: getProviderUsageStatusForError(error),
+					errorCode: getProviderUsageErrorCode(error),
+					streaming: false
+				});
+				throw error;
+			}
 			const choice = completion.choices[0];
 
 			if (!choice) {
+				await recordProviderUsage({
+					options,
+					requestBody,
+					responseBody: completion,
+					startedAtMs,
+					status: "error",
+					errorCode: "empty_choices",
+					streaming: false,
+					usage: parseOpenAIChatUsage(completion)
+				});
 				throw new Error("LLM returned empty choices");
 			}
 
 			const message = choice.message;
+			await recordProviderUsage({
+				options,
+				requestBody,
+				responseBody: completion,
+				outputText: typeof message.content === "string" && message.content.length > 0 ? message.content : JSON.stringify(message),
+				startedAtMs,
+				status: "success",
+				streaming: false,
+				usage: parseOpenAIChatUsage(completion)
+			});
 			reasoningContent = getReasoningContent(message);
 			emitReasoningContent(message, onEvent);
 			toolCalls = message.tool_calls;

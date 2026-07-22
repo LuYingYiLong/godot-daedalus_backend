@@ -11,6 +11,8 @@ import { createProviderMessages } from "./provider-image-content.js";
 import { normalizeConfiguredProviderBaseUrl, resolveProviderBaseUrl } from "./provider-base-url.js";
 import type { ProviderChatOptions } from "./provider-types.js";
 import { getProviderDefaultModel, getProviderEndpointConfig } from "./provider-registry.js";
+import { getProviderUsageErrorCode, getProviderUsageStatusForError, recordProviderUsage } from "../usage/provider-recorder.js";
+import { parseOpenAIChatUsage } from "../usage/usage-parser.js";
 
 export function createOpenAICompatibleClient(options: ProviderChatOptions): OpenAI {
 	const clientOptions: ConstructorParameters<typeof OpenAI>[0] = {
@@ -74,12 +76,46 @@ export async function chatWithOpenAICompatible(
 
 	applyChatOptions(requestBody, params, options);
 
-	const completion = await client.chat.completions.create(requestBody, { signal: abortSignal });
+	const startedAtMs: number = Date.now();
+	let completion;
+	try {
+		completion = await client.chat.completions.create(requestBody, { signal: abortSignal });
+	} catch (error: unknown) {
+		await recordProviderUsage({
+			options,
+			requestBody,
+			startedAtMs,
+			status: getProviderUsageStatusForError(error),
+			errorCode: getProviderUsageErrorCode(error),
+			streaming: false
+		});
+		throw error;
+	}
 
 	const text: string | null | undefined = completion.choices[0]?.message.content;
 	if (!text) {
+		await recordProviderUsage({
+			options,
+			requestBody,
+			responseBody: completion,
+			startedAtMs,
+			status: "error",
+			errorCode: "empty_response",
+			streaming: false,
+			usage: parseOpenAIChatUsage(completion)
+		});
 		throw new Error("LLM returned empty response");
 	}
+	await recordProviderUsage({
+		options,
+		requestBody,
+		responseBody: completion,
+		outputText: text,
+		startedAtMs,
+		status: "success",
+		streaming: false,
+		usage: parseOpenAIChatUsage(completion)
+	});
 
 	return text;
 }
@@ -100,11 +136,45 @@ export async function* streamChatWithOpenAICompatible(
 
 	applyChatOptions(requestBody, params, options);
 
-	const stream = await client.chat.completions.create(requestBody, { signal: abortSignal });
-	for await (const chunk of stream) {
-		const delta: string | null | undefined = (chunk as ChatCompletionChunk).choices[0]?.delta.content;
-		if (delta !== undefined && delta !== null && delta.length > 0) {
-			yield delta;
+	const startedAtMs: number = Date.now();
+	let firstTokenAtMs: number | undefined;
+	let outputText: string = "";
+	let finalUsage = null;
+	try {
+		const stream = await client.chat.completions.create(requestBody, { signal: abortSignal });
+		for await (const chunk of stream) {
+			finalUsage = parseOpenAIChatUsage(chunk) ?? finalUsage;
+			const delta: string | null | undefined = (chunk as ChatCompletionChunk).choices[0]?.delta.content;
+			if (delta !== undefined && delta !== null && delta.length > 0) {
+				if (firstTokenAtMs === undefined) {
+					firstTokenAtMs = Date.now();
+				}
+				outputText += delta;
+				yield delta;
+			}
 		}
+		await recordProviderUsage({
+			options,
+			requestBody,
+			outputText,
+			startedAtMs,
+			firstTokenAtMs,
+			status: "success",
+			streaming: true,
+			usage: finalUsage
+		});
+	} catch (error: unknown) {
+		await recordProviderUsage({
+			options,
+			requestBody,
+			outputText,
+			startedAtMs,
+			firstTokenAtMs,
+			status: getProviderUsageStatusForError(error),
+			errorCode: getProviderUsageErrorCode(error),
+			streaming: true,
+			usage: finalUsage
+		});
+		throw error;
 	}
 }

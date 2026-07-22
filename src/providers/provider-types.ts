@@ -1,4 +1,5 @@
 import type { ModelProfile, ProviderId } from "../protocol/types.js";
+import type { ProviderUsageContext } from "../usage/metrics-types.js";
 
 export type EndpointType = "openai-chat-completions" | "openai-responses" | "anthropic-messages";
 
@@ -70,6 +71,7 @@ export type ProviderChatOptions = {
 	endpointType?: EndpointType | undefined;
 	adapterFamily?: AdapterFamily | undefined;
 	modelProfile?: ModelProfile | undefined;
+	usageContext?: ProviderUsageContext | undefined;
 };
 
 export type ProviderRuntimeConfig = {

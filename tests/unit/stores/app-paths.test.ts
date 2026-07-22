@@ -16,6 +16,7 @@ import {
 	getSkillSettingsPath,
 	getTerminalJobsDir,
 	getToolExecutionLedgerPath,
+	getUsageMetricsDbPath,
 	getUserPromptConfigPath,
 	getWebSearchSettingsConfigPath
 } from "../../../src/app-paths.js";
@@ -45,6 +46,7 @@ test("Daedalus state uses USERPROFILE without legacy appdata or v2 paths", (): v
 		assert.equal(getLogsDir(), join(root, "logs"));
 		assert.equal(getTerminalJobsDir(), join(root, "terminal-jobs"));
 		assert.equal(getToolExecutionLedgerPath(), join(root, "tool-executions.jsonl"));
+		assert.equal(getUsageMetricsDbPath(), join(root, "metrics", "usage.sqlite"));
 
 		assert.equal(getDaedalusPath("config.workspaces"), getDefaultWorkspaceConfigPath());
 		assert.equal(getDaedalusPath("config.provider"), getProviderConfigPath());
@@ -60,6 +62,7 @@ test("Daedalus state uses USERPROFILE without legacy appdata or v2 paths", (): v
 		assert.equal(getDaedalusPath("logs.root"), getLogsDir());
 		assert.equal(getDaedalusPath("terminalJobs.root"), getTerminalJobsDir());
 		assert.equal(getDaedalusPath("toolExecution.ledger"), getToolExecutionLedgerPath());
+		assert.equal(getDaedalusPath("metrics.usageDb"), getUsageMetricsDbPath());
 	} finally {
 		if (previousUserProfile === undefined) {
 			delete process.env.USERPROFILE;

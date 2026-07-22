@@ -217,6 +217,20 @@ export function broadcastSessionEvent(
 	}
 }
 
+export function broadcastGlobalEvent(requestId: string, eventName: ServerEvent["event"], data: unknown): void {
+	for (const record of socketConnections.values()) {
+		if (record.socket.readyState !== WebSocket.OPEN) {
+			continue;
+		}
+		sendJson(record.socket, {
+			type: "event",
+			id: requestId,
+			event: eventName,
+			data
+		});
+	}
+}
+
 export function findSessionWithPendingApproval(approvalId: string): ClientSession | undefined {
 	for (const record of socketConnections.values()) {
 		if (record.session.approvalGateway.getPending(approvalId) !== undefined) {

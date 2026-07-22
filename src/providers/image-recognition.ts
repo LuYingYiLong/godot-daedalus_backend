@@ -4,6 +4,7 @@ import { getImageAttachments, hasImageAttachments, modelSupportsImageInput, Prov
 import { resolveProviderTaskModelOptions, type ResolvedProviderTaskModel } from "./task-model-routing.js";
 import { getProviderDisplayName } from "./provider-registry.js";
 import { logger } from "../logger.js";
+import { withProviderUsageContext } from "../usage/provider-recorder.js";
 
 const IMAGE_RECOGNITION_MAX_CHARS: number = 2400;
 
@@ -88,7 +89,13 @@ export async function preprocessImageAttachmentsForTextModel(
 		return { params, recognized: false };
 	}
 
-	const imageModel: ResolvedProviderTaskModel = await resolveProviderTaskModelOptions("imageRecognition", currentOptions);
+	const resolvedImageModel: ResolvedProviderTaskModel = await resolveProviderTaskModelOptions("imageRecognition", currentOptions);
+	const imageModel: ResolvedProviderTaskModel = {
+		...resolvedImageModel,
+		options: withProviderUsageContext(resolvedImageModel.options, {
+			operation: "image_recognition"
+		})
+	};
 	if (imageModel.source === "current") {
 		throw new ProviderImageInputError(
 			"model_does_not_support_images",

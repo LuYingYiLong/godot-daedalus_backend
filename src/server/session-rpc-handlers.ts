@@ -1127,7 +1127,7 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 					type: "response",
 					id: request.id,
 					ok: true,
-					result: await compressSessionHistory(session, apiKey, keepRecent)
+					result: await compressSessionHistory(session, apiKey, keepRecent, request.id)
 				});
 			} catch (error: unknown) {
 				sendJson(socket, {

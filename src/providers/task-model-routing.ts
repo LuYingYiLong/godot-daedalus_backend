@@ -73,7 +73,8 @@ export async function resolveProviderTaskModelOptions(
 		model: configuredRef.model,
 		endpointType,
 		adapterFamily: getProviderAdapterFamily(configuredRef.provider, endpointType),
-		modelProfile: resolveModelProfile(configuredRef.provider, configuredRef.model)
+		modelProfile: resolveModelProfile(configuredRef.provider, configuredRef.model),
+		usageContext: currentOptions.usageContext
 	};
 	const normalizedBaseUrl: string | undefined = normalizeConfiguredProviderBaseUrl(config.baseUrl);
 	if (normalizedBaseUrl !== undefined) {

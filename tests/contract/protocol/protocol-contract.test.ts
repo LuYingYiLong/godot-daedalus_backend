@@ -24,6 +24,9 @@ const BACKEND_ONLY_OR_STUDIO_RPC_METHODS: Set<string> = new Set([
 	"skill.install",
 	"webSearchSettings.get",
 	"webSearchSettings.update",
+	"usage.metrics.summary.get",
+	"usage.metrics.logs.list",
+	"usage.metrics.trends.get",
 	"workspace.delete",
 	"workspace.git.diff.get"
 ]);
@@ -221,6 +224,45 @@ test("backend update requests are accepted", (): void => {
 		method: "backend.update.install",
 		params: {
 			version: "1.0.9"
+		}
+	}).success, true);
+});
+
+test("usage metrics requests are accepted", (): void => {
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "usage-summary",
+		method: "usage.metrics.summary.get",
+		params: {
+			provider: "deepseek",
+			model: "deepseek-v4-pro",
+			sessionId: "session-a",
+			workspaceId: "workspace-a",
+			operation: "workflow_phase",
+			status: "success",
+			usageSource: "provider"
+		}
+	}).success, true);
+
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "usage-logs",
+		method: "usage.metrics.logs.list",
+		params: {
+			limit: 50,
+			offset: 0,
+			startAt: "2026-07-21T00:00:00.000Z",
+			endAt: "2026-07-22T00:00:00.000Z"
+		}
+	}).success, true);
+
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "usage-trends",
+		method: "usage.metrics.trends.get",
+		params: {
+			bucket: "hour",
+			provider: "moonshot"
 		}
 	}).success, true);
 });

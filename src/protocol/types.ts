@@ -122,7 +122,8 @@ export type ServerEvent = {
 		| "workflow.phase.outcome"
 		| "workflow.phase.done"
 		| "workflow.done"
-		| "workflow.error";
+		| "workflow.error"
+		| "usage.metrics.recorded";
 	data?: unknown;
 };
 

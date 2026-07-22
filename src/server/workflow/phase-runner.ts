@@ -22,6 +22,7 @@ import { isEmptyProviderResponseError } from "./provider-errors.js";
 import { createSceneViewToolResultEnricher } from "./scene-view-enricher.js";
 import { filterToolNamesForWorkspace } from "../../tools/tool-catalog.js";
 import { isWebSearchToolAvailable } from "../../web-search-settings-store.js";
+import { withProviderUsageContext } from "../../usage/provider-recorder.js";
 
 const SCENE_VIEW_CAPTURE_TOOL: string = "mcp_godot_editor_capture_scene_view";
 const SKILL_LOAD_TOOL: string = "mcp_skills_load";
@@ -73,9 +74,13 @@ export async function runWorkflowPhase(
 	abortSignal?: AbortSignal | undefined
 ): Promise<WorkflowPhaseRunResult> {
 	const runtimePhase: WorkflowPhase = await createSearchAwareRuntimeWorkflowPhase(phase, mcpHost, session);
+	const phaseOptions: ProviderChatOptions = withProviderUsageContext(options, {
+		operation: "workflow_phase",
+		phaseId: runtimePhase.id
+	});
 	const sceneViewEnricher = createSceneViewToolResultEnricher({
 		session,
-		options,
+		options: phaseOptions,
 		phaseInstruction: runtimePhase.instruction,
 		abortSignal
 	});
@@ -90,8 +95,8 @@ export async function runWorkflowPhase(
 	let agentResult: ProviderAgentResult;
 	try {
 		agentResult = streamPhase
-			? await runProviderAgentStreaming(params, options, history, fullSystemPrompt, mcpHost, session.approvalGateway, runtimePhase.allowedTools, onToolEvent, abortSignal, sceneViewEnricher.enricher, { workspaceId: session.activeWorkspace?.id, editorInstanceId: session.editorInstanceId, sessionId: session.sessionId })
-			: await runProviderAgent(params, options, history, fullSystemPrompt, mcpHost, session.approvalGateway, runtimePhase.allowedTools, onToolEvent, abortSignal, sceneViewEnricher.enricher, { workspaceId: session.activeWorkspace?.id, editorInstanceId: session.editorInstanceId, sessionId: session.sessionId });
+			? await runProviderAgentStreaming(params, phaseOptions, history, fullSystemPrompt, mcpHost, session.approvalGateway, runtimePhase.allowedTools, onToolEvent, abortSignal, sceneViewEnricher.enricher, { workspaceId: session.activeWorkspace?.id, editorInstanceId: session.editorInstanceId, sessionId: session.sessionId })
+			: await runProviderAgent(params, phaseOptions, history, fullSystemPrompt, mcpHost, session.approvalGateway, runtimePhase.allowedTools, onToolEvent, abortSignal, sceneViewEnricher.enricher, { workspaceId: session.activeWorkspace?.id, editorInstanceId: session.editorInstanceId, sessionId: session.sessionId });
 	} catch (error: unknown) {
 		if (phase.toolGroup === "write" && isEmptyProviderResponseError(error)) {
 			agentResult = {

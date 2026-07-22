@@ -8,6 +8,7 @@ import { saveImageAttachment } from "../../session/session-attachments.js";
 import type { IdempotentToolExecutionResult } from "../../tools/tool-idempotency.js";
 import type { ToolResultEnricher } from "../../tools/tool-dispatcher.js";
 import type { ClientSession } from "../client-session.js";
+import { withProviderUsageContext } from "../../usage/provider-recorder.js";
 
 const SCENE_VIEW_TOOL: string = "mcp_godot_editor_capture_scene_view";
 const MAX_OBSERVATION_CHARS: number = 2400;
@@ -127,6 +128,9 @@ export function createSceneViewToolResultEnricher(params: {
 
 		try {
 			const imageModel = await resolveProviderTaskModelOptions("imageRecognition", params.options);
+			const imageOptions: ProviderChatOptions = withProviderUsageContext(imageModel.options, {
+				operation: "scene_view_image_recognition"
+			});
 			if (!await modelSupportsImageInput(imageModel.provider, imageModel.model)) {
 				input.onProgress?.({
 					status: "error",
@@ -158,7 +162,7 @@ export function createSceneViewToolResultEnricher(params: {
 					}
 				}],
 				options: { temperature: 0.1, maxTokens: MAX_OBSERVATION_CHARS, workflow: "single" }
-			}, imageModel.options, [], "你是严谨的 Godot 编辑器视觉观察助手。", params.abortSignal));
+			}, imageOptions, [], "你是严谨的 Godot 编辑器视觉观察助手。", params.abortSignal));
 			input.onProgress?.({
 				status: "success",
 				title: "场景视图解释完成",

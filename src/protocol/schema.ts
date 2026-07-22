@@ -177,6 +177,26 @@ const workbenchPatchParamsSchema = z.object({
 		statusCode: z.string().max(80).optional()
 	}).strict().optional()
 }).strict();
+const usageMetricsStatusSchema = z.enum(["success", "error", "cancelled"]);
+const usageMetricsSourceSchema = z.enum(["provider", "estimated", "missing"]);
+const usageMetricsFiltersSchema = z.object({
+	startAt: z.string().min(1).optional(),
+	endAt: z.string().min(1).optional(),
+	provider: providerIdSchema.optional(),
+	model: z.string().min(1).optional(),
+	sessionId: z.string().min(1).optional(),
+	workspaceId: z.string().min(1).optional(),
+	operation: z.string().min(1).max(120).optional(),
+	status: usageMetricsStatusSchema.optional(),
+	usageSource: usageMetricsSourceSchema.optional()
+}).strict();
+const usageMetricsLogsParamsSchema = usageMetricsFiltersSchema.extend({
+	limit: z.number().int().min(1).max(500).optional(),
+	offset: z.number().int().min(0).optional()
+}).strict();
+const usageMetricsTrendsParamsSchema = usageMetricsFiltersSchema.extend({
+	bucket: z.enum(["hour", "day"]).optional()
+}).strict();
 const customMcpSecretRecordSchema = z.record(z.string().min(1).max(160), z.string().max(20000))
 	.refine((value: Record<string, string>): boolean => Object.keys(value).length <= 64, "Too many secret entries");
 const customMcpSecretUpdateRecordSchema = z.record(z.string().min(1).max(160), z.union([z.string().max(20000), z.null()]))
@@ -251,6 +271,24 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		params: z.object({
 			version: z.string().min(1).optional(),
 		}).optional(),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("usage.metrics.summary.get"),
+		params: usageMetricsFiltersSchema.optional(),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("usage.metrics.logs.list"),
+		params: usageMetricsLogsParamsSchema.optional(),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("usage.metrics.trends.get"),
+		params: usageMetricsTrendsParamsSchema.optional(),
 	}),
 	z.object({
 		type: z.literal("request"),

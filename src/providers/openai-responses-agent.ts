@@ -34,6 +34,9 @@ import {
 	getInitialMaxToolSteps,
 	shouldPauseForToolBudget
 } from "./agent-tool-budget.js";
+import type { NormalizedLlmUsage } from "../usage/metrics-types.js";
+import { getProviderUsageErrorCode, getProviderUsageStatusForError, recordProviderUsage } from "../usage/provider-recorder.js";
+import { parseOpenAIResponsesUsage } from "../usage/usage-parser.js";
 
 const FINALIZE_AFTER_TOOL_LIMIT_PROMPT: string =
 	"工具调用阶段已经达到后端限制。请停止请求更多工具，基于目前已经获得的工具结果直接回答用户。"
@@ -217,10 +220,35 @@ async function readResponsesAssistantMessage(
 ): Promise<ResponsesAssistantMessage> {
 	const client = createOpenAIResponsesClient(options);
 	if (!streamAssistant) {
-		const response: Response = await client.responses.create(
-			createRequestBody(params, options, instructions, inputItems, tools, requireToolCall),
-			{ signal: abortSignal }
-		);
+		const requestBody: ResponseCreateParamsNonStreaming = createRequestBody(params, options, instructions, inputItems, tools, requireToolCall);
+		const startedAtMs: number = Date.now();
+		let response: Response;
+		try {
+			response = await client.responses.create(
+				requestBody,
+				{ signal: abortSignal }
+			);
+		} catch (error: unknown) {
+			await recordProviderUsage({
+				options,
+				requestBody,
+				startedAtMs,
+				status: getProviderUsageStatusForError(error),
+				errorCode: getProviderUsageErrorCode(error),
+				streaming: false
+			});
+			throw error;
+		}
+		await recordProviderUsage({
+			options,
+			requestBody,
+			responseBody: response,
+			outputText: response.output_text.length > 0 ? response.output_text : JSON.stringify(response.output),
+			startedAtMs,
+			status: "success",
+			streaming: false,
+			usage: parseOpenAIResponsesUsage(response)
+		});
 		return {
 			text: response.output_text,
 			toolCalls: extractFunctionCalls(response.output),
@@ -232,28 +260,66 @@ async function readResponsesAssistantMessage(
 		...createRequestBody(params, options, instructions, inputItems, tools, requireToolCall),
 		stream: true
 	};
-	const stream = await client.responses.create(requestBody, { signal: abortSignal });
 	const outputItems: ResponseOutputItem[] = [];
 	let text = "";
 	let completedResponse: Response | null = null;
+	const startedAtMs: number = Date.now();
+	let firstTokenAtMs: number | undefined;
+	let finalUsage: NormalizedLlmUsage | null = null;
 
-	for await (const event of stream) {
-		const streamEvent: ResponseStreamEvent = event as ResponseStreamEvent;
-		if (streamEvent.type === "response.output_text.delta" && streamEvent.delta.length > 0) {
-			text += streamEvent.delta;
-			if (!requireToolCall) {
-				onEvent?.({ type: "ai.delta", text: streamEvent.delta });
+	try {
+		const stream = await client.responses.create(requestBody, { signal: abortSignal });
+		for await (const event of stream) {
+			const streamEvent: ResponseStreamEvent = event as ResponseStreamEvent;
+			if (streamEvent.type === "response.output_text.delta" && streamEvent.delta.length > 0) {
+				if (firstTokenAtMs === undefined) {
+					firstTokenAtMs = Date.now();
+				}
+				text += streamEvent.delta;
+				if (!requireToolCall) {
+					onEvent?.({ type: "ai.delta", text: streamEvent.delta });
+				}
+				continue;
 			}
-			continue;
+			if (streamEvent.type === "response.output_item.done") {
+				if (firstTokenAtMs === undefined) {
+					firstTokenAtMs = Date.now();
+				}
+				outputItems.push(streamEvent.item);
+				continue;
+			}
+			if (streamEvent.type === "response.completed") {
+				completedResponse = streamEvent.response;
+				finalUsage = parseOpenAIResponsesUsage(streamEvent.response) ?? finalUsage;
+			}
 		}
-		if (streamEvent.type === "response.output_item.done") {
-			outputItems.push(streamEvent.item);
-			continue;
-		}
-		if (streamEvent.type === "response.completed") {
-			completedResponse = streamEvent.response;
-		}
+	} catch (error: unknown) {
+		await recordProviderUsage({
+			options,
+			requestBody,
+			responseBody: completedResponse,
+			outputText: text,
+			startedAtMs,
+			firstTokenAtMs,
+			status: getProviderUsageStatusForError(error),
+			errorCode: getProviderUsageErrorCode(error),
+			streaming: true,
+			usage: finalUsage
+		});
+		throw error;
 	}
+
+	await recordProviderUsage({
+		options,
+		requestBody,
+		responseBody: completedResponse,
+		outputText: completedResponse?.output_text ?? text,
+		startedAtMs,
+		firstTokenAtMs,
+		status: "success",
+		streaming: true,
+		usage: finalUsage
+	});
 
 	return {
 		text: completedResponse?.output_text ?? text,
@@ -272,10 +338,36 @@ async function createFinalAnswer(
 ): Promise<string> {
 	const client = createOpenAIResponsesClient(options);
 	const finalInstructions: string = `${instructions}\n\n${FINALIZE_AFTER_TOOL_LIMIT_PROMPT}\n\n收束原因：${reason}`;
-	const response: Response = await client.responses.create(
-		createRequestBody(params, options, finalInstructions, inputItems),
-		{ signal: abortSignal }
-	);
+	const requestBody: ResponseCreateParamsNonStreaming = createRequestBody(params, options, finalInstructions, inputItems);
+	const startedAtMs: number = Date.now();
+	let response: Response;
+	try {
+		response = await client.responses.create(
+			requestBody,
+			{ signal: abortSignal }
+		);
+	} catch (error: unknown) {
+		await recordProviderUsage({
+			options,
+			requestBody,
+			startedAtMs,
+			status: getProviderUsageStatusForError(error),
+			errorCode: getProviderUsageErrorCode(error),
+			streaming: false
+		});
+		throw error;
+	}
+	await recordProviderUsage({
+		options,
+		requestBody,
+		responseBody: response,
+		outputText: response.output_text,
+		startedAtMs,
+		status: response.output_text.length > 0 ? "success" : "error",
+		errorCode: response.output_text.length > 0 ? undefined : "empty_response",
+		streaming: false,
+		usage: parseOpenAIResponsesUsage(response)
+	});
 	if (response.output_text.length === 0) {
 		return createToolResultLimitFallback(reason);
 	}
