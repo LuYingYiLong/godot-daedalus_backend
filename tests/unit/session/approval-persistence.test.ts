@@ -159,10 +159,8 @@ test("hydrated approval states keep in-memory approvals created during continuat
 
 test("cancelling a request clears pending approval continuation and persistence", async (): Promise<void> => {
 	const previousUserProfile: string | undefined = process.env.USERPROFILE;
-	const previousDisableTokenizer: string | undefined = process.env.DISABLE_DEEPSEEK_TOKENIZER;
 	const appDataDir: string = await fs.mkdtemp(path.join(os.tmpdir(), "godot-daedalus-approval-cancel-"));
 	process.env.USERPROFILE = appDataDir;
-	process.env.DISABLE_DEEPSEEK_TOKENIZER = "1";
 	try {
 		const suffix: string = `${Date.now()}-${Math.random()}`;
 		const store = await import(`../../../src/session/session-store.js?case=${suffix}`);
@@ -195,11 +193,6 @@ test("cancelling a request clears pending approval continuation and persistence"
 			delete process.env.USERPROFILE;
 		} else {
 			process.env.USERPROFILE = previousUserProfile;
-		}
-		if (previousDisableTokenizer === undefined) {
-			delete process.env.DISABLE_DEEPSEEK_TOKENIZER;
-		} else {
-			process.env.DISABLE_DEEPSEEK_TOKENIZER = previousDisableTokenizer;
 		}
 		await fs.rm(appDataDir, { recursive: true, force: true });
 	}

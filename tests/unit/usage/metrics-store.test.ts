@@ -100,8 +100,6 @@ test("usage metrics store inserts idempotently and aggregates filters", async ()
 
 test("provider recorder estimates missing usage without failing the caller", async (): Promise<void> => {
 	const root: string = join(tmpdir(), `daedalus-usage-recorder-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-	const previousDisableTokenizer: string | undefined = process.env.DISABLE_DEEPSEEK_TOKENIZER;
-	process.env.DISABLE_DEEPSEEK_TOKENIZER = "1";
 	await mkdir(root, { recursive: true });
 	resetUsageMetricsStoreForTests(join(root, "usage.sqlite"));
 	try {
@@ -137,11 +135,6 @@ test("provider recorder estimates missing usage without failing the caller", asy
 		assert.ok((logs.logs[0]?.realTotalTokens ?? 0) > 0);
 	} finally {
 		resetUsageMetricsStoreForTests(null);
-		if (previousDisableTokenizer === undefined) {
-			delete process.env.DISABLE_DEEPSEEK_TOKENIZER;
-		} else {
-			process.env.DISABLE_DEEPSEEK_TOKENIZER = previousDisableTokenizer;
-		}
 		await rm(root, { recursive: true, force: true });
 	}
 });

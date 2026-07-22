@@ -91,10 +91,8 @@ test("failed transcript-only turns persist but stay out of LLM context", async (
 
 test("chat turn persistence reuses pre-saved user message", async (): Promise<void> => {
 	const previousUserProfile: string | undefined = process.env.USERPROFILE;
-	const previousDisableTokenizer: string | undefined = process.env.DISABLE_DEEPSEEK_TOKENIZER;
 	const appDataDir: string = await fs.mkdtemp(path.join(os.tmpdir(), "godot-daedalus-token-budget-chat-"));
 	process.env.USERPROFILE = appDataDir;
-	process.env.DISABLE_DEEPSEEK_TOKENIZER = "1";
 	try {
 		const store = await import("../../../src/session/session-store.js");
 		const tokenBudget = await import("../../../src/server/token-budget.js");
@@ -146,21 +144,14 @@ test("chat turn persistence reuses pre-saved user message", async (): Promise<vo
 		} else {
 			process.env.USERPROFILE = previousUserProfile;
 		}
-		if (previousDisableTokenizer === undefined) {
-			delete process.env.DISABLE_DEEPSEEK_TOKENIZER;
-		} else {
-			process.env.DISABLE_DEEPSEEK_TOKENIZER = previousDisableTokenizer;
-		}
 		await fs.rm(appDataDir, { recursive: true, force: true });
 	}
 });
 
 test("chat turn persistence merges with stored messages instead of overwriting from stale memory", async (): Promise<void> => {
 	const previousUserProfile: string | undefined = process.env.USERPROFILE;
-	const previousDisableTokenizer: string | undefined = process.env.DISABLE_DEEPSEEK_TOKENIZER;
 	const appDataDir: string = await fs.mkdtemp(path.join(os.tmpdir(), "godot-daedalus-token-budget-merge-"));
 	process.env.USERPROFILE = appDataDir;
-	process.env.DISABLE_DEEPSEEK_TOKENIZER = "1";
 	try {
 		const store = await import("../../../src/session/session-store.js");
 		const tokenBudget = await import("../../../src/server/token-budget.js");
@@ -210,21 +201,14 @@ test("chat turn persistence merges with stored messages instead of overwriting f
 		} else {
 			process.env.USERPROFILE = previousUserProfile;
 		}
-		if (previousDisableTokenizer === undefined) {
-			delete process.env.DISABLE_DEEPSEEK_TOKENIZER;
-		} else {
-			process.env.DISABLE_DEEPSEEK_TOKENIZER = previousDisableTokenizer;
-		}
 		await fs.rm(appDataDir, { recursive: true, force: true });
 	}
 });
 
 test("concurrent chat persistence serializes writes by session", async (): Promise<void> => {
 	const previousUserProfile: string | undefined = process.env.USERPROFILE;
-	const previousDisableTokenizer: string | undefined = process.env.DISABLE_DEEPSEEK_TOKENIZER;
 	const appDataDir: string = await fs.mkdtemp(path.join(os.tmpdir(), "godot-daedalus-token-budget-concurrent-"));
 	process.env.USERPROFILE = appDataDir;
-	process.env.DISABLE_DEEPSEEK_TOKENIZER = "1";
 	try {
 		const store = await import("../../../src/session/session-store.js");
 		const tokenBudget = await import("../../../src/server/token-budget.js");
@@ -273,11 +257,6 @@ test("concurrent chat persistence serializes writes by session", async (): Promi
 			delete process.env.USERPROFILE;
 		} else {
 			process.env.USERPROFILE = previousUserProfile;
-		}
-		if (previousDisableTokenizer === undefined) {
-			delete process.env.DISABLE_DEEPSEEK_TOKENIZER;
-		} else {
-			process.env.DISABLE_DEEPSEEK_TOKENIZER = previousDisableTokenizer;
 		}
 		await fs.rm(appDataDir, { recursive: true, force: true });
 	}

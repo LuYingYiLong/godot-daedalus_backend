@@ -11,17 +11,6 @@ For the long-term split between the lightweight Godot editor plugin and the stan
 - Node.js 22.12.0 or newer.
 - npm.
 - Godot 4.7 for the public Beta validation path. Godot 4.x may work, but Windows + Godot 4.7 is the first supported Beta target.
-- Optional Python 3 for the DeepSeek tokenizer helper.
-
-The Python tokenizer bridge is included as `scripts/deepseek-tokenizer-server.py`. The tokenizer model files are intentionally not included in the npm package because they can be large. If you want exact tokenizer counting, install the Python dependency and point the backend at your tokenizer directory:
-
-```powershell
-pip install tokenizers
-$env:PYTHON_CMD = "python"
-$env:DEEPSEEK_TOKENIZER_DIR = "D:\path\to\tokenizer"
-```
-
-If Python or tokenizer files are unavailable, the backend can still run; token counting may fall back to the non-Python path used by the runtime.
 
 ## Install
 
@@ -195,11 +184,10 @@ The npm package uses the `files` whitelist in `package.json`. Runtime users rece
 - `src/`
 - `scripts/beta-smoke.ps1`
 - `scripts/llm-inline-diff-smoke.ts`
-- `scripts/deepseek-tokenizer-server.py`
 - `README.md`
 - `package.json`
 
-Tests, local agent instructions, generated tarballs, environment files, `node_modules/`, and tokenizer model files are not published.
+Tests, local agent instructions, generated tarballs, environment files, and `node_modules/` are not published.
 
 Before publishing:
 

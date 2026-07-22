@@ -17,7 +17,6 @@
     "scripts/automation-smoke-matrix.ts",
     "scripts/beta-smoke.ps1",
     "scripts/llm-inline-diff-smoke.ts",
-    "scripts/deepseek-tokenizer-server.py",
     "README.md"
   ],
   "scripts": {

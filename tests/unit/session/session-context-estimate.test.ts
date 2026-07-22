@@ -7,8 +7,6 @@ import type { McpHost } from "../../../src/mcp/mcp-host.js";
 import { createClientSession, type ClientSession } from "../../../src/server/client-session.js";
 import { resolveModelProfile } from "../../../src/tokens/model-profiles.js";
 
-process.env.DISABLE_DEEPSEEK_TOKENIZER = "1";
-
 type CapturedResponse = {
 	protocolVersion: number;
 	type: "response";
