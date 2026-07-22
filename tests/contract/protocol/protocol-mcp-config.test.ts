@@ -127,7 +127,8 @@ test("provider.config.set schema accepts task model routing", (): void => {
 			modelRouting: {
 				imageRecognition: { provider: "moonshot", model: "kimi-k2.6" },
 				workflowPlanner: { provider: "deepseek", model: "deepseek-v4-pro" },
-				sessionTitle: null
+				sessionTitle: null,
+				gitCommit: { provider: "deepseek", model: "deepseek-v4-pro" }
 			}
 		}
 	}).success, true);
@@ -252,6 +253,15 @@ test("user prompt schema accepts backend singleton prompt updates", (): void => 
 		method: "userPrompt.set",
 		params: {
 			prompt: "请优先用中文回答。"
+		}
+	}).success, true);
+
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "user-prompt-set-git",
+		method: "userPrompt.set",
+		params: {
+			gitCommitPrompt: "提交信息标题使用英文动词开头。"
 		}
 	}).success, true);
 });

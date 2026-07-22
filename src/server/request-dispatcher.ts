@@ -199,7 +199,9 @@ export const REQUEST_HANDLER_METHODS: readonly ClientRequest["method"][] = [
 	"workspace.select",
 	"workspace.delete",
 	"workspace.info",
-	"workspace.git.diff.get"
+	"workspace.git.diff.get",
+	"workspace.git.commit.message.generate",
+	"workspace.git.commitOrPush"
 ] as const;
 
 export const REQUEST_HANDLERS: ReadonlyMap<ClientRequest["method"], RequestHandler> = new Map([
@@ -308,7 +310,9 @@ export const REQUEST_HANDLERS: ReadonlyMap<ClientRequest["method"], RequestHandl
 	["workspace.select", handleWorkspaceRequest],
 	["workspace.delete", handleWorkspaceRequest],
 	["workspace.info", handleWorkspaceRequest],
-	["workspace.git.diff.get", handleWorkspaceRequest]
+	["workspace.git.diff.get", handleWorkspaceRequest],
+	["workspace.git.commit.message.generate", handleWorkspaceRequest],
+	["workspace.git.commitOrPush", handleWorkspaceRequest]
 ]);
 
 export function assertKnownRequestMethod(method: ClientRequest["method"]): void {

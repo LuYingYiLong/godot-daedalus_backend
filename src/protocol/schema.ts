@@ -5,7 +5,8 @@ export const promptIdSchema = z.enum([
 	"godot.assistant",
 	"gdscript.reviewer",
 	"scene.architect",
-	"backend.helper"
+	"backend.helper",
+	"git.committer"
 ]);
 
 export const skillIdSchema = z.enum([
@@ -47,7 +48,8 @@ const providerModelRoutingSchema = z.object({
 	imageRecognition: providerTaskModelRefSchema.nullable().optional(),
 	workflowPlanner: providerTaskModelRefSchema.nullable().optional(),
 	sessionTitle: providerTaskModelRefSchema.nullable().optional(),
-	imageGeneration: providerTaskModelRefSchema.nullable().optional()
+	imageGeneration: providerTaskModelRefSchema.nullable().optional(),
+	gitCommit: providerTaskModelRefSchema.nullable().optional()
 });
 
 const sessionUiMetadataParamsSchema = z.object({
@@ -65,7 +67,7 @@ export const additionalContextItemSchema = z.object({
 	subtitle: z.string().max(400).optional(),
 	pinned: z.boolean().optional(),
 	source: z.enum(["editor", "manual"]),
-	resourcePath: z.string().max(500).optional(),
+	resourcePath: z.string().max(1000).optional(),
 	nodePath: z.string().max(500).optional(),
 	nodeType: z.string().max(160).optional(),
 	scriptPath: z.string().max(500).optional(),
@@ -434,7 +436,8 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		id: z.string(),
 		method: z.literal("userPrompt.set"),
 		params: z.object({
-			prompt: z.string().max(20000),
+			prompt: z.string().max(20000).optional(),
+			gitCommitPrompt: z.string().max(20000).optional(),
 		}),
 	}),
 	z.object({
@@ -945,6 +948,7 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 			width: z.number().int().positive().optional(),
 			height: z.number().int().positive().optional(),
 			title: z.string().min(1).max(200).optional(),
+			sourcePath: z.string().min(1).max(1000).optional(),
 		}),
 	}),
 	z.object({
@@ -1094,6 +1098,28 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		params: z.object({
 			workspaceId: z.string().min(1),
 		}),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("workspace.git.commit.message.generate"),
+		params: z.object({
+			workspaceId: z.string().min(1),
+			includeUnstagedChanges: z.boolean(),
+			provider: providerIdSchema.optional(),
+			model: z.string().min(1).optional(),
+		}).strict(),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("workspace.git.commitOrPush"),
+		params: z.object({
+			workspaceId: z.string().min(1),
+			action: z.enum(["commit", "push", "commit_and_push"]),
+			message: z.string().max(20000).optional(),
+			includeUnstagedChanges: z.boolean(),
+		}).strict(),
 	})
 ]);
 

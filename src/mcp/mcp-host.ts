@@ -453,6 +453,14 @@ export class McpHost {
 	}
 
 	getSession(id: string, workspaceId?: string | undefined): McpSession {
+		const resolvedWorkspaceId: string | undefined = workspaceId ?? getCurrentMcpWorkspaceId() ?? this.activeWorkspaceId;
+		if (resolvedWorkspaceId !== undefined) {
+			const workspaceSession: McpSession | undefined = this.workspaceSessions.get(resolvedWorkspaceId)?.get(id);
+			if (workspaceSession !== undefined) {
+				return workspaceSession;
+			}
+		}
+
 		const globalInternalSession: McpSession | undefined = this.globalInternalSessions.get(id);
 		if (globalInternalSession !== undefined) {
 			return globalInternalSession;
@@ -463,7 +471,10 @@ export class McpHost {
 			return globalCustomSession;
 		}
 
-		const resolvedWorkspaceId: string = this.getWorkspaceId(workspaceId);
+		if (resolvedWorkspaceId === undefined) {
+			throw new Error("MCP workspace is not selected");
+		}
+
 		const session: McpSession | undefined = this.getActiveSessions(resolvedWorkspaceId).get(id);
 
 		if (!session) {

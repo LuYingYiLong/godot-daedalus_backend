@@ -14,14 +14,24 @@ test("user prompt store persists one backend prompt with atomic json formatting"
 		const appPaths = await import(`../../../src/app-paths.js?case=${Date.now()}-${Math.random()}`);
 
 		assert.equal(await store.getUserPrompt(), "");
+		assert.equal(await store.getGitCommitPrompt(), "");
 
 		const saved = await store.setUserPrompt("  请优先用中文回答。\n\n  ");
 		assert.equal(saved.prompt, "请优先用中文回答。");
+		assert.equal(saved.gitCommitPrompt, "");
 		assert.equal(await store.getUserPrompt(), "请优先用中文回答。");
+
+		const gitSaved = await store.setUserPromptConfig({
+			gitCommitPrompt: "  Git 提交标题使用英文命令式。\n"
+		});
+		assert.equal(gitSaved.prompt, "请优先用中文回答。");
+		assert.equal(gitSaved.gitCommitPrompt, "Git 提交标题使用英文命令式。");
+		assert.equal(await store.getGitCommitPrompt(), "Git 提交标题使用英文命令式。");
 
 		const rawConfig: string = await readFile(appPaths.getUserPromptConfigPath(), "utf8");
 		assert.match(rawConfig, /"schemaVersion": 1/u);
 		assert.match(rawConfig, /"prompt": "请优先用中文回答。"/u);
+		assert.match(rawConfig, /"gitCommitPrompt": "Git 提交标题使用英文命令式。"/u);
 		assert.equal(rawConfig.endsWith("\n"), true);
 	} finally {
 		if (previousUserProfile === undefined) {

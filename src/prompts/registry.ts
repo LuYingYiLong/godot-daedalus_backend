@@ -36,6 +36,12 @@ export const promptTemplates: Record<PromptId, PromptTemplate> = {
 		description: "TypeScript backend development for the AI Runtime",
 		path: "src/prompts/templates/base/backend-helper.md"
 	},
+	"git.committer": {
+		id: "git.committer",
+		name: "Git Committer",
+		description: "Generates concise Git commit messages from workspace diffs",
+		path: "src/prompts/templates/base/git-committer.md"
+	},
 };
 
 const promptContentCache: Map<PromptId, string> = new Map();

@@ -30,7 +30,7 @@ import { getDefaultModelProfile, resolveModelProfile } from "../tokens/model-pro
 import { type TokenCounter } from "../tokens/token-counter.js";
 import { createTokenCounter } from "../tokens/token-counter-factory.js";
 import { computeInputBudget, selectMessagesWithinBudget } from "../session/session-compressor.js";
-import { composeExplicitSkillPrompt, composeSkillCatalogPrompt, resolveBuiltinToolRestriction, resolveExplicitSkills } from "../skills/runtime.js";
+import { composeExplicitSkillPrompt, composeSkillCatalogPrompt, createGlobalSkillWorkspace, resolveBuiltinToolRestriction, resolveExplicitSkills } from "../skills/runtime.js";
 import type { CatalogSkill, SkillWorkspace } from "../skills/types.js";
 import {
 	createRuntimeWorkspace,
@@ -335,6 +335,47 @@ function filterReadOnlyAnswerToolNames(toolNames: readonly string[], workspaceId
 	});
 }
 
+function toolNamesIncludeWriteRisk(toolNames: readonly string[], workspaceId?: string | undefined): boolean {
+	return toolNames.some((toolName: string): boolean => {
+		const risk: string | undefined = getToolPolicy(toolName, workspaceId)?.risk;
+		return risk === "write" || risk === "destructive";
+	});
+}
+
+function messageLooksLikeWriteIntent(message: string): boolean {
+	const normalized: string = message.toLowerCase();
+	return [
+		"创建",
+		"新增",
+		"添加",
+		"修改",
+		"生成",
+		"create",
+		"add",
+		"modify",
+		"generate"
+	].some((keyword: string): boolean => normalized.includes(keyword));
+}
+
+function applyExplicitSkillWriteRequirement(
+	decision: WorkflowRouteDecision,
+	params: AiChatParams,
+	builtinToolRestriction: readonly string[] | undefined,
+	workspaceId?: string | undefined
+): WorkflowRouteDecision {
+	if (params.mode === "ask" || builtinToolRestriction === undefined || decision.execution !== "tool_answer" || decision.requiresWrite) {
+		return decision;
+	}
+	if (!messageLooksLikeWriteIntent(params.message) || !toolNamesIncludeWriteRisk(builtinToolRestriction, workspaceId)) {
+		return decision;
+	}
+	return {
+		...decision,
+		requiresWrite: true,
+		reason: `${decision.reason} Explicit write-capable skill requires write tool access.`
+	};
+}
+
 function resolveHiddenAnswerToolNames(
 	routeDecision: WorkflowRouteDecision,
 	allowedToolNames: readonly string[] | undefined,
@@ -353,14 +394,25 @@ function resolveHiddenAnswerToolNames(
 }
 
 function createHiddenAnswerChatParams(params: AiChatParams, routeDecision: WorkflowRouteDecision): AiChatParams {
-	if (routeDecision.execution !== "tool_answer" || routeDecision.requiresWrite) {
+	if (routeDecision.execution !== "tool_answer") {
 		return params;
+	}
+
+	const options: AiChatParams["options"] & Record<string, unknown> = {
+		...(params.options ?? {})
+	};
+	if (routeDecision.requiresWrite) {
+		options.requireToolCallOnFirstStep = true;
+		return {
+			...params,
+			options
+		};
 	}
 
 	return {
 		...params,
 		options: {
-			...(params.options ?? {}),
+			...options,
 			toolBudget: params.options?.toolBudget ?? "simple"
 		}
 	};
@@ -903,20 +955,78 @@ async function handleToolBudgetDecision(
 	const runId: string = pending.continuation.workflowState?.plan.id ?? pending.requestId;
 	const stepRunId: string = pending.continuation.workflowState?.activePhaseRunId ?? pending.requestId;
 	const queueItemId: number | undefined = getQueueItemIdFromParams(pending.continuation.params);
-	let shouldDrainQueueAfterRun: boolean = false;
-	session.activeAbortControllers.set(responseId, abortController);
 	session.activeAbortControllers.set(pending.requestId, abortController);
 	session.activeRunRequestId = pending.requestId;
+	session.pendingToolBudgets.delete(budgetId);
+	registerSessionRunController(session.sessionId, pending.requestId, abortController);
 	setWorkbenchActiveRun(session, {
 		status: "streaming",
 		requestId: pending.requestId,
+		startedAt: pending.continuation.userCreatedAt,
 		queueItemId
 	});
-	emitWorkbenchUpdated(socket, responseId, session);
+	sendSessionEvent(socket, pending.requestId, session, "agent.run.tool_budget.resolved", {
+		runId,
+		budgetId,
+		decision
+	}, pending.requestId);
+	emitWorkbenchUpdated(socket, pending.requestId, session);
+	sendJson(socket, {
+		type: "response",
+		id: responseId,
+		ok: true,
+		result: {
+			budgetId,
+			accepted: true,
+			continued: decision === "continue",
+			stopped: decision === "stop",
+			requestId: pending.requestId,
+			workbench: serializeWorkbench(session)
+		}
+	});
+
+	void runToolBudgetDecisionContinuation({
+		socket,
+		session,
+		mcpHost,
+		pending,
+		budgetId,
+		decision,
+		abortController,
+		runId,
+		stepRunId,
+		queueItemId
+	});
+}
+
+async function runToolBudgetDecisionContinuation(params: {
+	socket: WebSocket;
+	session: ClientSession;
+	mcpHost: McpHost;
+	pending: PendingToolBudget;
+	budgetId: string;
+	decision: ToolBudgetDecision;
+	abortController: AbortController;
+	runId: string;
+	stepRunId: string;
+	queueItemId: number | undefined;
+}): Promise<void> {
+	const {
+		socket,
+		session,
+		mcpHost,
+		pending,
+		budgetId,
+		decision,
+		abortController,
+		runId,
+		stepRunId,
+		queueItemId
+	} = params;
+	let shouldDrainQueueAfterRun: boolean = false;
 
 	try {
 		const pendingContinuation: PendingAiContinuation = pending.continuation;
-		session.pendingToolBudgets.delete(budgetId);
 		const continuationParams: AiChatParams = await hydrateImageAttachmentContexts(session.sessionId, pendingContinuation.params);
 		const toolStats: PendingToolBudgetPhaseStats = cloneToolBudgetPhaseStats(pending.workflowPhaseToolStats);
 		let toolObservations: WorkflowToolObservation[] = pending.workflowToolObservations?.map((observation: WorkflowToolObservation): WorkflowToolObservation => ({ ...observation })) ?? [];
@@ -936,11 +1046,6 @@ async function handleToolBudgetDecision(
 			}
 			forwardToolEvent(event);
 		};
-		sendSessionEvent(socket, responseId, session, "agent.run.tool_budget.resolved", {
-			runId,
-			budgetId,
-			decision
-		}, pending.requestId);
 
 		const toolContext = {
 			workspaceId: session.activeWorkspace?.id,
@@ -1032,30 +1137,24 @@ async function handleToolBudgetDecision(
 			);
 		}
 
+		if (session.approvalGateway.listPending().length > 0 || session.pendingToolBudgets.size > 0) {
+			emitWorkbenchUpdated(socket, pending.requestId, session);
+			return;
+		}
+
 		setWorkbenchActiveRun(session, { status: "idle" });
 		await finishQueueItemForRun(socket, pending.requestId, session, queueItemId);
 		shouldDrainQueueAfterRun = findQueuedMessage(session, queueItemId ?? 0) === undefined;
-		emitWorkbenchUpdated(socket, responseId, session);
-		sendJson(socket, {
-			type: "response",
-			id: responseId,
-			ok: true,
-			result: {
-				budgetId,
-				continued: decision === "continue",
-				stopped: decision === "stop",
-				workbench: serializeWorkbench(session)
-			}
-		});
+		emitWorkbenchUpdated(socket, pending.requestId, session);
 	} catch (error: unknown) {
 		if (isCancellationError(error, abortController.signal)) {
 			setWorkbenchActiveRun(session, { status: "idle" });
 			await finishQueueItemForRun(socket, pending.requestId, session, queueItemId, "cancelled");
-			emitWorkbenchUpdated(socket, responseId, session);
+			emitWorkbenchUpdated(socket, pending.requestId, session);
 			sendAgentCancelled(socket, pending.requestId, session);
 			sendJson(socket, {
 				type: "response",
-				id: responseId,
+				id: pending.requestId,
 				ok: true,
 				result: {
 					cancelled: true,
@@ -1081,10 +1180,10 @@ async function handleToolBudgetDecision(
 				message: workflowErrorMessage,
 				sequence: session.workbenchActiveRun.sequence ?? session.workbenchActiveRunSequence
 			}, pending.requestId);
-			emitWorkbenchUpdated(socket, responseId, session);
+			emitWorkbenchUpdated(socket, pending.requestId, session);
 			sendJson(socket, {
 				type: "response",
-				id: responseId,
+				id: pending.requestId,
 				ok: false,
 				error: {
 					code: "agent_run_error",
@@ -1093,9 +1192,9 @@ async function handleToolBudgetDecision(
 			});
 			return;
 		}
-		emitWorkbenchUpdated(socket, responseId, session);
+		emitWorkbenchUpdated(socket, pending.requestId, session);
 		const toolBudgetErrorStatus = classifyProviderError(error);
-		sendSessionEvent(socket, responseId, session, "agent.run.error", {
+		sendSessionEvent(socket, pending.requestId, session, "agent.run.error", {
 			runId,
 			requestId: pending.requestId,
 			status: "error",
@@ -1105,7 +1204,7 @@ async function handleToolBudgetDecision(
 		}, pending.requestId);
 		sendJson(socket, {
 			type: "response",
-			id: responseId,
+			id: pending.requestId,
 			ok: false,
 			error: {
 				code: toolBudgetErrorStatus.code,
@@ -1113,14 +1212,13 @@ async function handleToolBudgetDecision(
 			}
 		});
 	} finally {
-		session.activeAbortControllers.delete(responseId);
 		session.activeAbortControllers.delete(pending.requestId);
 		if (session.activeRunRequestId === pending.requestId) {
 			session.activeRunRequestId = undefined;
 		}
 		finishSessionRun(session.sessionId, pending.requestId);
 		if (shouldDrainQueueAfterRun) {
-			void drainMessageQueue(socket, responseId, session, mcpHost);
+			void drainMessageQueue(socket, pending.requestId, session, mcpHost);
 		}
 	}
 }
@@ -1384,12 +1482,10 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 					});
 					break;
 				}
-				const skillWorkspace: SkillWorkspace | undefined = session.activeWorkspace !== undefined
+				const skillWorkspace: SkillWorkspace = session.activeWorkspace !== undefined
 					? { id: session.activeWorkspace.id, rootPath: session.activeWorkspace.rootPath }
-					: undefined;
-				const explicitSkills: CatalogSkill[] = skillWorkspace !== undefined
-					? await resolveExplicitSkills(skillWorkspace, effectiveParams.skillRefs ?? [])
-					: [];
+					: createGlobalSkillWorkspace();
+				const explicitSkills: CatalogSkill[] = await resolveExplicitSkills(skillWorkspace, effectiveParams.skillRefs ?? []);
 				const builtinToolRestriction: readonly string[] | undefined = resolveBuiltinToolRestriction(explicitSkills);
 				const imageGenerationOnly: boolean = isImageGenerationOnlyToolRestriction(builtinToolRestriction);
 				let allowedToolNames: readonly string[] | undefined = resolveAllowedToolsForChatParams(effectiveParams, builtinToolRestriction, session.activeWorkspace?.id);
@@ -1413,7 +1509,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 					effectiveParams.mode
 				);
 				const skillPrompt: string = composeExplicitSkillPrompt(explicitSkills);
-				const skillCatalogPrompt: string = skillWorkspace !== undefined ? await composeSkillCatalogPrompt(skillWorkspace) : "";
+				const skillCatalogPrompt: string = await composeSkillCatalogPrompt(skillWorkspace);
 				const mcpSystemContext: string = await createMcpSystemContext(mcpHost, session);
 				const additionalContextSection: string = createAdditionalContextPromptSection(effectiveParams.additionalContext);
 				const guidePromptSection: string = consumePendingGuideSection(socket, request.id, session);
@@ -1476,11 +1572,13 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				if (forcedRoute !== null) {
 					routeDecision = forcedRoute;
 				} else if (builtinToolRestriction !== undefined && (effectiveParams.mode !== "ask" || imageGenerationOnly)) {
+					const skillRestrictionRequiresWrite: boolean = effectiveParams.mode !== "ask"
+						&& toolNamesIncludeWriteRisk(builtinToolRestriction, session.activeWorkspace?.id);
 					routeDecision = {
 						execution: "tool_answer",
 						reason: "Explicit skill tool restriction uses hidden single-turn tool execution.",
 						requiresTools: true,
-						requiresWrite: false,
+						requiresWrite: skillRestrictionRequiresWrite,
 						planningHint: ""
 					};
 				} else if (requestHasImages) {
@@ -1513,6 +1611,12 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 						routeDecision = createFallbackWorkflowRoute(effectiveParams, error instanceof Error ? error.message : "Workflow router failed.");
 					}
 				}
+				routeDecision = applyExplicitSkillWriteRequirement(
+					routeDecision,
+					effectiveParams,
+					builtinToolRestriction,
+					session.activeWorkspace?.id
+				);
 				logger.info("ai", "workflow_route_decided", {
 					requestId: request.id,
 					sessionId: session.sessionId,

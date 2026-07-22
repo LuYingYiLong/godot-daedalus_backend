@@ -2,6 +2,8 @@ import type { AiChatParams, ChatMessage } from "../protocol/types.js";
 import { chatWithDeepSeek, type DeepSeekChatOptions } from "../providers/deepseek-client.js";
 
 const TITLE_MAX_CHARS: number = 28;
+const TITLE_INITIAL_MAX_TOKENS: number = 40;
+const TITLE_RETRY_MAX_TOKENS: number = 256;
 
 function clipText(text: string, maxChars: number): string {
 	const normalized: string = text.replace(/\s+/g, " ").trim();
@@ -52,20 +54,24 @@ function isEmptyLlmResponseError(error: unknown): boolean {
 	return error instanceof Error && error.message === "LLM returned empty response";
 }
 
-export async function generateSessionTitle(
-	userMessage: string,
-	options: DeepSeekChatOptions,
-	abortSignal?: AbortSignal | undefined
-): Promise<string> {
-	const titlePrompt: string = [
+function createTitlePrompt(retryAfterEmptyResponse: boolean): string {
+	const lines: string[] = [
 		"你是 Godot Daedalus 的会话命名器。请只输出一个简短会话名，不要解释，不要加引号。",
 		"要求：",
 		"- 6 到 14 个中文字符，或 2 到 5 个英文单词。",
 		"- 准确概括用户目标，不要使用泛称。",
 		"- 不要直接复述完整用户输入，优先提炼成名词短语。",
-		"- 不要包含标点、编号或表情。"
-	].join("\n");
-	const params: AiChatParams = {
+		"- 不要包含标点、编号或表情。",
+		"- 可见输出必须是最终标题本身。"
+	];
+	if (retryAfterEmptyResponse) {
+		lines.push("- 上一次响应只产生了隐藏 reasoning，没有可见标题；这次请直接输出标题。");
+	}
+	return lines.join("\n");
+}
+
+function createTitleParams(userMessage: string, maxTokens: number): AiChatParams {
+	return {
 		message: [
 			"请为下面用户刚发送的第一条消息生成会话名。",
 			"",
@@ -74,19 +80,46 @@ export async function generateSessionTitle(
 		].join("\n"),
 		options: {
 			temperature: 0.2,
-			maxTokens: 40,
+			maxTokens,
 			workflow: "single"
 		}
 	};
+}
+
+export async function generateSessionTitle(
+	userMessage: string,
+	options: DeepSeekChatOptions,
+	abortSignal?: AbortSignal | undefined
+): Promise<string> {
 	let text: string;
 	try {
-		text = await chatWithDeepSeek(params, options, [] satisfies ChatMessage[], titlePrompt, abortSignal);
+		text = await chatWithDeepSeek(
+			createTitleParams(userMessage, TITLE_INITIAL_MAX_TOKENS),
+			options,
+			[] satisfies ChatMessage[],
+			createTitlePrompt(false),
+			abortSignal
+		);
 	} catch (error: unknown) {
 		if (!isEmptyLlmResponseError(error)) {
 			throw error;
 		}
 
-		return createFallbackSessionTitle(userMessage);
+		try {
+			text = await chatWithDeepSeek(
+				createTitleParams(userMessage, TITLE_RETRY_MAX_TOKENS),
+				options,
+				[] satisfies ChatMessage[],
+				createTitlePrompt(true),
+				abortSignal
+			);
+		} catch (retryError: unknown) {
+			if (!isEmptyLlmResponseError(retryError)) {
+				throw retryError;
+			}
+
+			return createFallbackSessionTitle(userMessage);
+		}
 	}
 	const title: string = normalizeGeneratedSessionTitle(text);
 	return title.length > 0 ? title : createFallbackSessionTitle(userMessage);

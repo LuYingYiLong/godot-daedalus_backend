@@ -65,6 +65,8 @@ test("terminal MCP is a global internal server instead of a workspace server", (
 
 	assert.ok(globalServerIds.includes("terminal"));
 	assert.ok(!workspaceServerIds.includes("terminal"));
+	assert.ok(globalServerIds.includes("skills"));
+	assert.ok(workspaceServerIds.includes("skills"));
 });
 
 test("automation MCP config requires explicit enable flag and supports backend overrides", (): void => {

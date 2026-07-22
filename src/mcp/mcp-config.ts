@@ -3,6 +3,7 @@ import { getDefaultWorkspace } from "../workspace/registry.js";
 import type { WorkspaceConfig } from "../workspace/types.js";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { createGlobalSkillWorkspace } from "../skills/runtime.js";
 
 export const TERMINAL_MCP_SERVER_ID: string = "terminal";
 export const WORKSPACE_MCP_SERVER_ID: string = "workspace";
@@ -15,6 +16,7 @@ export function buildGlobalMcpServerConfigs(): McpServerConfig[] {
 	const terminalEnv: Record<string, string> = {
 		BACKEND_DIR: process.cwd()
 	};
+	const globalSkillWorkspace = createGlobalSkillWorkspace();
 
 	if (DEFAULT_GODOT_PROJECT_PATH !== undefined) {
 		terminalEnv.GODOT_PROJECT_PATH = DEFAULT_GODOT_PROJECT_PATH;
@@ -23,14 +25,27 @@ export function buildGlobalMcpServerConfigs(): McpServerConfig[] {
 		terminalEnv.GODOT_EXECUTABLE_PATH = DEFAULT_GODOT_EXECUTABLE_PATH;
 	}
 
-	return [{
-		id: TERMINAL_MCP_SERVER_ID,
-		name: "Terminal MCP",
-		transport: "stdio",
-		command: "npx",
-		args: ["tsx", "src/mcp/terminal/server.ts"],
-		env: terminalEnv
-	}];
+	return [
+		{
+			id: TERMINAL_MCP_SERVER_ID,
+			name: "Terminal MCP",
+			transport: "stdio",
+			command: "npx",
+			args: ["tsx", "src/mcp/terminal/server.ts"],
+			env: terminalEnv
+		},
+		{
+			id: "skills",
+			name: "Daedalus Skills MCP",
+			transport: "stdio",
+			command: "npx",
+			args: ["tsx", "src/mcp/skills/server.ts"],
+			env: {
+				DAEDALUS_WORKSPACE_ID: globalSkillWorkspace.id,
+				GODOT_PROJECT_PATH: globalSkillWorkspace.rootPath
+			}
+		}
+	];
 }
 
 export function buildMcpServerConfigs(workspace?: WorkspaceConfig): McpServerConfig[] {

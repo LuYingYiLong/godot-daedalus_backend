@@ -71,6 +71,16 @@ test("prompt registry has no orphan markdown templates", async (): Promise<void>
 	assert.deepEqual(templatePaths, [...registeredPaths].sort());
 });
 
+test("git committer prompt requires conventional commit subjects", async (): Promise<void> => {
+	const prompt: string = await readFile(path.resolve(process.cwd(), "src/prompts/templates/base/git-committer.md"), "utf8");
+
+	assert.match(prompt, /Conventional Commits/);
+	assert.match(prompt, /type\(scope\): subject/);
+	assert.match(prompt, /feat[\s\S]*fix[\s\S]*docs[\s\S]*style[\s\S]*refactor[\s\S]*perf[\s\S]*test[\s\S]*build[\s\S]*revert[\s\S]*chore/);
+	assert.match(prompt, /总标题最多 100 个字符/);
+	assert.match(prompt, /body[\s\S]*每行最多 100 个字符/);
+});
+
 test("core prompt defines the five-part contract and severity levels", async (): Promise<void> => {
 	const corePrompt: string = await loadCorePrompt();
 

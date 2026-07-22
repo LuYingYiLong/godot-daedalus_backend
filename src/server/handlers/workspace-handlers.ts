@@ -9,6 +9,7 @@ import type { WorkspaceConfig } from "../../workspace/types.js";
 import { getClientConnection, updateClientConnection } from "../client-connections.js";
 import { logger } from "../../logger.js";
 import { deleteSessionsByWorkspace, listArchivedSessions, listSessions } from "../../session/session-store.js";
+import { commitOrPushWorkspaceGit, generateWorkspaceGitCommitMessage } from "../workspace-git-commit.js";
 import { readWorkspaceGitDiff } from "../workspace-git-diff.js";
 import { evaluateWorkspaceSelectionForSession, type WorkspaceSelectionDecision } from "../workspace-selection-guard.js";
 
@@ -208,6 +209,66 @@ export async function handleWorkspaceRequest(socket: WebSocket, request: ClientR
 			id: request.id,
 			ok: true,
 			result: await readWorkspaceGitDiff(workspace.id, workspace.rootPath)
+		});
+		break;
+	}
+	case "workspace.git.commit.message.generate": {
+		const workspace: WorkspaceConfig | undefined = findWorkspace(request.params.workspaceId);
+		if (!workspace) {
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: false,
+				error: {
+					code: "workspace_not_found",
+					message: `Workspace not found: ${request.params.workspaceId}`
+				}
+			});
+			break;
+		}
+
+		sendJson(socket, {
+			type: "response",
+			id: request.id,
+			ok: true,
+			result: await generateWorkspaceGitCommitMessage({
+				workspaceId: workspace.id,
+				workspaceRoot: workspace.rootPath,
+				includeUnstagedChanges: request.params.includeUnstagedChanges,
+				provider: request.params.provider,
+				model: request.params.model,
+				session,
+				requestId: request.id
+			})
+		});
+		break;
+	}
+	case "workspace.git.commitOrPush": {
+		const workspace: WorkspaceConfig | undefined = findWorkspace(request.params.workspaceId);
+		if (!workspace) {
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: false,
+				error: {
+					code: "workspace_not_found",
+					message: `Workspace not found: ${request.params.workspaceId}`
+				}
+			});
+			break;
+		}
+
+		sendJson(socket, {
+			type: "response",
+			id: request.id,
+			ok: true,
+			result: await commitOrPushWorkspaceGit({
+				workspaceId: workspace.id,
+				workspaceRoot: workspace.rootPath,
+				action: request.params.action,
+				message: request.params.message,
+				includeUnstagedChanges: request.params.includeUnstagedChanges
+			})
 		});
 		break;
 	}

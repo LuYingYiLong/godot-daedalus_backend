@@ -1,5 +1,16 @@
 import { loadSkillCatalog, resolveCatalogSkill } from "./catalog.js";
 import type { CatalogSkill, SkillRef, SkillWorkspace } from "./types.js";
+import { getDaedalusDir } from "../app-paths.js";
+
+export const GLOBAL_SKILL_WORKSPACE_ID: string = "studio:global";
+
+export function createGlobalSkillWorkspace(): SkillWorkspace {
+	return { id: GLOBAL_SKILL_WORKSPACE_ID, rootPath: getDaedalusDir() };
+}
+
+export function isGlobalSkillWorkspace(workspace: SkillWorkspace): boolean {
+	return workspace.id === GLOBAL_SKILL_WORKSPACE_ID;
+}
 
 export async function resolveExplicitSkills(workspace: SkillWorkspace, refs: readonly SkillRef[]): Promise<CatalogSkill[]> {
 	const uniqueRefs: SkillRef[] = [...new Set(refs)];

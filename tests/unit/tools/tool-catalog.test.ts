@@ -108,14 +108,31 @@ test("image generation tool accepts custom aspect ratios", (): void => {
 test("workspace runtime filter hides Godot tools without an active workspace", (): void => {
 	const names: string[] = filterToolNamesForWorkspace([
 		"mcp_skills_load",
+		"mcp_skills_propose_create",
+		"mcp_skills_create",
 		"mcp_godot_get_runtime_status",
 		"mcp_image_generate",
 		"mcp_web_search",
 		CUSTOM_MCP_TOOLS_SENTINEL,
 		"mcp_custom_context7_get_library_docs_12345678"
 	], undefined).sort();
-	assert.deepEqual(names, ["mcp_custom_context7_get_library_docs_12345678", "mcp_image_generate", "mcp_web_search", CUSTOM_MCP_TOOLS_SENTINEL].sort());
-	assert.deepEqual(getNoWorkspaceToolNames().sort(), ["mcp_image_generate", "mcp_web_search", CUSTOM_MCP_TOOLS_SENTINEL].sort());
+	assert.deepEqual(names, [
+		"mcp_custom_context7_get_library_docs_12345678",
+		"mcp_image_generate",
+		"mcp_skills_create",
+		"mcp_skills_load",
+		"mcp_skills_propose_create",
+		"mcp_web_search",
+		CUSTOM_MCP_TOOLS_SENTINEL
+	].sort());
+	assert.deepEqual(getNoWorkspaceToolNames().sort(), [
+		"mcp_image_generate",
+		"mcp_skills_create",
+		"mcp_skills_load",
+		"mcp_skills_propose_create",
+		"mcp_web_search",
+		CUSTOM_MCP_TOOLS_SENTINEL
+	].sort());
 	assert.deepEqual(filterToolNamesForWorkspace(getDefaultWorkflowToolNames("write"), undefined), ["mcp_image_generate"]);
 });
 

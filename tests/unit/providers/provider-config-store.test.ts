@@ -66,7 +66,8 @@ test("provider config ignores legacy single-provider file and legacy keytar acco
 			imageRecognition: null,
 			workflowPlanner: null,
 			sessionTitle: null,
-			imageGeneration: null
+			imageGeneration: null,
+			gitCommit: null
 		});
 		assert.equal(requestedAccounts.includes("deepseek_api_key"), false);
 		assert.equal(requestedAccounts.includes("provider:deepseek:api_key"), true);
@@ -224,7 +225,8 @@ test("provider config read paths treat keytar read failures as missing secrets",
 				imageRecognition: null,
 				workflowPlanner: null,
 				sessionTitle: null,
-				imageGeneration: null
+				imageGeneration: null,
+				gitCommit: null
 			}
 		}), "utf8");
 
@@ -263,7 +265,8 @@ test("provider config persists cross-provider task model routing", async (): Pro
 				imageRecognition: { provider: "moonshot", model: "kimi-k2.6" },
 				workflowPlanner: { provider: "deepseek", model: "deepseek-v4-pro" },
 				sessionTitle: null,
-				imageGeneration: { provider: "openai", model: "gpt-image-1" }
+				imageGeneration: { provider: "openai", model: "gpt-image-1" },
+				gitCommit: { provider: "deepseek", model: "deepseek-v4-pro" }
 			}
 		});
 
@@ -272,7 +275,8 @@ test("provider config persists cross-provider task model routing", async (): Pro
 			imageRecognition: { provider: "moonshot", model: "kimi-k2.6" },
 			workflowPlanner: { provider: "deepseek", model: "deepseek-v4-pro" },
 			sessionTitle: null,
-			imageGeneration: { provider: "openai", model: "gpt-image-1" }
+			imageGeneration: { provider: "openai", model: "gpt-image-1" },
+			gitCommit: { provider: "deepseek", model: "deepseek-v4-pro" }
 		});
 	});
 });
@@ -422,7 +426,8 @@ test("task model resolver falls back to current model or resolves configured pro
 			apiKey: "deepseek-key",
 			model: "deepseek-v4-flash",
 			modelRouting: {
-				imageRecognition: { provider: "moonshot", model: "kimi-k2.6" }
+				imageRecognition: { provider: "moonshot", model: "kimi-k2.6" },
+				gitCommit: { provider: "moonshot", model: "kimi-k2.6" }
 			}
 		});
 
@@ -444,5 +449,14 @@ test("task model resolver falls back to current model or resolves configured pro
 		assert.equal(titleModel.source, "current");
 		assert.equal(titleModel.provider, "deepseek");
 		assert.equal(titleModel.model, "deepseek-v4-flash");
+
+		const gitCommitModel = await resolveProviderTaskModelOptions("gitCommit", {
+			provider: "deepseek",
+			apiKey: "deepseek-key",
+			model: "deepseek-v4-flash"
+		});
+		assert.equal(gitCommitModel.source, "configured");
+		assert.equal(gitCommitModel.provider, "moonshot");
+		assert.equal(gitCommitModel.model, "kimi-k2.6");
 	});
 });

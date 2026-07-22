@@ -97,6 +97,25 @@ test("additional context exposes image ids for image generation tools", (): void
 	assert.doesNotMatch(section, /aGVsbG8=/);
 });
 
+test("additional context preserves external absolute file references", (): void => {
+	const section: string = createAdditionalContextPromptSection([{
+		id: "external-file-1",
+		kind: "file",
+		source: "manual",
+		title: "notes.pdf",
+		subtitle: "D:/Documents/notes.pdf",
+		resourcePath: "D:/Documents/notes.pdf",
+		data: {
+			external: true,
+			absolutePath: "D:/Documents/notes.pdf",
+			mimeType: "application/pdf"
+		}
+	}]);
+
+	assert.match(section, /externalAbsolutePath: D:\/Documents\/notes\.pdf/u);
+	assert.match(section, /工作区外本机文件/u);
+});
+
 test("pending guides hydrate added, updated, applied and deleted events", (): void => {
 	const events: StoredSessionEvent[] = [
 		{

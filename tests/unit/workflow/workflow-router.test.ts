@@ -189,6 +189,24 @@ test("chat orchestrator emits run started before workflow routing", async (): Pr
 	assert.ok(routeIndex > startedIndex);
 });
 
+test("explicit write-capable skills keep write tools in hidden tool answer", async (): Promise<void> => {
+	const source: string = await readFile(new URL("../../../src/server/chat-orchestrator.ts", import.meta.url), "utf8");
+	const helperIndex: number = source.indexOf("function toolNamesIncludeWriteRisk");
+	const postRouteHelperIndex: number = source.indexOf("function applyExplicitSkillWriteRequirement");
+	const explicitSkillRouteIndex: number = source.indexOf("Explicit skill tool restriction uses hidden single-turn tool execution.");
+	const requiresWriteIndex: number = source.indexOf("requiresWrite: skillRestrictionRequiresWrite", explicitSkillRouteIndex);
+	const postRouteApplyIndex: number = source.indexOf("routeDecision = applyExplicitSkillWriteRequirement");
+	const requiredToolCallIndex: number = source.indexOf("options.requireToolCallOnFirstStep = true");
+
+	assert.ok(helperIndex >= 0);
+	assert.ok(postRouteHelperIndex > helperIndex);
+	assert.ok(explicitSkillRouteIndex > helperIndex);
+	assert.ok(requiresWriteIndex > explicitSkillRouteIndex);
+	assert.ok(postRouteApplyIndex > explicitSkillRouteIndex);
+	assert.ok(requiredToolCallIndex >= 0);
+	assert.equal(source.includes("toolNamesIncludeWriteRisk(builtinToolRestriction"), true);
+});
+
 test("chat orchestrator cancel releases the active run immediately", async (): Promise<void> => {
 	const source: string = await readFile(new URL("../../../src/server/chat-orchestrator.ts", import.meta.url), "utf8");
 	const cancelStart: number = source.indexOf("case \"ai.cancel\"");

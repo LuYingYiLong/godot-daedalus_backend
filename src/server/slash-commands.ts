@@ -8,6 +8,8 @@ import { sendJson } from "./send-json.js";
 import { appendApprovalEvent } from "../session/session-store.js";
 import { createPersistedApprovalRequestedData } from "../session/approval-persistence.js";
 import { emitWorkbenchUpdated } from "./workbench.js";
+import { sendSessionEvent, waitForSessionEventPersistence } from "./session-events.js";
+import { createGlobalSkillWorkspace } from "../skills/runtime.js";
 
 export type SlashCommandDefinition = {
 	command: string;
@@ -198,7 +200,7 @@ function getSkillWorkspace(session: ClientSession): SkillWorkspace {
 	if (session.godotProjectPath !== undefined) {
 		return { id: `runtime:${session.godotProjectPath}`, rootPath: session.godotProjectPath };
 	}
-	throw new Error("No active workspace is available for skills.");
+	return createGlobalSkillWorkspace();
 }
 
 async function formatSkillList(session: ClientSession): Promise<string> {
@@ -209,14 +211,14 @@ async function formatSkillList(session: ClientSession): Promise<string> {
 	].join("\n");
 }
 
-function sendChatText(
+async function sendChatText(
 	socket: WebSocket,
 	request: ClientRequest,
 	text: string,
 	session: ClientSession,
 	mcpHost: McpHost,
 	createSessionInfo: SessionInfoFactory
-): void {
+): Promise<void> {
 	if (request.method !== "ai.chat" || request.params.options?.stream !== true) {
 		sendJson(socket, {
 			type: "response",
@@ -231,15 +233,17 @@ function sendChatText(
 	}
 
 	const runId: string = `slash-${request.id}`;
-	sendJson(socket, {
-		type: "event",
-		id: request.id,
-		event: "agent.run.started",
-		data: {
+	sendSessionEvent(
+		socket,
+		request.id,
+		session,
+		"agent.run.started",
+		{
 			runId,
 			requestId: request.id,
 			title: "Slash command",
 			source: "slash",
+			startedAt: new Date().toISOString(),
 			steps: [{
 				id: "answer",
 				title: "回答命令",
@@ -247,39 +251,54 @@ function sendChatText(
 				acceptanceCriteria: []
 			}]
 		}
-	});
+	);
 
 	for (let index: number = 0; index < text.length; index += 1) {
-		sendJson(socket, {
-			type: "event",
-			id: request.id,
-			event: "agent.message.delta",
-			data: {
+		sendSessionEvent(
+			socket,
+			request.id,
+			session,
+			"agent.message.delta",
+			{
 				runId,
 				stepRunId: `${runId}-answer`,
 				text: text[index]
 			}
-		});
+		);
 	}
 
-	sendJson(socket, {
-		type: "event",
-		id: request.id,
-		event: "agent.message.done",
-		data: {
+	sendSessionEvent(
+		socket,
+		request.id,
+		session,
+		"agent.message.done",
+		{
 			runId,
+			requestId: request.id,
 			stepRunId: `${runId}-answer`,
 			text,
 			context: createSessionInfo(session, mcpHost)
 		}
-	});
-	sendJson(socket, {
-		type: "event",
-		id: request.id,
-		event: "agent.run.done",
-		data: {
+	);
+	sendSessionEvent(
+		socket,
+		request.id,
+		session,
+		"agent.run.done",
+		{
 			runId,
+			requestId: request.id,
 			title: "Slash command"
+		}
+	);
+	await waitForSessionEventPersistence(session);
+	sendJson(socket, {
+		type: "response",
+		id: request.id,
+		ok: true,
+		result: {
+			text,
+			context: createSessionInfo(session, mcpHost)
 		}
 	});
 }
@@ -306,32 +325,32 @@ export async function handleSlashCommand(params: {
 	const restText: string = restParts.join(" ").trim();
 
 	if (command === "/help") {
-		sendChatText(socket, request, createSlashHelpText(), session, mcpHost, createSessionInfo);
+		await sendChatText(socket, request, createSlashHelpText(), session, mcpHost, createSessionInfo);
 		return { type: "handled" };
 	}
 
 	if (command === "/context") {
-		sendChatText(socket, request, formatSessionInfo(session, mcpHost, createSessionInfo), session, mcpHost, createSessionInfo);
+		await sendChatText(socket, request, formatSessionInfo(session, mcpHost, createSessionInfo), session, mcpHost, createSessionInfo);
 		return { type: "handled" };
 	}
 
 	if (command === "/approvals") {
-		sendChatText(socket, request, formatPendingApprovals(session), session, mcpHost, createSessionInfo);
+		await sendChatText(socket, request, formatPendingApprovals(session), session, mcpHost, createSessionInfo);
 		return { type: "handled" };
 	}
 
 	if (command === "/test-approval") {
-		sendChatText(socket, request, await createTestApproval(socket, request, session), session, mcpHost, createSessionInfo);
+		await sendChatText(socket, request, await createTestApproval(socket, request, session), session, mcpHost, createSessionInfo);
 		return { type: "handled" };
 	}
 
 	if (command === "/skills") {
-		sendChatText(socket, request, await formatSkillList(session), session, mcpHost, createSessionInfo);
+		await sendChatText(socket, request, await formatSkillList(session), session, mcpHost, createSessionInfo);
 		return { type: "handled" };
 	}
 
 	if (command === "/skill") {
-		sendChatText(socket, request, `Skill 现在按消息激活。请在消息中输入 \`@\` 并选择一个或多个 skill。\n\n${await formatSkillList(session)}`, session, mcpHost, createSessionInfo);
+		await sendChatText(socket, request, `Skill 现在按消息激活。请在消息中输入 \`@\` 并选择一个或多个 skill。\n\n${await formatSkillList(session)}`, session, mcpHost, createSessionInfo);
 		return { type: "handled" };
 	}
 
@@ -353,7 +372,7 @@ export async function handleSlashCommand(params: {
 	if (command === "/reset") {
 		session.messages = [];
 		session.fullSessionLoadPromise = undefined;
-		sendChatText(socket, request, "已清空当前会话历史。", session, mcpHost, createSessionInfo);
+		await sendChatText(socket, request, "已清空当前会话历史。", session, mcpHost, createSessionInfo);
 		return { type: "handled" };
 	}
 
@@ -381,6 +400,6 @@ export async function handleSlashCommand(params: {
 		};
 	}
 
-	sendChatText(socket, request, `未知指令：\`${command}\`\n\n${createSlashHelpText()}`, session, mcpHost, createSessionInfo);
+	await sendChatText(socket, request, `未知指令：\`${command}\`\n\n${createSlashHelpText()}`, session, mcpHost, createSessionInfo);
 	return { type: "handled" };
 }

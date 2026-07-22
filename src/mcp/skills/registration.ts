@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { createSkill } from "../../skills/management.js";
 import { parseSkillDocument } from "../../skills/frontmatter.js";
 import { resolveCatalogSkill } from "../../skills/catalog.js";
+import { isGlobalSkillWorkspace } from "../../skills/runtime.js";
 import type { SkillWorkspace } from "../../skills/types.js";
 
 function asJsonResult(value: unknown): { content: Array<{ type: "text"; text: string }> } {
@@ -34,6 +35,9 @@ export function registerSkillTools(server: McpServer, workspace: SkillWorkspace)
 		description: "校验并预览新 skill，不写入磁盘。",
 		inputSchema: proposalInput
 	}, async ({ scope, slug, skillMd }) => {
+		if (scope === "project" && isGlobalSkillWorkspace(workspace)) {
+			throw new Error("Project skill creation requires an active workspace.");
+		}
 		const document = parseSkillDocument(skillMd);
 		const proposalToken: string = proposalTokenFor(scope, slug, skillMd);
 		pendingProposals.add(proposalToken);
@@ -45,6 +49,9 @@ export function registerSkillTools(server: McpServer, workspace: SkillWorkspace)
 		description: "创建项目或个人 SKILL.md。该写操作必须经过审批，且不会覆盖已有目录。",
 		inputSchema: proposalInput.extend({ proposalToken: z.string().length(64) })
 	}, async ({ scope, slug, skillMd, proposalToken }) => {
+		if (scope === "project" && isGlobalSkillWorkspace(workspace)) {
+			throw new Error("Project skill creation requires an active workspace.");
+		}
 		const expectedToken: string = proposalTokenFor(scope, slug, skillMd);
 		if (proposalToken !== expectedToken || !pendingProposals.has(proposalToken)) {
 			throw new Error("Skill creation requires a matching propose_create result from this MCP session.");

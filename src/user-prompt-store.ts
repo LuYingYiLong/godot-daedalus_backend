@@ -5,12 +5,21 @@ export type UserPromptConfig = {
 	schemaVersion: 1;
 	prompt: string;
 	updatedAt: string;
+	gitCommitPrompt: string;
+	gitCommitUpdatedAt: string;
+};
+
+export type UserPromptConfigPatch = {
+	prompt?: string | undefined;
+	gitCommitPrompt?: string | undefined;
 };
 
 const EMPTY_USER_PROMPT: UserPromptConfig = {
 	schemaVersion: 1,
 	prompt: "",
-	updatedAt: ""
+	updatedAt: "",
+	gitCommitPrompt: "",
+	gitCommitUpdatedAt: ""
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -30,7 +39,9 @@ export async function getUserPromptConfig(): Promise<UserPromptConfig> {
 	return {
 		schemaVersion: 1,
 		prompt: normalizePrompt(value.prompt),
-		updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : ""
+		updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : "",
+		gitCommitPrompt: typeof value.gitCommitPrompt === "string" ? normalizePrompt(value.gitCommitPrompt) : "",
+		gitCommitUpdatedAt: typeof value.gitCommitUpdatedAt === "string" ? value.gitCommitUpdatedAt : ""
 	};
 }
 
@@ -38,12 +49,24 @@ export async function getUserPrompt(): Promise<string> {
 	return (await getUserPromptConfig()).prompt;
 }
 
-export async function setUserPrompt(prompt: string): Promise<UserPromptConfig> {
+export async function getGitCommitPrompt(): Promise<string> {
+	return (await getUserPromptConfig()).gitCommitPrompt;
+}
+
+export async function setUserPromptConfig(patch: UserPromptConfigPatch): Promise<UserPromptConfig> {
+	const current: UserPromptConfig = await getUserPromptConfig();
+	const now: string = new Date().toISOString();
 	const config: UserPromptConfig = {
 		schemaVersion: 1,
-		prompt: normalizePrompt(prompt),
-		updatedAt: new Date().toISOString()
+		prompt: patch.prompt === undefined ? current.prompt : normalizePrompt(patch.prompt),
+		updatedAt: patch.prompt === undefined ? current.updatedAt : now,
+		gitCommitPrompt: patch.gitCommitPrompt === undefined ? current.gitCommitPrompt : normalizePrompt(patch.gitCommitPrompt),
+		gitCommitUpdatedAt: patch.gitCommitPrompt === undefined ? current.gitCommitUpdatedAt : now
 	};
 	await writeJsonFileAtomic(getUserPromptConfigPath(), config);
 	return config;
+}
+
+export async function setUserPrompt(prompt: string): Promise<UserPromptConfig> {
+	return setUserPromptConfig({ prompt });
 }

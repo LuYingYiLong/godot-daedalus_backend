@@ -136,6 +136,19 @@ export function appendFilesystemSelectionPromptLines(lines: string[], item: Addi
 	lines.push("  - note: 大文件和文件夹不内联内容；只在需要时按 resourcePath 读取或搜索。");
 }
 
+function appendExternalLocalFilePromptLines(lines: string[], item: AdditionalContextItem): void {
+	const data: Record<string, unknown> | undefined = getAdditionalContextDataRecord(item);
+	if (data?.external !== true) {
+		return;
+	}
+
+	const absolutePath: string = getContextString(data, "absolutePath") || item.resourcePath || "";
+	if (absolutePath.length > 0) {
+		lines.push(`  - externalAbsolutePath: ${clipTextByChars(absolutePath, 1000)}`);
+	}
+	lines.push("  - note: 这是用户显式拖入的工作区外本机文件；当前只提供绝对路径引用，不把它当成 workspace 内文件。");
+}
+
 export function createAdditionalContextPromptSection(items: readonly AdditionalContextItem[] | undefined): string {
 	if (items === undefined || items.length === 0) {
 		return "";
@@ -176,9 +189,13 @@ export function createAdditionalContextPromptSection(items: readonly AdditionalC
 		if (item.kind === "image") {
 			const data: Record<string, unknown> | undefined = getAdditionalContextDataRecord(item);
 			const attachmentId: string = getContextString(data, "attachmentId");
+			const sourcePath: string = getContextString(data, "sourcePath");
 			lines.push(`  - imageContextId: ${clipTextByChars(item.id, 160)}`);
 			if (attachmentId.length > 0) {
 				lines.push(`  - attachmentId: ${clipTextByChars(attachmentId, 160)}`);
+			}
+			if (sourcePath.length > 0) {
+				lines.push(`  - sourcePath: ${clipTextByChars(sourcePath, 1000)}`);
 			}
 			lines.push("  - note: 图片二进制已作为多模态 image_url content part 单独发送给模型；不要在文本上下文中期待 base64。");
 		}
@@ -186,6 +203,8 @@ export function createAdditionalContextPromptSection(items: readonly AdditionalC
 			appendScriptSelectionPromptLines(lines, item);
 		} else if (item.kind === "filesystem_selection") {
 			appendFilesystemSelectionPromptLines(lines, item);
+		} else if (item.kind === "file" || item.kind === "folder") {
+			appendExternalLocalFilePromptLines(lines, item);
 		}
 		if (item.data !== undefined && item.kind !== "script_selection" && item.kind !== "filesystem_selection" && item.kind !== "image") {
 			lines.push(`  - data: ${clipTextByChars(JSON.stringify(createPreviewValue(item.data)), 1000)}`);

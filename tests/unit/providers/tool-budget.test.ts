@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createToolBudgetRequiredResult, getContinuedMaxSteps, getContinuedToolResultCharLimit } from "../../../src/providers/agent-tool-budget.js";
 import type { ChatCompletionsAgentContinuation } from "../../../src/providers/agent-types.js";
@@ -34,4 +35,24 @@ test("tool budget continuation grants the configured extra step and char budget"
 	assert.equal(result.additionalSteps, TOOL_BUDGET_CONTINUE_STEPS);
 	assert.equal(getContinuedMaxSteps({ message: "继续" }, result.continuation), 22);
 	assert.equal(getContinuedToolResultCharLimit(result.continuation), MAX_TOTAL_TOOL_RESULT_CHARS + TOOL_RESULT_CONTINUE_CHARS);
+});
+
+test("tool budget decision acknowledges before resuming long-running continuation", async (): Promise<void> => {
+	const source: string = await readFile(new URL("../../../src/server/chat-orchestrator.ts", import.meta.url), "utf8");
+	const handlerStart: number = source.indexOf("async function handleToolBudgetDecision(");
+	const runnerStart: number = source.indexOf("async function runToolBudgetDecisionContinuation(");
+	assert.notEqual(handlerStart, -1);
+	assert.notEqual(runnerStart, -1);
+
+	const handlerSource: string = source.slice(handlerStart, runnerStart);
+	const runnerSource: string = source.slice(runnerStart, source.indexOf("\nexport async function handleChatRequest", runnerStart));
+	const ackResponseIndex: number = handlerSource.lastIndexOf("id: responseId");
+	const runnerLaunchIndex: number = handlerSource.indexOf("void runToolBudgetDecisionContinuation({");
+
+	assert.ok(ackResponseIndex >= 0);
+	assert.ok(runnerLaunchIndex > ackResponseIndex);
+	assert.equal(handlerSource.includes("accepted: true"), true);
+	assert.equal(handlerSource.includes("session.activeAbortControllers.set(responseId"), false);
+	assert.equal(runnerSource.includes("id: responseId"), false);
+	assert.equal(runnerSource.includes("id: pending.requestId"), true);
 });

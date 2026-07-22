@@ -32,7 +32,8 @@ test("schema accepts session-backed image additional context", (): void => {
 				attachmentId: "image-test",
 				byteSize: 5,
 				width: 16,
-				height: 12
+				height: 12,
+				sourcePath: "D:/Pictures/reference.png"
 			}
 		}]
 	});
@@ -54,7 +55,8 @@ test("image attachments are saved under the session and hydrate to dataUrl", asy
 			byteSize: 5,
 			width: 32,
 			height: 24,
-			title: "Clipboard image test"
+			title: "Clipboard image test",
+			sourcePath: "D:/Pictures/reference.png"
 		});
 
 		assert.equal(context.kind, "image");
@@ -62,10 +64,12 @@ test("image attachments are saved under the session and hydrate to dataUrl", asy
 		assert.equal((context.data as Record<string, unknown>).attachmentId !== undefined, true);
 		assert.equal((context.data as Record<string, unknown>).dataUrl, undefined);
 		assert.equal(typeof (context.data as Record<string, unknown>).thumbnailDataUrl, "string");
+		assert.equal((context.data as Record<string, unknown>).sourcePath, "D:/Pictures/reference.png");
 
 		const attachmentId: string = String((context.data as Record<string, unknown>).attachmentId);
 		const rawMetadata: string = await readFile(join(sessionStore.getSessionDir(metadata.id), "attachments", `${attachmentId}.json`), "utf8");
 		assert.equal(rawMetadata.includes("aGVsbG8="), false);
+		assert.equal(rawMetadata.includes("D:/Pictures/reference.png"), true);
 
 		const hydrated = await attachments.hydrateImageAttachmentContexts(metadata.id, {
 			message: "描述图片",

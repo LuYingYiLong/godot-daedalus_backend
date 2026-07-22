@@ -7,7 +7,7 @@ import type { OnToolEvent, ToolEvent } from "../../tools/tool-dispatcher.js";
 import type { ProviderChatOptions } from "../../providers/deepseek-client.js";
 import { McpHost } from "../../mcp/mcp-host.js";
 import { composeSkillPrompt } from "../../skills/registry.js";
-import { composeExplicitSkillPrompt, composeSkillCatalogPrompt, resolveExplicitSkills } from "../../skills/runtime.js";
+import { composeExplicitSkillPrompt, composeSkillCatalogPrompt, createGlobalSkillWorkspace, resolveExplicitSkills } from "../../skills/runtime.js";
 import type { SkillWorkspace } from "../../skills/types.js";
 import { applyToolEventToWorkflowObservations } from "../../workflow/outcome.js";
 import { createPhasePrompt } from "../../workflow/runner.js";
@@ -126,13 +126,11 @@ export async function createWorkflowPhasePrompt(
 	const systemPrompt: string = await composeSystemPrompt(phase.promptId ?? params.promptId, params.systemPrompt, createProviderRuntimeContext(session), params.mode);
 	const runtimePhase: WorkflowPhase = await createSearchAwareRuntimeWorkflowPhase(phase, mcpHost, session);
 	const phaseSkillPrompt: string = await composeSkillPrompt(phase.skillId);
-	const skillWorkspace: SkillWorkspace | undefined = session.activeWorkspace !== undefined
+	const skillWorkspace: SkillWorkspace = session.activeWorkspace !== undefined
 		? { id: session.activeWorkspace.id, rootPath: session.activeWorkspace.rootPath }
-		: undefined;
-	const explicitSkillPrompt: string = skillWorkspace !== undefined
-		? composeExplicitSkillPrompt(await resolveExplicitSkills(skillWorkspace, params.skillRefs ?? []))
-		: "";
-	const skillCatalogPrompt: string = skillWorkspace !== undefined && runtimePhase.allowedTools.includes(SKILL_LOAD_TOOL)
+		: createGlobalSkillWorkspace();
+	const explicitSkillPrompt: string = composeExplicitSkillPrompt(await resolveExplicitSkills(skillWorkspace, params.skillRefs ?? []));
+	const skillCatalogPrompt: string = runtimePhase.allowedTools.includes(SKILL_LOAD_TOOL)
 		? await composeSkillCatalogPrompt(skillWorkspace)
 		: "";
 	const skillPrompt: string = [phaseSkillPrompt, explicitSkillPrompt, skillCatalogPrompt].filter((section): boolean => section.length > 0).join("\n\n");

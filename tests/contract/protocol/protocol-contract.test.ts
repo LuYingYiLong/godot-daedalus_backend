@@ -28,7 +28,9 @@ const BACKEND_ONLY_OR_STUDIO_RPC_METHODS: Set<string> = new Set([
 	"usage.metrics.logs.list",
 	"usage.metrics.trends.get",
 	"workspace.delete",
-	"workspace.git.diff.get"
+	"workspace.git.diff.get",
+	"workspace.git.commit.message.generate",
+	"workspace.git.commitOrPush"
 ]);
 
 function unique(values: string[]): string[] {
@@ -127,6 +129,32 @@ test("workspace.git.diff.get accepts workspace id", (): void => {
 		method: "workspace.git.diff.get",
 		params: {
 			workspaceId: "workspace-a"
+		}
+	}).success, true);
+});
+
+test("workspace git commit requests are accepted", (): void => {
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "workspace-git-commit-message",
+		method: "workspace.git.commit.message.generate",
+		params: {
+			workspaceId: "workspace-a",
+			includeUnstagedChanges: true,
+			provider: "deepseek",
+			model: "deepseek-v4-pro"
+		}
+	}).success, true);
+
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "workspace-git-commit-push",
+		method: "workspace.git.commitOrPush",
+		params: {
+			workspaceId: "workspace-a",
+			action: "commit_and_push",
+			message: "Add local tic-tac-toe",
+			includeUnstagedChanges: true
 		}
 	}).success, true);
 });
