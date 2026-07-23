@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { clientRequestSchema } from "../../../src/protocol/schema.js";
 import { REQUEST_HANDLER_METHODS, REQUEST_HANDLERS } from "../../../src/server/request-dispatcher.js";
 
-const pluginDir: string = process.env.GODOT_DAEDALUS_PLUGIN_DIR ?? "D:/GodotProjects/example/addons/godot_daedalus";
+const configuredPluginDir: string | undefined = process.env.GODOT_DAEDALUS_PLUGIN_DIR;
+const pluginDir: string = configuredPluginDir ?? "D:/GodotProjects/example/addons/godot_daedalus";
+const pluginRpcMethodsPath: string = path.join(pluginDir, "scripts", "rpc_methods.gd");
+const frontendRpcSkipReason: string | undefined = configuredPluginDir === undefined && !existsSync(pluginRpcMethodsPath)
+	? `Godot Daedalus plugin RPC constants not found at ${pluginRpcMethodsPath}; set GODOT_DAEDALUS_PLUGIN_DIR to enable this external contract test.`
+	: undefined;
 const BACKEND_ONLY_OR_STUDIO_RPC_METHODS: Set<string> = new Set([
 	"attachment.image.generated.get",
 	"backend.update.check",
@@ -52,8 +58,8 @@ async function readBackendSchemaMethods(): Promise<string[]> {
 }
 
 async function readFrontendRpcMethods(): Promise<string[]> {
-	const rpcMethodsPath: string = path.join(pluginDir, "scripts", "rpc_methods.gd");
-	const source: string = await fs.readFile(rpcMethodsPath, "utf8");
+	assert.ok(existsSync(pluginRpcMethodsPath), `Godot Daedalus plugin RPC constants not found at ${pluginRpcMethodsPath}`);
+	const source: string = await fs.readFile(pluginRpcMethodsPath, "utf8");
 	return unique([...source.matchAll(/const\s+[A-Z0-9_]+:\s+String\s+=\s+"([^"]+)"/g)].map((match: RegExpMatchArray): string => match[1]!));
 }
 
@@ -69,7 +75,7 @@ test("backend protocol schema and WebSocket dispatcher stay in sync", async (): 
 	assert.ok(new Set([...REQUEST_HANDLERS.values()]).size > 1, "dispatcher must use domain-specific handlers");
 });
 
-test("frontend RPC constants match backend protocol schema", async (): Promise<void> => {
+test("frontend RPC constants match backend protocol schema", { skip: frontendRpcSkipReason }, async (): Promise<void> => {
 	const schemaMethods: string[] = await readBackendSchemaMethods();
 	const frontendMethods: string[] = await readFrontendRpcMethods();
 	const pluginRequiredSchemaMethods: string[] = schemaMethods.filter((method: string): boolean => !BACKEND_ONLY_OR_STUDIO_RPC_METHODS.has(method));

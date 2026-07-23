@@ -47,14 +47,14 @@ export async function installBackend(versionSpec: string = "latest"): Promise<{ 
 	const stagingDir: string = assertInside(paths.backendVersionsDir, join(paths.backendVersionsDir, stagingName));
 	const previous: BackendCurrentFile | null = await getCurrentBackend();
 
-	await rm(stagingDir, { recursive: true, force: true });
+	await removeDirectory(stagingDir);
 	await mkdir(stagingDir, { recursive: true });
 	const installResult: CommandResult = await runCommand(getNpmCommand(), ["install", "--prefix", stagingDir, "--prefer-online", packageSpec], {
 		env: createNpmCommandEnv(),
 		timeoutMs: 120000
 	});
 	if (installResult.exitCode !== 0) {
-		await rm(stagingDir, { recursive: true, force: true });
+		await removeDirectory(stagingDir);
 		throw new ManagerError({
 			code: "install_failed",
 			message: `Failed to install ${packageSpec}`,
@@ -66,7 +66,7 @@ export async function installBackend(versionSpec: string = "latest"): Promise<{ 
 	const installedVersion: string = await readInstalledBackendVersion(stagingDir);
 	const versionDir: string = assertInside(paths.backendVersionsDir, join(paths.backendVersionsDir, installedVersion));
 	const packageJsonPath: string = join(stagingDir, "node_modules", BACKEND_PACKAGE_NAME, "package.json");
-	await rm(versionDir, { recursive: true, force: true });
+	await removeDirectory(versionDir);
 	await rename(stagingDir, versionDir);
 
 	await writeJsonFile(paths.backendCurrentPath, {
@@ -195,7 +195,7 @@ async function acquireBackendStartLock(paths: ManagerPaths): Promise<() => Promi
 			await mkdir(lockDir);
 			await writeFile(ownerPath, JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }), "utf8");
 			return async (): Promise<void> => {
-				await rm(lockDir, { recursive: true, force: true });
+				await removeDirectory(lockDir);
 			};
 		} catch (error: unknown) {
 			if (!isFileSystemError(error, "EEXIST")) {
@@ -203,7 +203,7 @@ async function acquireBackendStartLock(paths: ManagerPaths): Promise<() => Promi
 			}
 
 			if (await isBackendStartLockStale(lockDir, ownerPath)) {
-				await rm(lockDir, { recursive: true, force: true });
+				await removeDirectory(lockDir);
 				continue;
 			}
 
@@ -474,8 +474,17 @@ async function pruneBackendVersions(currentVersion: string, previousVersion: str
 			keep.add(version);
 			continue;
 		}
-		await rm(assertInside(paths.backendVersionsDir, join(paths.backendVersionsDir, version)), { recursive: true, force: true });
+		await removeDirectory(assertInside(paths.backendVersionsDir, join(paths.backendVersionsDir, version)));
 	}
+}
+
+async function removeDirectory(targetPath: string): Promise<void> {
+	await rm(targetPath, {
+		recursive: true,
+		force: true,
+		maxRetries: 8,
+		retryDelay: 250
+	});
 }
 
 export function sha256Text(value: string): string {

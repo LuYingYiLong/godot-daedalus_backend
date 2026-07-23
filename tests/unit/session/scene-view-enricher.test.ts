@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createClientSession } from "../../../src/server/client-session.js";
-import { createSceneViewToolResultEnricher } from "../../../src/server/workflow/scene-view-enricher.js";
 
 async function withTempAppData(run: () => Promise<void>): Promise<void> {
 	const previousUserProfile: string | undefined = process.env.USERPROFILE;
@@ -23,6 +22,7 @@ async function withTempAppData(run: () => Promise<void>): Promise<void> {
 test("scene view enrich stores the image and hides base64 when vision is unavailable", async (): Promise<void> => {
 	await withTempAppData(async (): Promise<void> => {
 		const sessions = await import("../../../src/session/session-store.js");
+		const { createSceneViewToolResultEnricher } = await import("../../../src/server/workflow/scene-view-enricher.js");
 		const metadata = await sessions.createSession("Scene view");
 		const session = createClientSession(undefined);
 		session.sessionId = metadata.id;

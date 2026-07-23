@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -45,7 +45,7 @@ test("manager path guard rejects traversal", async (): Promise<void> => {
 	assert.throws((): void => {
 		assertInside(root, join(root, "..", "outside"));
 	}, ManagerError);
-	await rm(root, { recursive: true, force: true });
+	await removeTempDir(root);
 });
 
 test("frontend manifest validation rejects unsafe metadata", (): void => {
@@ -115,7 +115,7 @@ test("manager json file writes atomically readable current metadata", async (): 
 	await writeJsonFile(filePath, value);
 	assert.deepEqual(await readJsonFile<BackendCurrentFile>(filePath), value);
 	assert.equal(await readFile(filePath, "utf8"), `${JSON.stringify(value, null, 2)}\n`);
-	await rm(root, { recursive: true, force: true });
+	await removeTempDir(root);
 });
 
 test("manager latest cache avoids repeated network checks", async (): Promise<void> => {
@@ -141,7 +141,7 @@ test("manager latest cache avoids repeated network checks", async (): Promise<vo
 		} else {
 			process.env.GODOT_DAEDALUS_APP_DIR = previousAppDir;
 		}
-		await rm(root, { recursive: true, force: true });
+		await removeTempDir(root);
 	}
 });
 
@@ -163,7 +163,7 @@ test("manager latest cache can skip network entirely", async (): Promise<void> =
 		} else {
 			process.env.GODOT_DAEDALUS_APP_DIR = previousAppDir;
 		}
-		await rm(root, { recursive: true, force: true });
+		await removeTempDir(root);
 	}
 });
 
@@ -184,7 +184,7 @@ test("manager latest cache falls back to cached version when network throws", as
 		} else {
 			process.env.GODOT_DAEDALUS_APP_DIR = previousAppDir;
 		}
-		await rm(root, { recursive: true, force: true });
+		await removeTempDir(root);
 	}
 });
 
@@ -194,7 +194,7 @@ test("frontend package fixture has addon layout", async (): Promise<void> => {
 	await mkdir(join(root, "addons", "godot_daedalus"), { recursive: true });
 	await writeFile(pluginCfgPath, "[plugin]\nversion=\"1.0.0\"\n", "utf8");
 	assert.match(await readFile(pluginCfgPath, "utf8"), /version="1\.0\.0"/);
-	await rm(root, { recursive: true, force: true });
+	await removeTempDir(root);
 });
 
 test("frontend apply-wait reports missing pending update", async (): Promise<void> => {
@@ -208,7 +208,7 @@ test("frontend apply-wait reports missing pending update", async (): Promise<voi
 		);
 	} finally {
 		restoreEnv("GODOT_DAEDALUS_APP_DIR", previousAppDir);
-		await rm(root, { recursive: true, force: true });
+		await removeTempDir(root);
 	}
 });
 
@@ -224,7 +224,7 @@ test("frontend apply-wait reports missing staged directory", async (): Promise<v
 		);
 	} finally {
 		restoreEnv("GODOT_DAEDALUS_APP_DIR", previousAppDir);
-		await rm(root, { recursive: true, force: true });
+		await removeTempDir(root);
 	}
 });
 
@@ -257,7 +257,7 @@ test("frontend apply-wait retries locked plugin directory and then succeeds", as
 		assert.equal(attempts, 3);
 	} finally {
 		restoreEnv("GODOT_DAEDALUS_APP_DIR", previousAppDir);
-		await rm(root, { recursive: true, force: true });
+		await removeTempDir(root);
 	}
 });
 
@@ -277,7 +277,7 @@ test("manager status hides stale pending frontend update when installed version 
 		assert.equal(status.frontend.pendingVersion, null);
 	} finally {
 		restoreEnv("GODOT_DAEDALUS_APP_DIR", previousAppDir);
-		await rm(root, { recursive: true, force: true });
+		await removeTempDir(root);
 	}
 });
 
@@ -285,9 +285,12 @@ test("backend install stages local packages and rollback switches current versio
 	const root: string = await mkdtemp(join(tmpdir(), "daedalus-manager-install-"));
 	const previousAppDir: string | undefined = process.env.GODOT_DAEDALUS_APP_DIR;
 	const previousNpmDryRun: string | undefined = process.env.npm_config_dry_run;
+	const previousPath: string | undefined = process.env.PATH;
 	process.env.GODOT_DAEDALUS_APP_DIR = join(root, "app");
 	process.env.npm_config_dry_run = "true";
 	try {
+		const fakeNpmBinDir: string = await createFakeNpmInstallShim(root);
+		process.env.PATH = previousPath === undefined ? fakeNpmBinDir : `${fakeNpmBinDir}${process.platform === "win32" ? ";" : ":"}${previousPath}`;
 		const package103: string = await createFakeBackendPackage(root, "1.0.3");
 		const package104: string = await createFakeBackendPackage(root, "1.0.4");
 		assert.equal((await installBackend(package103)).version, "1.0.3");
@@ -306,7 +309,8 @@ test("backend install stages local packages and rollback switches current versio
 		} else {
 			process.env.npm_config_dry_run = previousNpmDryRun;
 		}
-		await rm(root, { recursive: true, force: true });
+		restoreEnv("PATH", previousPath);
+		await removeTempDir(root);
 	}
 });
 
@@ -332,6 +336,42 @@ async function createFakeBackendPackage(root: string, version: string): Promise<
 	return packageDir;
 }
 
+async function createFakeNpmInstallShim(root: string): Promise<string> {
+	const binDir: string = join(root, "fake-npm-bin");
+	await mkdir(binDir, { recursive: true });
+	const shimScriptPath: string = join(binDir, "fake-npm.cjs");
+	await writeFile(shimScriptPath, [
+		"const fs = require(\"node:fs\");",
+		"const path = require(\"node:path\");",
+		"const args = process.argv.slice(2);",
+		"const prefixIndex = args.indexOf(\"--prefix\");",
+		"const packageSpec = args.at(-1);",
+		"if (args[0] !== \"install\" || prefixIndex < 0 || packageSpec === undefined) {",
+		"  console.error(`unsupported fake npm invocation: ${args.join(\" \")}`);",
+		"  process.exit(1);",
+		"}",
+		"const prefix = args[prefixIndex + 1];",
+		"if (prefix === undefined) {",
+		"  console.error(\"missing --prefix value\");",
+		"  process.exit(1);",
+		"}",
+		"const packageRoot = path.resolve(packageSpec);",
+		"const manifest = JSON.parse(fs.readFileSync(path.join(packageRoot, \"package.json\"), \"utf8\"));",
+		"const target = path.join(prefix, \"node_modules\", manifest.name);",
+		"fs.rmSync(target, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 });",
+		"fs.mkdirSync(path.dirname(target), { recursive: true });",
+		"fs.cpSync(packageRoot, target, { recursive: true });",
+		"process.exit(0);",
+		""
+	].join("\n"), "utf8");
+	const cmdShimPath: string = join(binDir, "npm.cmd");
+	await writeFile(cmdShimPath, "@echo off\r\nnode \"%~dp0fake-npm.cjs\" %*\r\n", "utf8");
+	const shellShimPath: string = join(binDir, "npm");
+	await writeFile(shellShimPath, "#!/bin/sh\nnode \"$(dirname \"$0\")/fake-npm.cjs\" \"$@\"\n", "utf8");
+	await chmod(shellShimPath, 0o755);
+	return binDir;
+}
+
 async function writePendingFrontendUpdate(root: string, stagedDir: string, version: string): Promise<void> {
 	const pending: PendingFrontendUpdate = {
 		version,
@@ -355,4 +395,13 @@ function restoreEnv(name: string, previousValue: string | undefined): void {
 		return;
 	}
 	process.env[name] = previousValue;
+}
+
+async function removeTempDir(root: string): Promise<void> {
+	await rm(root, {
+		recursive: true,
+		force: true,
+		maxRetries: 8,
+		retryDelay: 250
+	});
 }
