@@ -32,11 +32,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export function normalizeGeneralSettings(value: unknown): GeneralSettings {
-	if (!isRecord(value) || (value.schemaVersion !== 1 && value.schemaVersion !== 2)) {
+	if (!isRecord(value) || value.schemaVersion !== 2) {
 		return { ...DEFAULT_GENERAL_SETTINGS };
 	}
 
-	const godotExecutablePath: string | null = value.schemaVersion === 2 && typeof value.godotExecutablePath === "string"
+	const godotExecutablePath: string | null = typeof value.godotExecutablePath === "string"
 		? value.godotExecutablePath.trim() || null
 		: null;
 	return {
@@ -45,7 +45,7 @@ export function normalizeGeneralSettings(value: unknown): GeneralSettings {
 			? value.autoExpandTodoList
 			: DEFAULT_GENERAL_SETTINGS.autoExpandTodoList,
 		godotExecutablePath,
-		godotExecutableVersion: value.schemaVersion === 2 && typeof value.godotExecutableVersion === "string"
+		godotExecutableVersion: typeof value.godotExecutableVersion === "string"
 			? value.godotExecutableVersion
 			: null,
 		godotExecutableStatus: godotExecutablePath === null ? "unconfigured" : "unavailable",

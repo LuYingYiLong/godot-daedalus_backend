@@ -71,9 +71,9 @@ test("general settings fallback to defaults for invalid config without compatibi
 	}
 });
 
-test("general settings migrates v1 and rejects an invalid Godot executable", async (): Promise<void> => {
+test("general settings ignores v1 config and rejects an invalid Godot executable", async (): Promise<void> => {
 	const previousUserProfile: string | undefined = process.env.USERPROFILE;
-	const appDataDir: string = await mkdtemp(join(tmpdir(), "daedalus-general-settings-v1-"));
+	const appDataDir: string = await mkdtemp(join(tmpdir(), "daedalus-general-settings-v2-"));
 	process.env.USERPROFILE = appDataDir;
 
 	try {
@@ -87,10 +87,24 @@ test("general settings migrates v1 and rejects an invalid Godot executable", asy
 			updatedAt: "2026-07-23T00:00:00.000Z"
 		}), "utf8");
 
-		const migrated = await store.getGeneralSettings();
-		assert.equal(migrated.schemaVersion, 2);
-		assert.equal(migrated.autoExpandTodoList, true);
-		assert.equal(migrated.godotExecutablePath, null);
+		assert.deepEqual(await store.getGeneralSettings(), {
+			schemaVersion: 2,
+			autoExpandTodoList: false,
+			godotExecutablePath: null,
+			godotExecutableVersion: null,
+			godotExecutableStatus: "unconfigured",
+			godotExecutableError: null,
+			updatedAt: ""
+		});
+
+		await writeFile(configPath, JSON.stringify({
+			schemaVersion: 2,
+			autoExpandTodoList: true,
+			godotExecutablePath: null,
+			godotExecutableVersion: null,
+			updatedAt: "2026-07-23T00:00:00.000Z"
+		}), "utf8");
+
 		await assert.rejects(
 			() => store.updateGeneralSettings({ godotExecutablePath: join(appDataDir, "missing-godot.exe") }),
 			/Godot executable/u
