@@ -30,7 +30,10 @@ const BACKEND_ONLY_OR_STUDIO_RPC_METHODS: Set<string> = new Set([
 	"workspace.delete",
 	"workspace.git.diff.get",
 	"workspace.git.commit.message.generate",
-	"workspace.git.commitOrPush"
+	"workspace.git.commitOrPush",
+	"workspace.git.branches.list",
+	"workspace.git.branch.checkout",
+	"workspace.git.branch.create"
 ]);
 
 function unique(values: string[]): string[] {
@@ -155,6 +158,38 @@ test("workspace git commit requests are accepted", (): void => {
 			action: "commit_and_push",
 			message: "Add local tic-tac-toe",
 			includeUnstagedChanges: true
+		}
+	}).success, true);
+});
+
+test("workspace git branch requests are accepted", (): void => {
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "workspace-git-branches-list",
+		method: "workspace.git.branches.list",
+		params: {
+			workspaceId: "workspace-a"
+		}
+	}).success, true);
+
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "workspace-git-branch-checkout",
+		method: "workspace.git.branch.checkout",
+		params: {
+			workspaceId: "workspace-a",
+			branchName: "feature/dialog"
+		}
+	}).success, true);
+
+	assert.equal(clientRequestSchema.safeParse({
+		type: "request",
+		id: "workspace-git-branch-create",
+		method: "workspace.git.branch.create",
+		params: {
+			workspaceId: "workspace-a",
+			branchName: "feature/dialog",
+			startPoint: "main"
 		}
 	}).success, true);
 });

@@ -58,6 +58,20 @@ const RAW_TOOL_NAME_MAP: Readonly<Record<string, string>> = {
 	set_project_setting: "mcp_godot_set_project_setting",
 	propose_unset_project_setting: "mcp_godot_propose_unset_project_setting",
 	unset_project_setting: "mcp_godot_unset_project_setting",
+	get_input_actions: "mcp_godot_get_input_actions",
+	propose_set_input_action: "mcp_godot_propose_set_input_action",
+	set_input_action: "mcp_godot_set_input_action",
+	propose_unset_input_action: "mcp_godot_propose_unset_input_action",
+	unset_input_action: "mcp_godot_unset_input_action",
+	get_autoloads: "mcp_godot_get_autoloads",
+	propose_set_autoload: "mcp_godot_propose_set_autoload",
+	set_autoload: "mcp_godot_set_autoload",
+	propose_unset_autoload: "mcp_godot_propose_unset_autoload",
+	unset_autoload: "mcp_godot_unset_autoload",
+	analyze_project_dependencies: "mcp_godot_analyze_project_dependencies",
+	find_unused_resources: "mcp_godot_find_unused_resources",
+	find_scene_nodes: "mcp_godot_find_scene_nodes",
+	find_script_references: "mcp_godot_find_script_references",
 	propose_create_text_file: "mcp_godot_propose_create_text_file",
 	create_text_file: "mcp_godot_create_text_file",
 	propose_overwrite_text_file: "mcp_godot_propose_overwrite_text_file",
@@ -159,7 +173,8 @@ const RESOURCE_PATH_TOOL_NAMES: ReadonlySet<string> = new Set([
 	"mcp_godot_lsp_get_file_diagnostics",
 	"mcp_godot_lsp_get_document_symbols",
 	"mcp_godot_lsp_hover",
-	"mcp_godot_lsp_goto_definition"
+	"mcp_godot_lsp_goto_definition",
+	"mcp_godot_find_script_references"
 ]);
 
 function decodeXmlEntities(text: string): string {
@@ -346,6 +361,20 @@ function defaultParameterName(toolName: string): string | undefined {
 
 	if (toolName === "mcp_godot_read_editor_config_file") {
 		return "fileId";
+	}
+
+	if (
+		toolName === "mcp_godot_propose_unset_input_action"
+		|| toolName === "mcp_godot_unset_input_action"
+	) {
+		return "action";
+	}
+
+	if (
+		toolName === "mcp_godot_propose_unset_autoload"
+		|| toolName === "mcp_godot_unset_autoload"
+	) {
+		return "name";
 	}
 
 	if (

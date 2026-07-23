@@ -201,6 +201,9 @@ export function describeToolEvent(toolName: string, args: Record<string, unknown
 		const relativePath: string | undefined = getStringArg(args, "relativePath") ?? getStringArg(args, "scenePath");
 		const resourcePath: string | undefined = getStringArg(args, "resourcePath") ?? relativePath;
 		const settingKey: string | undefined = getStringArg(args, "key");
+		const inputAction: string | undefined = getStringArg(args, "action");
+		const autoloadName: string | undefined = getStringArg(args, "name");
+		const scriptPath: string | undefined = getStringArg(args, "scriptPath");
 
 		if (toolName.includes("lsp_get_status")) {
 			return createDisplay("godot_diagnostics", "Godot Diagnostics", "read", "检查 LSP 状态", "探测 Godot GDScript LSP", {
@@ -301,6 +304,77 @@ export function describeToolEvent(toolName: string, args: Record<string, unknown
 				kind: "file",
 				path: "project.godot",
 				label: "project.godot"
+			});
+		}
+
+		if (toolName.includes("get_input_actions")) {
+			return createDisplay("godot", "Godot", "read", "Read Input Actions", "Read Godot input actions", {
+				kind: "file",
+				path: "project.godot",
+				label: "input actions"
+			});
+		}
+
+		if (toolName.includes("input_action")) {
+			const targetLabel: string = inputAction ?? "input action";
+			const category: ToolEventCategory = toolName.includes("propose_") ? "propose" : "write";
+			const title: string = category === "propose" ? "Preview Input Action" : "Modify Input Action";
+			return createDisplay("godot", "Godot", category, title, `${title}: ${targetLabel}`, {
+				kind: "file",
+				path: "project.godot",
+				label: targetLabel
+			});
+		}
+
+		if (toolName.includes("get_autoloads")) {
+			return createDisplay("godot", "Godot", "read", "Read Autoloads", "Read Godot autoload singletons", {
+				kind: "file",
+				path: "project.godot",
+				label: "autoloads"
+			});
+		}
+
+		if (toolName.includes("autoload")) {
+			const targetLabel: string = autoloadName ?? "autoload";
+			const category: ToolEventCategory = toolName.includes("propose_") ? "propose" : "write";
+			const title: string = category === "propose" ? "Preview Autoload" : "Modify Autoload";
+			return createDisplay("godot", "Godot", category, title, `${title}: ${targetLabel}`, {
+				kind: "file",
+				path: "project.godot",
+				label: targetLabel
+			});
+		}
+
+		if (toolName.includes("analyze_project_dependencies")) {
+			return createDisplay("godot", "Godot", "read", "Analyze Dependencies", "Analyze Godot project resource dependencies", {
+				kind: "unknown",
+				label: "dependencies"
+			});
+		}
+
+		if (toolName.includes("find_unused_resources")) {
+			return createDisplay("godot", "Godot", "search", "Find Unused Resources", "Search for unused Godot resources", {
+				kind: "unknown",
+				label: "unused resources"
+			});
+		}
+
+		if (toolName.includes("find_scene_nodes")) {
+			const targetLabel: string = relativePath ?? getStringArg(args, "nodeType") ?? getStringArg(args, "group") ?? "scene nodes";
+			const target: ToolEventTarget = relativePath === undefined
+				? { kind: "scene", label: targetLabel }
+				: { kind: "scene", path: relativePath, label: targetLabel };
+			return createDisplay("godot", "Godot", "search", "Find Scene Nodes", `Search scene nodes: ${targetLabel}`, {
+				...target
+			});
+		}
+
+		if (toolName.includes("find_script_references")) {
+			const targetLabel: string = scriptPath ?? "script";
+			return createDisplay("godot", "Godot", "search", "Find Script References", `Find references to ${targetLabel}`, {
+				kind: "file",
+				path: targetLabel,
+				label: targetLabel
 			});
 		}
 

@@ -67,5 +67,9 @@
     "@types/node": "^26.0.1",
     "@types/ws": "^8.18.1",
     "husky": "^9.1.7"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true,
+    "keytar@7.9.0": true
   }
 }

@@ -155,6 +155,62 @@ export const BUILTIN_TOOL_MAPPINGS: Record<string, ToolMapping> = {
 		serverId: "godot",
 		toolName: "unset_project_setting"
 	},
+	"mcp_godot_get_input_actions": {
+		serverId: "godot",
+		toolName: "get_input_actions"
+	},
+	"mcp_godot_propose_set_input_action": {
+		serverId: "godot",
+		toolName: "propose_set_input_action"
+	},
+	"mcp_godot_set_input_action": {
+		serverId: "godot",
+		toolName: "set_input_action"
+	},
+	"mcp_godot_propose_unset_input_action": {
+		serverId: "godot",
+		toolName: "propose_unset_input_action"
+	},
+	"mcp_godot_unset_input_action": {
+		serverId: "godot",
+		toolName: "unset_input_action"
+	},
+	"mcp_godot_get_autoloads": {
+		serverId: "godot",
+		toolName: "get_autoloads"
+	},
+	"mcp_godot_propose_set_autoload": {
+		serverId: "godot",
+		toolName: "propose_set_autoload"
+	},
+	"mcp_godot_set_autoload": {
+		serverId: "godot",
+		toolName: "set_autoload"
+	},
+	"mcp_godot_propose_unset_autoload": {
+		serverId: "godot",
+		toolName: "propose_unset_autoload"
+	},
+	"mcp_godot_unset_autoload": {
+		serverId: "godot",
+		toolName: "unset_autoload"
+	},
+	"mcp_godot_analyze_project_dependencies": {
+		serverId: "godot",
+		toolName: "analyze_project_dependencies"
+	},
+	"mcp_godot_find_unused_resources": {
+		serverId: "godot",
+		toolName: "find_unused_resources"
+	},
+	"mcp_godot_find_scene_nodes": {
+		serverId: "godot",
+		toolName: "find_scene_nodes"
+	},
+	"mcp_godot_find_script_references": {
+		serverId: "godot",
+		toolName: "find_script_references"
+	},
 	"mcp_godot_propose_create_text_file": {
 		serverId: "godot",
 		toolName: "propose_create_text_file"

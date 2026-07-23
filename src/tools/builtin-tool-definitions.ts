@@ -474,6 +474,128 @@ const SCENE_TOOL_DEFINITIONS: ChatCompletionTool[] = [
 	)
 ];
 
+const GODOT_PROJECT_SEMANTIC_TOOL_DEFINITIONS: ChatCompletionTool[] = [
+	createSceneToolDefinition(
+		"mcp_godot_get_input_actions",
+		"Read explicit Godot input actions from project.godot [input]. Returns raw value expressions to preserve Godot InputEvent data.",
+		{
+			filter: { type: "string", description: "Optional action name filter." },
+			includeBuiltin: { type: "boolean", description: "Accepted for compatibility; built-in actions are not synthesized." }
+		},
+		[]
+	),
+	createSceneToolDefinition(
+		"mcp_godot_propose_set_input_action",
+		"Preview creating or replacing a Godot input action in project.godot without writing to disk.",
+		{
+			action: { type: "string", description: "Input action name, for example jump." },
+			events: {
+				type: "array",
+				items: { type: "string" },
+				description: "Raw Godot InputEvent expressions, for example Object(InputEventKey,...)."
+			},
+			deadzone: { type: "number", description: "Optional deadzone, default 0.5." }
+		},
+		["action", "events"]
+	),
+	createSceneToolDefinition(
+		"mcp_godot_set_input_action",
+		"Create or replace a Godot input action in project.godot. This writes to disk and requires approval.",
+		{
+			action: { type: "string" },
+			events: { type: "array", items: { type: "string" } },
+			deadzone: { type: "number" }
+		},
+		["action", "events"]
+	),
+	createSceneToolDefinition(
+		"mcp_godot_propose_unset_input_action",
+		"Preview removing an explicit Godot input action from project.godot without writing to disk.",
+		{ action: { type: "string" } },
+		["action"]
+	),
+	createSceneToolDefinition(
+		"mcp_godot_unset_input_action",
+		"Remove an explicit Godot input action from project.godot. This writes to disk and requires approval.",
+		{ action: { type: "string" } },
+		["action"]
+	),
+	createSceneToolDefinition(
+		"mcp_godot_get_autoloads",
+		"Read Godot autoload singletons from project.godot [autoload].",
+		{ filter: { type: "string", description: "Optional autoload name filter." } },
+		[]
+	),
+	createSceneToolDefinition(
+		"mcp_godot_propose_set_autoload",
+		"Preview creating or replacing a Godot autoload singleton in project.godot without writing to disk.",
+		{
+			name: { type: "string", description: "Autoload singleton name." },
+			resourcePath: { type: "string", description: "Script or scene path, for example res://scripts/game_state.gd." },
+			enabled: { type: "boolean", description: "Defaults to true." }
+		},
+		["name", "resourcePath"]
+	),
+	createSceneToolDefinition(
+		"mcp_godot_set_autoload",
+		"Create or replace a Godot autoload singleton in project.godot. This writes to disk and requires approval.",
+		{
+			name: { type: "string" },
+			resourcePath: { type: "string" },
+			enabled: { type: "boolean" }
+		},
+		["name", "resourcePath"]
+	),
+	createSceneToolDefinition(
+		"mcp_godot_propose_unset_autoload",
+		"Preview removing a Godot autoload singleton from project.godot without writing to disk.",
+		{ name: { type: "string" } },
+		["name"]
+	),
+	createSceneToolDefinition(
+		"mcp_godot_unset_autoload",
+		"Remove a Godot autoload singleton from project.godot. This writes to disk and requires approval.",
+		{ name: { type: "string" } },
+		["name"]
+	),
+	createSceneToolDefinition(
+		"mcp_godot_analyze_project_dependencies",
+		"Read-only scan for res:// dependencies, missing references, and circular dependencies in Godot text resources.",
+		{ includeAddons: { type: "boolean", description: "Defaults to false." } },
+		[]
+	),
+	createSceneToolDefinition(
+		"mcp_godot_find_unused_resources",
+		"Read-only best-effort scan for unused Godot resources based on res:// references.",
+		{ includeAddons: { type: "boolean", description: "Defaults to false." } },
+		[]
+	),
+	createSceneToolDefinition(
+		"mcp_godot_find_scene_nodes",
+		"Read-only cross-scene node search by node type, name, attached script, group, or signal.",
+		{
+			scenePath: { type: "string" },
+			nodeType: { type: "string" },
+			name: { type: "string" },
+			scriptPath: { type: "string" },
+			group: { type: "string" },
+			signal: { type: "string" },
+			includeAddons: { type: "boolean" },
+			limit: { type: "integer" }
+		},
+		[]
+	),
+	createSceneToolDefinition(
+		"mcp_godot_find_script_references",
+		"Read-only scan for all res:// references to a script path.",
+		{
+			scriptPath: { type: "string", description: "Script path, for example res://scripts/player.gd." },
+			includeAddons: { type: "boolean" }
+		},
+		["scriptPath"]
+	)
+];
+
 const BASE_BUILTIN_TOOL_DEFINITIONS: ChatCompletionTool[] = [
 	...SKILL_TOOL_DEFINITIONS,
 	...IMAGE_GENERATION_TOOL_DEFINITIONS,
@@ -482,6 +604,7 @@ const BASE_BUILTIN_TOOL_DEFINITIONS: ChatCompletionTool[] = [
 	...GODOT_RUNTIME_TOOL_DEFINITIONS,
 	...GODOT_HEADLESS_OPERATION_TOOL_DEFINITIONS,
 	...SCENE_TOOL_DEFINITIONS,
+	...GODOT_PROJECT_SEMANTIC_TOOL_DEFINITIONS,
 	{
 		type: "function",
 		function: {

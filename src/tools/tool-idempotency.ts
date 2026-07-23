@@ -64,6 +64,10 @@ const GODOT_PROJECT_MUTATION_TOOLS: ReadonlySet<string> = new Set([
 	"mcp_workspace_delete_file",
 	"mcp_godot_set_project_setting",
 	"mcp_godot_unset_project_setting",
+	"mcp_godot_set_input_action",
+	"mcp_godot_unset_input_action",
+	"mcp_godot_set_autoload",
+	"mcp_godot_unset_autoload",
 	"mcp_godot_create_text_file",
 	"mcp_godot_overwrite_text_file",
 	"mcp_godot_replace_text_in_file",
@@ -78,7 +82,11 @@ const GODOT_PROJECT_MUTATION_TOOLS: ReadonlySet<string> = new Set([
 
 const GODOT_PROJECT_SETTINGS_MUTATION_TOOLS: ReadonlySet<string> = new Set([
 	"mcp_godot_set_project_setting",
-	"mcp_godot_unset_project_setting"
+	"mcp_godot_unset_project_setting",
+	"mcp_godot_set_input_action",
+	"mcp_godot_unset_input_action",
+	"mcp_godot_set_autoload",
+	"mcp_godot_unset_autoload"
 ]);
 
 function normalizeForStableJson(value: unknown): unknown {

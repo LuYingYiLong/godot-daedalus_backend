@@ -9,6 +9,7 @@ import type { WorkspaceConfig } from "../../workspace/types.js";
 import { getClientConnection, updateClientConnection } from "../client-connections.js";
 import { logger } from "../../logger.js";
 import { deleteSessionsByWorkspace, listArchivedSessions, listSessions } from "../../session/session-store.js";
+import { checkoutWorkspaceGitBranch, createWorkspaceGitBranch, listWorkspaceGitBranches } from "../workspace-git-branches.js";
 import { commitOrPushWorkspaceGit, generateWorkspaceGitCommitMessage } from "../workspace-git-commit.js";
 import { readWorkspaceGitDiff } from "../workspace-git-diff.js";
 import { evaluateWorkspaceSelectionForSession, type WorkspaceSelectionDecision } from "../workspace-selection-guard.js";
@@ -268,6 +269,84 @@ export async function handleWorkspaceRequest(socket: WebSocket, request: ClientR
 				action: request.params.action,
 				message: request.params.message,
 				includeUnstagedChanges: request.params.includeUnstagedChanges
+			})
+		});
+		break;
+	}
+	case "workspace.git.branches.list": {
+		const workspace: WorkspaceConfig | undefined = findWorkspace(request.params.workspaceId);
+		if (!workspace) {
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: false,
+				error: {
+					code: "workspace_not_found",
+					message: `Workspace not found: ${request.params.workspaceId}`
+				}
+			});
+			break;
+		}
+
+		sendJson(socket, {
+			type: "response",
+			id: request.id,
+			ok: true,
+			result: await listWorkspaceGitBranches(workspace.id, workspace.rootPath)
+		});
+		break;
+	}
+	case "workspace.git.branch.checkout": {
+		const workspace: WorkspaceConfig | undefined = findWorkspace(request.params.workspaceId);
+		if (!workspace) {
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: false,
+				error: {
+					code: "workspace_not_found",
+					message: `Workspace not found: ${request.params.workspaceId}`
+				}
+			});
+			break;
+		}
+
+		sendJson(socket, {
+			type: "response",
+			id: request.id,
+			ok: true,
+			result: await checkoutWorkspaceGitBranch({
+				workspaceId: workspace.id,
+				workspaceRoot: workspace.rootPath,
+				branchName: request.params.branchName
+			})
+		});
+		break;
+	}
+	case "workspace.git.branch.create": {
+		const workspace: WorkspaceConfig | undefined = findWorkspace(request.params.workspaceId);
+		if (!workspace) {
+			sendJson(socket, {
+				type: "response",
+				id: request.id,
+				ok: false,
+				error: {
+					code: "workspace_not_found",
+					message: `Workspace not found: ${request.params.workspaceId}`
+				}
+			});
+			break;
+		}
+
+		sendJson(socket, {
+			type: "response",
+			id: request.id,
+			ok: true,
+			result: await createWorkspaceGitBranch({
+				workspaceId: workspace.id,
+				workspaceRoot: workspace.rootPath,
+				branchName: request.params.branchName,
+				startPoint: request.params.startPoint
 			})
 		});
 		break;

@@ -16,6 +16,11 @@ const REPAIR_READ_TOOLS: string[] = [
 	"mcp_godot_search_text",
 	"mcp_godot_inspect_scene_tree",
 	"mcp_godot_get_project_settings",
+	"mcp_godot_get_input_actions",
+	"mcp_godot_get_autoloads",
+	"mcp_godot_analyze_project_dependencies",
+	"mcp_godot_find_scene_nodes",
+	"mcp_godot_find_script_references",
 	"mcp_godot_lsp_get_status",
 	"mcp_godot_lsp_get_file_diagnostics"
 ];
@@ -40,7 +45,11 @@ const SCENE_REPAIR_WRITE_TOOLS: string[] = [
 ];
 const PROJECT_SETTING_REPAIR_WRITE_TOOLS: string[] = [
 	"mcp_godot_set_project_setting",
-	"mcp_godot_unset_project_setting"
+	"mcp_godot_unset_project_setting",
+	"mcp_godot_set_input_action",
+	"mcp_godot_unset_input_action",
+	"mcp_godot_set_autoload",
+	"mcp_godot_unset_autoload"
 ];
 
 function isWriteGuardFailure(failedPhase: WorkflowPhase, failedChecks: WorkflowFailedCheck[]): boolean {

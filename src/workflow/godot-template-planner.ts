@@ -69,7 +69,21 @@ const PROJECT_SETTING_WRITE_TOOLS: string[] = [
 	"mcp_godot_propose_set_project_setting",
 	"mcp_godot_set_project_setting",
 	"mcp_godot_propose_unset_project_setting",
-	"mcp_godot_unset_project_setting"
+	"mcp_godot_unset_project_setting",
+	"mcp_godot_propose_set_input_action",
+	"mcp_godot_set_input_action",
+	"mcp_godot_propose_unset_input_action",
+	"mcp_godot_unset_input_action",
+	"mcp_godot_propose_set_autoload",
+	"mcp_godot_set_autoload",
+	"mcp_godot_propose_unset_autoload",
+	"mcp_godot_unset_autoload"
+];
+
+const PROJECT_SETTING_READ_TOOLS: string[] = [
+	"mcp_godot_get_project_settings",
+	"mcp_godot_get_input_actions",
+	"mcp_godot_get_autoloads"
 ];
 
 export function classifyGodotTask(message: string, context?: GodotTemplateWorkflowContext | undefined): GodotTaskClassification {
@@ -86,7 +100,7 @@ export function classifyGodotTask(message: string, context?: GodotTemplateWorkfl
 		return { type: "general_edit" };
 	}
 
-	if (includesAny(normalized, ["project.godot", "项目设置", "project setting", "inputmap", "display/window", "application/config"])) {
+	if (includesAny(normalized, ["project.godot", "项目设置", "project setting", "inputmap", "input map", "input action", "autoload", "display/window", "application/config"])) {
 		return { type: "project_setting_change" };
 	}
 
@@ -370,16 +384,16 @@ function createLocalGameCreatePlan(params: AiChatParams, classification: GodotTa
 
 function createProjectSettingPlan(params: AiChatParams): WorkflowPlan {
 	const phases: WorkflowPhase[] = [
-		createPhase("inspect-settings", "读取项目设置", "read", ["mcp_godot_get_project_settings"], "读取当前 project.godot 相关设置。", ["已读取当前项目设置。"]),
+		createPhase("inspect-settings", "读取项目设置", "read", PROJECT_SETTING_READ_TOOLS, "读取当前 project.godot 相关设置。", ["已读取当前项目设置。"]),
 		createPhase(
 			"write-settings",
 			"修改项目设置",
 			"write",
-			["mcp_godot_get_project_settings", ...PROJECT_SETTING_WRITE_TOOLS],
+			[...PROJECT_SETTING_READ_TOOLS, ...PROJECT_SETTING_WRITE_TOOLS],
 			"先用 propose project setting 工具预览，再用 set/unset project setting 工具实际写入并走审批。不要手写 project.godot 文件。",
 			["项目设置已通过 project setting 工具更新。"]
 		),
-		createPhase("verify-settings", "验证项目设置", "verify", ["mcp_godot_get_project_settings", "mcp_terminal_run_safe_preset"], "读取项目设置并运行可用安全验证。", ["项目设置验证没有阻塞失败。"]),
+		createPhase("verify-settings", "验证项目设置", "verify", [...PROJECT_SETTING_READ_TOOLS, "mcp_terminal_run_safe_preset"], "读取项目设置并运行可用安全验证。", ["项目设置验证没有阻塞失败。"]),
 		createPhase("summarize", "总结交付", "summarize", [], "总结设置变更和验证状态，不调用工具。", ["已总结交付。"])
 	];
 	return createPlan(params, "Godot 项目设置修改", phases);
@@ -428,8 +442,8 @@ function narrowWriteToolsForText(text: string): string[] {
 	if (includesAny(normalized, ["attach", "挂载", "脚本引用"])) {
 		return ["mcp_godot_inspect_scene_tree", "mcp_godot_read_text_file", ...SCENE_ATTACH_WRITE_TOOLS];
 	}
-	if (includesAny(normalized, ["project.godot", "项目设置", "project setting", "projectsettings", "inputmap", "display/window", "application/config", "application/run/main_scene", "run/main_scene", "main_scene", "main scene", "主场景", "启动场景"])) {
-		return ["mcp_godot_get_project_settings", ...PROJECT_SETTING_WRITE_TOOLS];
+	if (includesAny(normalized, ["project.godot", "项目设置", "project setting", "projectsettings", "inputmap", "input map", "input action", "autoload", "display/window", "application/config", "application/run/main_scene", "run/main_scene", "main_scene", "main scene", "主场景", "启动场景"])) {
+		return [...PROJECT_SETTING_READ_TOOLS, ...PROJECT_SETTING_WRITE_TOOLS];
 	}
 	if (includesAny(normalized, ["create scene", "创建场景", "scene root", "根节点", ".tscn", "场景", "ui", "界面"])) {
 		return ["mcp_godot_read_text_file", "mcp_godot_inspect_scene_tree", ...SCENE_CREATE_WRITE_TOOLS, ...SCENE_EDIT_WRITE_TOOLS];

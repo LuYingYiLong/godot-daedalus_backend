@@ -1120,6 +1120,33 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 			message: z.string().max(20000).optional(),
 			includeUnstagedChanges: z.boolean(),
 		}).strict(),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("workspace.git.branches.list"),
+		params: z.object({
+			workspaceId: z.string().min(1),
+		}).strict(),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("workspace.git.branch.checkout"),
+		params: z.object({
+			workspaceId: z.string().min(1),
+			branchName: z.string().min(1).max(240),
+		}).strict(),
+	}),
+	z.object({
+		type: z.literal("request"),
+		id: z.string(),
+		method: z.literal("workspace.git.branch.create"),
+		params: z.object({
+			workspaceId: z.string().min(1),
+			branchName: z.string().min(1).max(240),
+			startPoint: z.string().min(1).max(240).optional(),
+		}).strict(),
 	})
 ]);
 

@@ -76,6 +76,19 @@ test("project setting mutations refresh project.godot", (): void => {
 		}),
 		["project.godot"]
 	);
+	assert.deepEqual(
+		collectGodotRefreshPaths("mcp_godot_set_input_action", {
+			action: "jump",
+			events: []
+		}),
+		["project.godot"]
+	);
+	assert.deepEqual(
+		collectGodotRefreshPaths("mcp_godot_unset_autoload", {
+			name: "GameState"
+		}),
+		["project.godot"]
+	);
 });
 
 test("workspace file mutations collect Godot editor refresh paths", (): void => {
