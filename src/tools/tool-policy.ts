@@ -60,9 +60,17 @@ export function isHardBlocked(toolName: string): boolean {
 }
 
 export type ApprovalDecision =
-	| { action: "allow" }
-	| { action: "request_approval"; reason: string; requiredConsent?: ToolRequiredConsent | undefined }
-	| { action: "deny"; reason: string };
+	| { action: "allow"; review?: ToolReviewAudit | undefined }
+	| { action: "request_approval"; reason: string; requiredConsent?: ToolRequiredConsent | undefined; review?: ToolReviewAudit | undefined }
+	| { action: "deny"; reason: string; review?: ToolReviewAudit | undefined };
+
+export type ToolReviewAudit = {
+	source: "model";
+	decision: "allow" | "ask_user" | "deny";
+	reason: string;
+	provider?: string | undefined;
+	model?: string | undefined;
+};
 
 function getRequiredConsentForToolCall(toolName: string, args: Record<string, unknown>): ToolRequiredConsent | undefined {
 	if (toolName !== "mcp_terminal_run_command") {
@@ -122,7 +130,7 @@ export function evaluateToolCall(
 			return { action: "allow" };
 		}
 
-		if (policy.risk === "write" && !isDynamicMcpToolName(toolName)) {
+		if (policy.risk === "write" && !isDynamicMcpToolName(toolName) && toolName !== "mcp_terminal_run_command") {
 			return { action: "allow" };
 		}
 

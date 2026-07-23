@@ -18,6 +18,7 @@ type Invocation = {
 	workspaceRoot?: string | undefined;
 	trusted?: boolean | undefined;
 	consentText?: string | undefined;
+	authorizationSource?: "model" | "user" | undefined;
 };
 
 export async function runCommandWait(params: {
@@ -34,6 +35,7 @@ export async function runCommandWait(params: {
 	workspaceRoot?: string | undefined;
 	trusted?: boolean | undefined;
 	consentText?: string | undefined;
+	authorizationSource?: "model" | "user" | undefined;
 }): Promise<TerminalCommandResult> {
 	return new Promise((resolve) => {
 		const startMs: number = Date.now();
@@ -64,6 +66,7 @@ export async function runCommandWait(params: {
 				workspaceRoot: params.workspaceRoot,
 				trusted: params.trusted,
 				consentText: params.consentText,
+				authorizationSource: params.authorizationSource,
 				stdout,
 				stderr: error instanceof Error ? `Process error: ${error.message}` : "Process spawn failed",
 				durationMs: Date.now() - startMs,
@@ -97,6 +100,7 @@ export async function runCommandWait(params: {
 				workspaceRoot: params.workspaceRoot,
 				trusted: params.trusted,
 				consentText: params.consentText,
+				authorizationSource: params.authorizationSource,
 				stdout,
 				stderr,
 				durationMs: Date.now() - startMs,
@@ -123,6 +127,7 @@ export async function runCommandWait(params: {
 				workspaceRoot: params.workspaceRoot,
 				trusted: params.trusted,
 				consentText: params.consentText,
+				authorizationSource: params.authorizationSource,
 				stdout: stdoutResult.text,
 				stderr: stderrResult.text,
 				durationMs: Date.now() - startMs,
@@ -148,6 +153,7 @@ export function startCommandJob(params: {
 	workspaceRoot?: string | undefined;
 	trusted?: boolean | undefined;
 	consentText?: string | undefined;
+	authorizationSource?: "model" | "user" | undefined;
 }): TerminalJobRecord {
 	const tailLines: number = normalizeTailLines(params.tailLines);
 	const record: TerminalJobRecord = terminalJobStore.createRecord({
@@ -164,7 +170,8 @@ export function startCommandJob(params: {
 		workspaceId: params.workspaceId,
 		workspaceRoot: params.workspaceRoot,
 		trusted: params.trusted,
-		consentText: params.consentText
+		consentText: params.consentText,
+		authorizationSource: params.authorizationSource
 	});
 
 	let child: ChildProcess;
@@ -248,6 +255,7 @@ export async function runCommandInvocationWait(params: {
 				workspaceRoot: params.invocation.workspaceRoot,
 				trusted: params.invocation.trusted,
 				consentText: params.invocation.consentText,
+				authorizationSource: params.invocation.authorizationSource,
 				stdout,
 				stderr: error instanceof Error ? `Process error: ${error.message}` : "Process spawn failed",
 				durationMs: Date.now() - startMs,
@@ -278,6 +286,7 @@ export async function runCommandInvocationWait(params: {
 				workspaceRoot: params.invocation.workspaceRoot,
 				trusted: params.invocation.trusted,
 				consentText: params.invocation.consentText,
+				authorizationSource: params.invocation.authorizationSource,
 				stdout,
 				stderr,
 				durationMs: Date.now() - startMs,
@@ -301,6 +310,7 @@ export async function runCommandInvocationWait(params: {
 				workspaceRoot: params.invocation.workspaceRoot,
 				trusted: params.invocation.trusted,
 				consentText: params.invocation.consentText,
+				authorizationSource: params.invocation.authorizationSource,
 				stdout: stdoutResult.text,
 				stderr: stderrResult.text,
 				durationMs: Date.now() - startMs,
@@ -331,7 +341,8 @@ export function startCommandInvocationJob(params: {
 		workspaceId: params.invocation.workspaceId,
 		workspaceRoot: params.invocation.workspaceRoot,
 		trusted: params.invocation.trusted,
-		consentText: params.invocation.consentText
+		consentText: params.invocation.consentText,
+		authorizationSource: params.invocation.authorizationSource
 	});
 
 	let child: ChildProcess;

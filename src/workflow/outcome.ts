@@ -176,14 +176,21 @@ function hasEnvironmentIssueObservation(observations: WorkflowToolObservation[])
 	return observations.some(isEnvironmentIssueObservation);
 }
 
-function hasSuccessfulVerificationObservation(observations: WorkflowToolObservation[]): boolean {
-	return observations.some(isSuccessfulVerificationObservation);
+function collectEnvironmentWarnings(observations: WorkflowToolObservation[]): string[] {
+	return uniqueStrings(observations
+		.filter(isEnvironmentIssueObservation)
+		.map((observation: WorkflowToolObservation): string => (
+			observation.error
+			?? String(observation.parsedResult?.summary ?? "")
+			?? `${observation.toolName} verification environment is unavailable`
+		)))
+		.map((warning: string): string => warning.length > 0
+			? warning
+			: "Godot verification environment is unavailable.");
 }
 
-function hasOptionalDiagnosticsEnvironmentIssue(observations: WorkflowToolObservation[]): boolean {
-	return observations.some((observation: WorkflowToolObservation): boolean => (
-		isDiagnosticsObservation(observation) && isEnvironmentIssueObservation(observation)
-	));
+function hasSuccessfulVerificationObservation(observations: WorkflowToolObservation[]): boolean {
+	return observations.some(isSuccessfulVerificationObservation);
 }
 
 function hasSuccessfulMutationObservation(observations: WorkflowToolObservation[]): boolean {
@@ -381,7 +388,7 @@ function createOutcomeStatus(
 		if (failedChecks.length > 0) {
 			return "needs_fix";
 		}
-		if (!hasSuccessfulVerificationObservation(observations) && !hasOptionalDiagnosticsEnvironmentIssue(observations)) {
+		if (!hasSuccessfulVerificationObservation(observations) && !hasEnvironmentIssueObservation(observations)) {
 			return "blocked";
 		}
 	}
@@ -416,6 +423,9 @@ export function createWorkflowPhaseOutcome(
 			: summaries[0])
 		: undefined;
 	const trimmedAgentText: string = agentResultText.trim();
+	const environmentWarnings: string[] = phase.toolGroup === "verify"
+		? collectEnvironmentWarnings(observations)
+		: [];
 	const summary: string = blockedReason
 		?? (status === "completed" || status === "approval_required" ? undefined : summarizeFailedChecks(failedChecks))
 		?? summaries[0]
@@ -441,6 +451,10 @@ export function createWorkflowPhaseOutcome(
 			.filter((observation: WorkflowToolObservation): boolean => isVerificationObservation(observation) && observation.status === "succeeded")
 			.flatMap((observation: WorkflowToolObservation): string[] => observation.artifactRefs ?? [])),
 		toolObservations: observations.map((observation: WorkflowToolObservation): WorkflowToolObservation => ({ ...observation })),
+		verificationStatus: phase.toolGroup === "verify"
+			? environmentWarnings.length > 0 ? "unverified" : "verified"
+			: undefined,
+		warnings: environmentWarnings.length > 0 ? environmentWarnings : undefined,
 		text: agentResultText,
 		sourcePhaseId: phase.repairOf,
 		blockedReason
@@ -572,16 +586,39 @@ export function applyDeterministicVerificationGate(
 		return outcome;
 	}
 
-	const failedChecks: WorkflowFailedCheck[] = [...outcome.failedChecks, ...gateFailures];
-	const environmentBlocked: boolean = gateFailures.some((failure: WorkflowFailedCheck): boolean => failure.code === "validation_environment_unavailable");
+	const environmentFailures: WorkflowFailedCheck[] = gateFailures.filter((failure: WorkflowFailedCheck): boolean => failure.code === "validation_environment_unavailable");
+	const actionableFailures: WorkflowFailedCheck[] = gateFailures.filter((failure: WorkflowFailedCheck): boolean => failure.code !== "validation_environment_unavailable");
+	const failedChecks: WorkflowFailedCheck[] = [...outcome.failedChecks, ...actionableFailures];
 	const summary: string = gateFailures.map((failure: WorkflowFailedCheck): string => failure.message).join("\n");
+	if (actionableFailures.length === 0) {
+		return {
+			...outcome,
+			status: "completed",
+			summary,
+			failedChecks,
+			requiredFixes: createRequiredFixes(failedChecks),
+			verificationStatus: "unverified",
+			warnings: uniqueStrings([
+				...(outcome.warnings ?? []),
+				...environmentFailures.map((failure: WorkflowFailedCheck): string => failure.message)
+			]),
+			blockedReason: undefined
+		};
+	}
 	return {
 		...outcome,
-		status: environmentBlocked ? "blocked" : "needs_fix",
+		status: "needs_fix",
 		summary,
 		failedChecks,
 		requiredFixes: createRequiredFixes(failedChecks),
-		blockedReason: environmentBlocked ? summary : outcome.blockedReason
+		verificationStatus: environmentFailures.length > 0 ? "unverified" : outcome.verificationStatus,
+		warnings: environmentFailures.length > 0
+			? uniqueStrings([
+				...(outcome.warnings ?? []),
+				...environmentFailures.map((failure: WorkflowFailedCheck): string => failure.message)
+			])
+			: outcome.warnings,
+		blockedReason: outcome.blockedReason
 	};
 }
 

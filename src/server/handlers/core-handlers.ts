@@ -156,13 +156,22 @@ export async function handleCoreRequest(socket: WebSocket, request: ClientReques
 		break;
 
 	case "generalSettings.update":
+		{
+			const settings = await updateGeneralSettings(request.params);
+			if (request.params.godotExecutablePath !== undefined) {
+				await mcpHost.refreshGodotExecutableConfiguration();
+				if (session.activeWorkspace?.godotExecutablePath === undefined) {
+					session.godotExecutablePath = settings.godotExecutablePath ?? undefined;
+				}
+			}
 		sendJson(socket, {
 			type: "response",
 			id: request.id,
 			ok: true,
-			result: await updateGeneralSettings(request.params)
+			result: settings
 		});
 		break;
+		}
 
 	case "webSearchSettings.get":
 		sendJson(socket, {

@@ -60,6 +60,7 @@ export type ServerEvent = {
 		| "agent.thinking.delta"
 		| "agent.thinking.done"
 		| "agent.tool.call"
+		| "agent.tool.reviewed"
 		| "agent.tool.progress"
 		| "agent.tool.result"
 		| "agent.tool.error"

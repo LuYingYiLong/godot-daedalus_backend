@@ -26,6 +26,7 @@ import { findWorkspace } from "../../workspace/registry.js";
 import type { WorkspaceConfig } from "../../workspace/types.js";
 import type { CommandPreset, CommandRunInput, PresetRunInput, TerminalCommandResult, TerminalJobRecord } from "./types.js";
 import { logger } from "../../logger.js";
+import { consumeTerminalCommandAuthorization, type TerminalCommandAuthorization } from "./authorization.js";
 
 function asJsonTextResult(value: unknown): { content: Array<{ type: "text"; text: string }> } {
 	return {
@@ -116,6 +117,7 @@ type TerminalInternalInput = {
 	__daedalusWorkspaceId?: string | undefined;
 	__daedalusApprovalMode?: "manual" | "auto-safe" | "full-trust" | undefined;
 	__daedalusConsentText?: string | undefined;
+	__daedalusCommandAuthorization?: TerminalCommandAuthorization | undefined;
 };
 
 function resolveTerminalContext(input: TerminalInternalInput): {
@@ -243,6 +245,22 @@ async function runCommand(input: CommandRunInput & TerminalInternalInput): Promi
 			env: createCommandLineEnv(input.env, false)
 			});
 			if (sandboxInvocation.available === false) {
+				const directAuthorization = consumeTerminalCommandAuthorization(
+					input.__daedalusCommandAuthorization,
+					input as unknown as Record<string, unknown>,
+					context.workspace?.id ?? context.workspaceId
+				);
+				if (directAuthorization.allowed) {
+					return {
+						...commonInvocation,
+						command: input.commandLine,
+						args: [],
+						shell: true,
+						env: createCommandLineEnv(input.env, false),
+						sandboxMode: "approved-unsandboxed" as const,
+						authorizationSource: directAuthorization.source
+					};
+				}
 				return {
 					ok: false,
 					error: sandboxInvocation.error,
@@ -300,7 +318,10 @@ async function runCommand(input: CommandRunInput & TerminalInternalInput): Promi
 		exitCode: result.exitCode,
 		durationMs: result.durationMs
 	});
-	return result as unknown as Record<string, unknown>;
+	return {
+		...result,
+		executionMode: result.sandboxMode === "approved-unsandboxed" ? "approved_unsandboxed" : "sandboxed"
+	} as unknown as Record<string, unknown>;
 }
 
 async function runPreset(input: PresetRunInput, allowedRisks: readonly string[]): Promise<Record<string, unknown>> {

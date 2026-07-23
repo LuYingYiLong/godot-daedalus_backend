@@ -72,15 +72,21 @@ test("Godot runtime and headless operation tools keep commands scoped and shell-
 		const runtimeServer: FakeMcpServer = createFakeServer();
 		runtimeTools.registerRuntimeTools(runtimeServer as never);
 		const statusResult: Record<string, unknown> = await callTool(runtimeServer, "get_runtime_status", {});
-		assert.equal(statusResult.ok, true);
+		assert.equal(statusResult.ok, false);
 		assert.equal(statusResult.godotExecutablePath, "fake-godot");
+		assert.equal(statusResult.godotExecutableStatus, "unavailable");
+		assert.equal(statusResult.environmentIssue, true);
 		assert.deepEqual(statusResult.activeJob, null);
 		assert.deepEqual(statusResult.capabilities, {
-			runtimeLifecycle: true,
+			runtimeLifecycle: false,
 			debugOutputTail: true,
-			headlessOperations: true,
+			headlessOperations: false,
 			projectDiscovery: true
 		});
+		const launchResult: Record<string, unknown> = await callTool(runtimeServer, "launch_editor", {});
+		assert.equal(launchResult.ok, false);
+		assert.equal(launchResult.code, "godot_executable_unavailable");
+		assert.equal(launchResult.jobId, undefined);
 
 		const projectsResult: Record<string, unknown> = await callTool(runtimeServer, "list_projects", {
 			directory: projectRoot

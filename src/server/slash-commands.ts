@@ -388,7 +388,10 @@ async function sendChatText(
 		{
 			runId,
 			requestId: request.id,
-			title: "Slash command"
+			title: "Slash command",
+			status: "done",
+			resultStatus: "completed",
+			warnings: []
 		}
 	);
 	await waitForSessionEventPersistence(session);

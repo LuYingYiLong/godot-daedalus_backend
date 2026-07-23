@@ -555,7 +555,8 @@ async function runHiddenAnswerExecution(params: {
 		{
 			workspaceId: params.session.activeWorkspace?.id,
 			editorInstanceId: params.session.editorInstanceId,
-			sessionId: params.session.sessionId
+			sessionId: params.session.sessionId,
+			requestId: params.requestId
 		}
 	);
 
@@ -607,6 +608,8 @@ async function runHiddenAnswerExecution(params: {
 		runId,
 		requestId: params.requestId,
 		status: "done",
+		resultStatus: "completed",
+		warnings: [],
 		sequence: params.session.workbenchActiveRun.sequence ?? params.session.workbenchActiveRunSequence
 	});
 	sendJson(params.socket, {
@@ -1050,7 +1053,8 @@ async function runToolBudgetDecisionContinuation(params: {
 		const toolContext = {
 			workspaceId: session.activeWorkspace?.id,
 			editorInstanceId: session.editorInstanceId,
-			sessionId: session.sessionId
+			sessionId: session.sessionId,
+			requestId: pending.requestId
 		};
 		const agentResult: ProviderAgentResult = decision === "continue"
 			? pendingContinuation.stream
@@ -1240,25 +1244,6 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				});
 				emitWorkbenchUpdated(socket, request.id, session);
 				controller.abort();
-				session.activeAbortControllers.delete(targetRequestId);
-				if (session.activeRunRequestId === targetRequestId) {
-					session.activeRunRequestId = undefined;
-				}
-				finishSessionRun(session.sessionId, targetRequestId);
-				setWorkbenchActiveRun(session, { status: "idle" });
-				emitWorkbenchUpdated(socket, request.id, session);
-				sendAgentCancelled(socket, targetRequestId, session);
-				if (targetRequestId !== request.id) {
-					sendJson(socket, {
-						type: "response",
-						id: targetRequestId,
-						ok: true,
-						result: {
-							cancelled: true,
-							requestId: targetRequestId
-						}
-					});
-				}
 			}
 			const cancelledApprovalIds: string[] = await cancelPendingApprovalsForRequest(session, targetRequestId);
 			const cancelledToolBudgetIds: string[] = cancelPendingToolBudgetsForRequest(session, targetRequestId);
@@ -1279,6 +1264,7 @@ export async function handleChatRequest(socket: WebSocket, request: ClientReques
 				ok: true,
 				result: {
 					cancelled: controller !== undefined || cancelledApprovalIds.length > 0 || cancelledToolBudgetIds.length > 0,
+					cancellationRequested: controller !== undefined,
 					requestId: targetRequestId,
 					cancelledApprovalIds,
 					cancelledToolBudgetIds

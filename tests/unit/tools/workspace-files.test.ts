@@ -53,3 +53,26 @@ test("workspace file service rejects path escape, protected writes and line drif
 		await rm(root, { recursive: true, force: true });
 	}
 });
+
+test("workspace file listing treats an uncreated child directory as empty", async (): Promise<void> => {
+	const root: string = await mkdtemp(join(tmpdir(), "daedalus-workspace-files-missing-dir-"));
+	try {
+		const service = createWorkspaceFileService({ rootPath: root });
+
+		assert.deepEqual(await service.listFilesDetailed({ subdir: "assets/generated" }), {
+			files: [],
+			directoryExists: false
+		});
+		await service.createTextFile("assets/existing.txt", "ready\n");
+		assert.deepEqual(await service.listFilesDetailed({ subdir: "assets" }), {
+			files: ["assets/existing.txt"],
+			directoryExists: true
+		});
+		await assert.rejects(
+			() => service.listFilesDetailed({ subdir: "assets/existing.txt" }),
+			/Not a directory/u
+		);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});

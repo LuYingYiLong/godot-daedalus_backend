@@ -51,6 +51,7 @@ export class TerminalJobStore {
 		workspaceRoot?: string | undefined;
 		trusted?: boolean | undefined;
 		consentText?: string | undefined;
+		authorizationSource?: "model" | "user" | undefined;
 	}): TerminalJobRecord {
 		const startedAt: string = nowIso();
 		const nextWakeAt: string | undefined = params.wakeAfterMs !== undefined
@@ -81,7 +82,8 @@ export class TerminalJobStore {
 			workspaceId: params.workspaceId,
 			workspaceRoot: params.workspaceRoot,
 			trusted: params.trusted,
-			consentText: params.consentText
+			consentText: params.consentText,
+			authorizationSource: params.authorizationSource
 		};
 	}
 

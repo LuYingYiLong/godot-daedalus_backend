@@ -70,6 +70,9 @@ export function mapWorkflowEventToAgentEvent(eventName: ServerEvent["event"], da
 				runId: workflowId,
 				requestId: record.requestId ?? null,
 				status: "done",
+				resultStatus: record.resultStatus ?? "completed",
+				verificationStatus: record.verificationStatus,
+				warnings: record.warnings ?? [],
 				title: record.title,
 				sequence: record.sequence
 			}

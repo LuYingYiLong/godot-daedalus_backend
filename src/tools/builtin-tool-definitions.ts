@@ -128,6 +128,33 @@ const IMAGE_GENERATION_TOOL_DEFINITIONS: ChatCompletionTool[] = [
 			}
 		},
 		["prompt"]
+	),
+	createSceneToolDefinition(
+		"mcp_image_propose_import_to_workspace",
+		"Preview importing a generated image from the current Daedalus session into the active workspace. This validates ownership, path safety, file type, and conflicts without writing.",
+		{
+			imageId: { type: "string", description: "Current-session generated image id, for example generated-image-..." },
+			relativePath: { type: "string", description: "Workspace-relative destination such as assets/player.png or res://assets/player.png." }
+		},
+		["imageId", "relativePath"]
+	),
+	createSceneToolDefinition(
+		"mcp_image_import_to_workspace",
+		"Import a generated image from the current Daedalus session into a new workspace file. The destination must not already exist. Use the propose tool first.",
+		{
+			imageId: { type: "string", description: "Current-session generated image id returned by mcp_image_generate." },
+			relativePath: { type: "string", description: "Workspace-relative destination with an extension matching the image MIME type." }
+		},
+		["imageId", "relativePath"]
+	),
+	createSceneToolDefinition(
+		"mcp_image_replace_workspace_asset",
+		"Replace an existing workspace image with a generated image from the current Daedalus session. This is destructive and always requires user approval. Use the propose tool first.",
+		{
+			imageId: { type: "string", description: "Current-session generated image id returned by mcp_image_generate." },
+			relativePath: { type: "string", description: "Existing workspace-relative image destination." }
+		},
+		["imageId", "relativePath"]
 	)
 ];
 

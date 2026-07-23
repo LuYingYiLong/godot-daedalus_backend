@@ -76,6 +76,8 @@ export type WorkflowPhaseOutput = {
 	modifiedArtifacts: string[];
 	verifiedArtifacts: string[];
 	toolObservations: WorkflowToolObservation[];
+	verificationStatus?: "verified" | "unverified" | undefined;
+	warnings?: string[] | undefined;
 	text?: string | undefined;
 	sourcePhaseId?: WorkflowPhaseId | undefined;
 	blockedReason?: string | undefined;

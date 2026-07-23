@@ -32,6 +32,10 @@ import { withProviderUsageContext } from "../../usage/provider-recorder.js";
 
 const MAX_WORKFLOW_WRITE_GUARD_RETRY_ATTEMPTS: number = 2;
 
+function collectWorkflowWarnings(outputs: WorkflowPhaseOutput[]): string[] {
+	return [...new Set(outputs.flatMap((output: WorkflowPhaseOutput): string[] => output.warnings ?? []))];
+}
+
 function stringifyWorkflowFailedChecks(value: unknown): string[] {
 	if (!Array.isArray(value)) {
 		return [];
@@ -506,6 +510,7 @@ export async function continueWorkflowExecution(
 		sendWorkflowTodoSnapshot(socket, requestId, session, plan, persistRequestId, phaseOutputs);
 
 		if (isFinalPhase) {
+			const warnings: string[] = collectWorkflowWarnings(phaseOutputs);
 			await appendChatTurnToSession(
 				session,
 				state.history,
@@ -523,7 +528,10 @@ export async function continueWorkflowExecution(
 				workflowId: plan.id,
 				requestId: persistRequestId,
 				sequence: session.workbenchActiveRun.sequence ?? session.workbenchActiveRunSequence,
-				title: plan.title
+				title: plan.title,
+				resultStatus: warnings.length > 0 ? "completed_with_warnings" : "completed",
+				verificationStatus: warnings.length > 0 ? "unverified" : "verified",
+				warnings
 			}, persistRequestId);
 
 			if (streamFinal) {

@@ -16,6 +16,7 @@ export type ToolExecutionContext = {
 	workspaceId?: string | undefined;
 	editorInstanceId?: string | undefined;
 	sessionId?: string | undefined;
+	requestId?: string | undefined;
 };
 
 export type ToolPhaseEligibility = "read" | "verify" | "write";
@@ -74,7 +75,6 @@ const DEFAULT_WORKFLOW_TOOL_NAMES: Record<WorkflowToolGroup, readonly string[]> 
 		CUSTOM_MCP_TOOLS_SENTINEL
 	],
 	verify: [
-		"mcp_terminal_run_command",
 		"mcp_godot_validate_scene_script_references",
 		"mcp_godot_lsp_get_file_diagnostics",
 		"mcp_terminal_get_capabilities",
@@ -82,6 +82,10 @@ const DEFAULT_WORKFLOW_TOOL_NAMES: Record<WorkflowToolGroup, readonly string[]> 
 	],
 	write: [
 		"mcp_image_generate",
+		"mcp_image_propose_import_to_workspace",
+		"mcp_image_import_to_workspace",
+		"mcp_image_replace_workspace_asset",
+		"mcp_terminal_run_command",
 		"mcp_workspace_propose_create_text_file",
 		"mcp_workspace_create_text_file",
 		"mcp_workspace_propose_overwrite_text_file",

@@ -67,7 +67,8 @@ test("provider config ignores legacy single-provider file and legacy keytar acco
 			workflowPlanner: null,
 			sessionTitle: null,
 			imageGeneration: null,
-			gitCommit: null
+			gitCommit: null,
+			commandReview: null
 		});
 		assert.equal(requestedAccounts.includes("deepseek_api_key"), false);
 		assert.equal(requestedAccounts.includes("provider:deepseek:api_key"), true);
@@ -266,7 +267,8 @@ test("provider config persists cross-provider task model routing", async (): Pro
 				workflowPlanner: { provider: "deepseek", model: "deepseek-v4-pro" },
 				sessionTitle: null,
 				imageGeneration: { provider: "openai", model: "gpt-image-1" },
-				gitCommit: { provider: "deepseek", model: "deepseek-v4-pro" }
+				gitCommit: { provider: "deepseek", model: "deepseek-v4-pro" },
+				commandReview: null
 			}
 		});
 
@@ -276,7 +278,8 @@ test("provider config persists cross-provider task model routing", async (): Pro
 			workflowPlanner: { provider: "deepseek", model: "deepseek-v4-pro" },
 			sessionTitle: null,
 			imageGeneration: { provider: "openai", model: "gpt-image-1" },
-			gitCommit: { provider: "deepseek", model: "deepseek-v4-pro" }
+			gitCommit: { provider: "deepseek", model: "deepseek-v4-pro" },
+			commandReview: null
 		});
 	});
 });

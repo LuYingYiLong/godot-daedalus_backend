@@ -5,6 +5,8 @@ import { isPlanSafeDynamicMcpToolName } from "./dynamic-mcp-tools.js";
 import { executeLlmToolWithIdempotency, getLlmToolExecutionIdentity } from "./tool-idempotency.js";
 import type { FileEditBatchDraft } from "./file-edit-snapshots.js";
 import type { ImageGenerationResult } from "../providers/image-generation.js";
+import { commandRequiresUserApproval, reviewWorkspaceCommand } from "./command-review.js";
+import { createTerminalCommandAuthorization, type TerminalCommandAuthorization } from "../mcp/terminal/authorization.js";
 
 export type PendingApproval = {
 	approvalId: string;
@@ -18,6 +20,7 @@ export type PendingApproval = {
 	workspaceId?: string | undefined;
 	editorInstanceId?: string | undefined;
 	sessionId?: string | undefined;
+	requestId?: string | undefined;
 	requiredConsent?: ToolRequiredConsent | undefined;
 };
 
@@ -74,8 +77,44 @@ export class ApprovalGateway {
 		llmToolName: string,
 		args: Record<string, unknown>,
 		toolCallId: string,
-		workspaceId?: string | undefined
+		workspaceId?: string | undefined,
+		context: { requestId?: string | undefined; sessionId?: string | undefined } = {}
 	): Promise<ApprovalDecision> {
+		if (this.mode === "auto-safe" && llmToolName === "mcp_terminal_run_command") {
+			const deterministicDecision: ApprovalDecision = evaluateToolCall(this.mode, llmToolName, args, workspaceId);
+			if (
+				deterministicDecision.action === "deny"
+				|| (
+					deterministicDecision.action === "request_approval"
+					&& deterministicDecision.requiredConsent !== undefined
+				)
+			) {
+				return deterministicDecision;
+			}
+			const hardRiskReason: string | null = commandRequiresUserApproval(args);
+			if (hardRiskReason !== null) {
+				return { action: "request_approval", reason: hardRiskReason };
+			}
+			const review = await reviewWorkspaceCommand({
+				toolCallId,
+				requestId: context.requestId,
+				sessionId: context.sessionId,
+				workspaceId,
+				commandLine: typeof args.commandLine === "string" ? args.commandLine : "",
+				cwd: typeof args.cwd === "string" ? args.cwd : undefined,
+				envKeys: args.env !== null && typeof args.env === "object" && !Array.isArray(args.env)
+					? Object.keys(args.env as Record<string, unknown>).sort()
+					: [],
+				reason: typeof args.reason === "string" ? args.reason : undefined
+			});
+			if (review.decision === "allow") {
+				return { action: "allow", review: review.audit };
+			}
+			if (review.decision === "deny") {
+				return { action: "deny", reason: review.reason, review: review.audit };
+			}
+			return { action: "request_approval", reason: review.reason, review: review.audit };
+		}
 		return evaluateToolCall(this.mode, llmToolName, args, workspaceId);
 	}
 
@@ -87,7 +126,8 @@ export class ApprovalGateway {
 		workspaceId?: string | undefined,
 		editorInstanceId?: string | undefined,
 		sessionId?: string | undefined,
-		requiredConsent?: ToolRequiredConsent | undefined
+		requiredConsent?: ToolRequiredConsent | undefined,
+		requestId?: string | undefined
 	): PendingApproval {
 		const executionScope: string = workspaceId ?? "workspace:none";
 		const executionFingerprint: string | undefined = getLlmToolExecutionIdentity(llmToolName, args, executionScope, workspaceId)?.fingerprint;
@@ -113,6 +153,7 @@ export class ApprovalGateway {
 			workspaceId,
 			editorInstanceId,
 			sessionId,
+			requestId,
 			requiredConsent
 		};
 
@@ -127,7 +168,25 @@ export class ApprovalGateway {
 			throw new Error(`Approval not found: ${approvalId}`);
 		}
 
-		const result = await executeLlmToolWithIdempotency(mcpHost, pending.llmToolName, pending.args, pending.workspaceId, pending.editorInstanceId, pending.sessionId);
+		const commandAuthorization: TerminalCommandAuthorization | undefined = pending.llmToolName === "mcp_terminal_run_command"
+			? createTerminalCommandAuthorization({
+				source: "user",
+				requestId: pending.requestId ?? pending.toolCallId,
+				toolCallId: pending.toolCallId,
+				workspaceId: pending.workspaceId,
+				args: pending.args
+			})
+			: undefined;
+		const result = await executeLlmToolWithIdempotency(
+			mcpHost,
+			pending.llmToolName,
+			pending.args,
+			pending.workspaceId,
+			pending.editorInstanceId,
+			pending.sessionId,
+			undefined,
+			commandAuthorization
+		);
 		this.pendingApprovals.delete(approvalId);
 		return { content: result.content, cached: result.reused, fileEditDraft: result.fileEditDraft, imageGeneration: result.imageGeneration };
 	}
@@ -187,7 +246,8 @@ export class ReadOnlyToolApprovalGateway extends ApprovalGateway {
 		_workspaceId?: string | undefined,
 		_editorInstanceId?: string | undefined,
 		_sessionId?: string | undefined,
-		_requiredConsent?: ToolRequiredConsent | undefined
+		_requiredConsent?: ToolRequiredConsent | undefined,
+		_requestId?: string | undefined
 	): PendingApproval {
 		throw new Error("只读上下文不允许触发人工审批。");
 	}

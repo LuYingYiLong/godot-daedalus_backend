@@ -70,7 +70,7 @@ export function registerWorkspaceTools(server: McpServer): void {
 			description: "List files under the active workspace. Paths are always workspace relative.",
 			inputSchema: listFilesSchema
 		},
-		async (input) => asJsonTextResult({ files: await service.listFiles(input) })
+		async (input) => asJsonTextResult(await service.listFilesDetailed(input))
 	);
 
 	server.registerTool(

@@ -728,9 +728,11 @@ test("deterministic verification gate accepts Godot check-only environment issue
 	);
 	const gatedOutcome = applyDeterministicVerificationGate(verifyPhase, outcome, [writeOutcome]);
 
-	assert.equal(gatedOutcome.status, "blocked");
-	assert.equal(gatedOutcome.failedChecks[0]?.code, "validation_environment_unavailable");
-	assert.match(gatedOutcome.blockedReason ?? "", /验证环境不可用/);
+	assert.equal(gatedOutcome.status, "completed");
+	assert.equal(gatedOutcome.verificationStatus, "unverified");
+	assert.equal(gatedOutcome.failedChecks.length, 0);
+	assert.equal(gatedOutcome.warnings?.some((warning: string): boolean => /godot\.check_only/iu.test(warning)), true);
+	assert.equal(gatedOutcome.blockedReason, undefined);
 });
 
 test("deterministic verification gate passes when required GDScript checks ran", (): void => {

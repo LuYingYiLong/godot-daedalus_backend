@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { terminalJobStore } from "../../terminal/job-store.js";
-import { runCommandWait, startCommandJob } from "../../terminal/process-runner.js";
+import { startCommandJob } from "../../terminal/process-runner.js";
 import {
 	BACKEND_DIR,
 	DEFAULT_JOB_TIMEOUT_MS,
@@ -11,19 +11,29 @@ import {
 	normalizeTimeoutMs,
 	normalizeWakeAfterMs
 } from "../../terminal/presets.js";
-import type { CommandPreset, TerminalCommandResult, TerminalJobRecord } from "../../terminal/types.js";
+import type { CommandPreset, TerminalJobRecord } from "../../terminal/types.js";
 import {
 	asJsonTextResult,
 	isPathInsideRoot,
 	projectRoot,
 	redactSensitivePaths
 } from "../context.js";
+import { inspectGodotExecutable, type GodotExecutableAvailability } from "../../../godot-executable.js";
 
 const GODOT_RUNTIME_TAIL_LINES: number = 200;
-const GODOT_VERSION_TIMEOUT_MS: number = 10_000;
 const PROJECT_DISCOVERY_LIMIT: number = 100;
 
 let activeRuntimeJobId: string | null = null;
+let cachedExecutableAvailability: { value: GodotExecutableAvailability; expiresAt: number } | null = null;
+
+async function getExecutableAvailability(): Promise<GodotExecutableAvailability> {
+	if (cachedExecutableAvailability !== null && cachedExecutableAvailability.expiresAt > Date.now()) {
+		return cachedExecutableAvailability.value;
+	}
+	const value: GodotExecutableAvailability = await inspectGodotExecutable(GODOT_EXECUTABLE);
+	cachedExecutableAvailability = { value, expiresAt: Date.now() + 5_000 };
+	return value;
+}
 
 function createRuntimePreset(name: string, description: string, command: string[], risk: "read" | "verify" | "write"): CommandPreset {
 	return {
@@ -119,6 +129,16 @@ async function startRuntimeJob(params: {
 	timeoutMs?: number | undefined;
 	wakeAfterMs?: number | undefined;
 }): Promise<Record<string, unknown>> {
+	const availability: GodotExecutableAvailability = await getExecutableAvailability();
+	if (availability.status !== "ready") {
+		return {
+			ok: false,
+			code: "godot_executable_unavailable",
+			environmentIssue: true,
+			error: availability.error,
+			godotExecutablePath: GODOT_EXECUTABLE
+		};
+	}
 	const existing: TerminalJobRecord | null = await getActiveRuntimeJob();
 	if (existing !== null) {
 		return {
@@ -201,18 +221,25 @@ export function registerRuntimeTools(server: McpServer): void {
 			description: "返回当前 Godot 可执行文件、项目路径和 active runtime job 状态。",
 			inputSchema: z.object({})
 		},
-		async () => asJsonTextResult({
-			ok: true,
-			godotExecutablePath: GODOT_EXECUTABLE,
-			godotProjectPath: projectRoot,
-			capabilities: {
-				runtimeLifecycle: true,
-				debugOutputTail: true,
-				headlessOperations: true,
-				projectDiscovery: true
-			},
-			activeJob: createRuntimeStatusJob(await getActiveRuntimeJob())
-		})
+		async () => {
+			const availability: GodotExecutableAvailability = await getExecutableAvailability();
+			return asJsonTextResult({
+				ok: availability.status === "ready",
+				godotExecutablePath: GODOT_EXECUTABLE,
+				godotExecutableStatus: availability.status,
+				godotExecutableVersion: availability.version,
+				error: availability.error,
+				environmentIssue: availability.status !== "ready",
+				godotProjectPath: projectRoot,
+				capabilities: {
+					runtimeLifecycle: availability.status === "ready",
+					debugOutputTail: true,
+					headlessOperations: availability.status === "ready",
+					projectDiscovery: true
+				},
+				activeJob: createRuntimeStatusJob(await getActiveRuntimeJob())
+			});
+		}
 	);
 
 	server.registerTool(
@@ -223,23 +250,12 @@ export function registerRuntimeTools(server: McpServer): void {
 			inputSchema: z.object({})
 		},
 		async () => {
-			const command: string[] = [GODOT_EXECUTABLE, "--version"];
-			const preset: CommandPreset = createRuntimePreset("godot.version", "Read Godot version", command, "read");
-			const result: TerminalCommandResult = await runCommandWait({
-				preset,
-				command,
-				cwd: projectRoot,
-				timeoutMs: GODOT_VERSION_TIMEOUT_MS,
-				godotProjectPath: projectRoot,
-				godotExecutablePath: GODOT_EXECUTABLE
-			});
+			const result: GodotExecutableAvailability = await getExecutableAvailability();
 			return asJsonTextResult({
-				ok: result.ok,
-				version: result.stdout.trim().split(/\r?\n/u)[0] ?? "",
-				exitCode: result.exitCode,
-				stdout: result.stdout,
-				stderr: result.stderr,
-				durationMs: result.durationMs,
+				ok: result.status === "ready",
+				version: result.version ?? "",
+				error: result.error,
+				environmentIssue: result.status !== "ready",
 				godotExecutablePath: GODOT_EXECUTABLE
 			});
 		}

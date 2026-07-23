@@ -95,8 +95,8 @@ export async function runWorkflowPhase(
 	let agentResult: ProviderAgentResult;
 	try {
 		agentResult = streamPhase
-			? await runProviderAgentStreaming(params, phaseOptions, history, fullSystemPrompt, mcpHost, session.approvalGateway, runtimePhase.allowedTools, onToolEvent, abortSignal, sceneViewEnricher.enricher, { workspaceId: session.activeWorkspace?.id, editorInstanceId: session.editorInstanceId, sessionId: session.sessionId })
-			: await runProviderAgent(params, phaseOptions, history, fullSystemPrompt, mcpHost, session.approvalGateway, runtimePhase.allowedTools, onToolEvent, abortSignal, sceneViewEnricher.enricher, { workspaceId: session.activeWorkspace?.id, editorInstanceId: session.editorInstanceId, sessionId: session.sessionId });
+			? await runProviderAgentStreaming(params, phaseOptions, history, fullSystemPrompt, mcpHost, session.approvalGateway, runtimePhase.allowedTools, onToolEvent, abortSignal, sceneViewEnricher.enricher, { workspaceId: session.activeWorkspace?.id, editorInstanceId: session.editorInstanceId, sessionId: session.sessionId, requestId: persistRequestId })
+			: await runProviderAgent(params, phaseOptions, history, fullSystemPrompt, mcpHost, session.approvalGateway, runtimePhase.allowedTools, onToolEvent, abortSignal, sceneViewEnricher.enricher, { workspaceId: session.activeWorkspace?.id, editorInstanceId: session.editorInstanceId, sessionId: session.sessionId, requestId: persistRequestId });
 	} catch (error: unknown) {
 		if (phase.toolGroup === "write" && isEmptyProviderResponseError(error)) {
 			agentResult = {

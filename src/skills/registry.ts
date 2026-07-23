@@ -118,7 +118,10 @@ const SCENE_WRITE_TOOLS: string[] = [
 ];
 
 const IMAGE_GENERATION_TOOLS: string[] = [
-	"mcp_image_generate"
+	"mcp_image_generate",
+	"mcp_image_propose_import_to_workspace",
+	"mcp_image_import_to_workspace",
+	"mcp_image_replace_workspace_asset"
 ];
 
 const skills: Record<SkillId, Skill> = {
@@ -173,7 +176,7 @@ const skills: Record<SkillId, Skill> = {
 	"image.gen": {
 		id: "image.gen",
 		name: "Image Generator",
-		description: "Generate images as Daedalus session attachments without writing to the workspace.",
+		description: "Generate session images and optionally import them into the active workspace.",
 		promptPath: "src/skills/builtin/image-gen/SKILL.md",
 		defaultPromptId: "godot.assistant",
 		allowedTools: [...IMAGE_GENERATION_TOOLS]

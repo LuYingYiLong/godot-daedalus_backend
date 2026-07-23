@@ -131,6 +131,52 @@ test("scene script reference validation accepts unique names, paths, and signal 
 	assert.deepEqual(result.errors, []);
 });
 
+test("scene script references resolve dollar paths from the script attachment node", (): void => {
+	const scene: string = [
+		"[gd_scene format=3]",
+		"",
+		"[node name=\"Main\" type=\"Node\"]",
+		"",
+		"[node name=\"GameManager\" type=\"Node\" parent=\".\"]",
+		"",
+		"[node name=\"WinLabel\" type=\"Label\" parent=\"GameManager\"]",
+		"",
+		"[node name=\"OtherLabel\" type=\"Label\" parent=\".\"]",
+		"unique_name_in_owner = true",
+		""
+	].join("\n");
+	const result = validateSceneScriptReferences(scene, {
+		GameManager: [
+			"extends Node",
+			"",
+			"func _ready() -> void:",
+			"\t$WinLabel.text = \"Won\"",
+			"\t%OtherLabel.hide()"
+		].join("\n")
+	});
+
+	assert.equal(result.ok, true);
+	assert.deepEqual(result.missingNodePaths, []);
+	assert.deepEqual(result.missingUniqueNames, []);
+});
+
+test("scene script references still report a missing child relative to a nested script node", (): void => {
+	const scene: string = [
+		"[gd_scene format=3]",
+		"",
+		"[node name=\"Main\" type=\"Node\"]",
+		"",
+		"[node name=\"GameManager\" type=\"Node\" parent=\".\"]",
+		""
+	].join("\n");
+	const result = validateSceneScriptReferences(scene, {
+		GameManager: "func _ready() -> void:\n\t$WinLabel.show()\n"
+	});
+
+	assert.equal(result.ok, false);
+	assert.deepEqual(result.missingNodePaths, ["GameManager: $WinLabel"]);
+});
+
 test("scene script reference validation ignores GDScript strings and comments", (): void => {
 	const scene: string = [
 		"[gd_scene format=3]",

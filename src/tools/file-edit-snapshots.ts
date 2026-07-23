@@ -41,8 +41,8 @@ type TrackedTarget = {
 	workspaceRoot: string;
 };
 
-function sha256(text: string): string {
-	return createHash("sha256").update(text, "utf8").digest("hex");
+function sha256(value: string | Buffer): string {
+	return createHash("sha256").update(value).digest("hex");
 }
 
 function isPathInsideRoot(absolutePath: string, rootPath: string): boolean {
@@ -99,6 +99,8 @@ function collectTrackedTargets(mcpHost: McpHost, workspaceRoot: string, llmToolN
 		case "mcp_workspace_replace_text_in_file":
 		case "mcp_workspace_replace_line_in_file":
 		case "mcp_workspace_delete_file":
+		case "mcp_image_import_to_workspace":
+		case "mcp_image_replace_workspace_asset":
 			addTarget(targets, workspaceRoot, args.relativePath);
 			break;
 		case "mcp_godot_set_project_setting":
@@ -142,7 +144,15 @@ async function readSnapshot(target: TrackedTarget): Promise<SnapshotRead> {
 				unavailableReason: "file_too_large"
 			};
 		}
-		const text: string = await readFile(target.absolutePath, "utf8");
+		const bytes: Buffer = await readFile(target.absolutePath);
+		if (bytes.includes(0)) {
+			return {
+				exists: true,
+				sha256: sha256(bytes),
+				unavailableReason: "binary_file"
+			};
+		}
+		const text: string = bytes.toString("utf8");
 		return {
 			exists: true,
 			text,

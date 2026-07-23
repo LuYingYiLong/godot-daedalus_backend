@@ -37,6 +37,18 @@ export type WorkspaceFileServiceOptions = {
 
 export type WorkspaceFileService = ReturnType<typeof createWorkspaceFileService>;
 
+export type WorkspaceListFilesInput = {
+	subdir?: string | undefined;
+	extensions?: string[] | undefined;
+	includeIgnored?: boolean | undefined;
+	limit?: number | undefined;
+};
+
+export type WorkspaceListFilesResult = {
+	files: string[];
+	directoryExists: boolean;
+};
+
 type ResolvedWorkspacePath = {
 	relativePath: string;
 	absolutePath: string;
@@ -172,15 +184,24 @@ export function createWorkspaceFileService(options: WorkspaceFileServiceOptions)
 		return fs.readFile(resolved.absolutePath, "utf8");
 	}
 
-	async function listFiles(input?: {
-		subdir?: string | undefined;
-		extensions?: string[] | undefined;
-		includeIgnored?: boolean | undefined;
-		limit?: number | undefined;
-	}): Promise<string[]> {
+	async function listFilesDetailed(input?: WorkspaceListFilesInput): Promise<WorkspaceListFilesResult> {
 		const start = input?.subdir === undefined
 			? { absolutePath: rootPath, relativePath: "" }
 			: await resolveReadPath(input.subdir);
+		try {
+			const startStat = await fs.stat(start.absolutePath);
+			if (!startStat.isDirectory()) {
+				throw new Error(`Not a directory: ${start.relativePath}`);
+			}
+		} catch (error: unknown) {
+			const code: string | undefined = error instanceof Error && "code" in error
+				? String((error as NodeJS.ErrnoException).code)
+				: undefined;
+			if (input?.subdir !== undefined && code === "ENOENT") {
+				return { files: [], directoryExists: false };
+			}
+			throw error;
+		}
 		const extensions: Set<string> | undefined = input?.extensions !== undefined && input.extensions.length > 0
 			? new Set(input.extensions.map((extension: string): string => extension.startsWith(".") ? extension : `.${extension}`))
 			: undefined;
@@ -218,7 +239,11 @@ export function createWorkspaceFileService(options: WorkspaceFileServiceOptions)
 
 		await walk(start.absolutePath);
 		results.sort();
-		return results;
+		return { files: results, directoryExists: true };
+	}
+
+	async function listFiles(input?: WorkspaceListFilesInput): Promise<string[]> {
+		return (await listFilesDetailed(input)).files;
 	}
 
 	async function searchText(input: {
@@ -442,6 +467,7 @@ export function createWorkspaceFileService(options: WorkspaceFileServiceOptions)
 	return {
 		rootPath,
 		listFiles,
+		listFilesDetailed,
 		searchText,
 		readTextFile,
 		validateNewTextFile,

@@ -5,7 +5,7 @@ import type { ProviderChatOptions } from "../providers/deepseek-client.js";
 import { appendApprovalEvent, readApprovalEvents } from "../session/session-store.js";
 import { createPersistedApprovalRequestedData, createRuntimePendingContinuation, foldPendingApprovalStates, mergeHydratedPendingApprovalStates, type PendingApprovalState } from "../session/approval-persistence.js";
 import type { WorkflowRunState, WorkflowToolObservation } from "../workflow/types.js";
-import { getToolPolicy } from "../tools/tool-policy.js";
+import { evaluateToolCall, getToolPolicy } from "../tools/tool-policy.js";
 import type { PendingApproval } from "../tools/approval-gateway.js";
 import { getLlmToolExecutionIdentity } from "../tools/tool-idempotency.js";
 import { resolveToolMapping } from "../tools/tool-mapping.js";
@@ -229,7 +229,12 @@ export async function validatePendingApprovalBeforeExecution(
 	mcpHost: McpHost,
 	pendingApproval: PendingApproval
 ): Promise<string | null> {
-	const decision = await session.approvalGateway.evaluate(pendingApproval.llmToolName, pendingApproval.args, pendingApproval.toolCallId, pendingApproval.workspaceId);
+	const decision = evaluateToolCall(
+		session.approvalGateway.getMode(),
+		pendingApproval.llmToolName,
+		pendingApproval.args,
+		pendingApproval.workspaceId
+	);
 	if (decision.action === "deny") {
 		return decision.reason;
 	}
@@ -367,6 +372,8 @@ export async function sendContinuedAgentResult(
 		runId,
 		requestId: pendingContinuation.requestId,
 		status: "done",
+		resultStatus: "completed",
+		warnings: [],
 		sequence: session.workbenchActiveRun.sequence ?? session.workbenchActiveRunSequence
 	}, pendingContinuation.requestId);
 	sendJson(socket, {

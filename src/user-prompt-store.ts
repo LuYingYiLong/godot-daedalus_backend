@@ -7,11 +7,14 @@ export type UserPromptConfig = {
 	updatedAt: string;
 	gitCommitPrompt: string;
 	gitCommitUpdatedAt: string;
+	commandReviewPrompt: string;
+	commandReviewUpdatedAt: string;
 };
 
 export type UserPromptConfigPatch = {
 	prompt?: string | undefined;
 	gitCommitPrompt?: string | undefined;
+	commandReviewPrompt?: string | undefined;
 };
 
 const EMPTY_USER_PROMPT: UserPromptConfig = {
@@ -19,7 +22,9 @@ const EMPTY_USER_PROMPT: UserPromptConfig = {
 	prompt: "",
 	updatedAt: "",
 	gitCommitPrompt: "",
-	gitCommitUpdatedAt: ""
+	gitCommitUpdatedAt: "",
+	commandReviewPrompt: "",
+	commandReviewUpdatedAt: ""
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -41,7 +46,9 @@ export async function getUserPromptConfig(): Promise<UserPromptConfig> {
 		prompt: normalizePrompt(value.prompt),
 		updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : "",
 		gitCommitPrompt: typeof value.gitCommitPrompt === "string" ? normalizePrompt(value.gitCommitPrompt) : "",
-		gitCommitUpdatedAt: typeof value.gitCommitUpdatedAt === "string" ? value.gitCommitUpdatedAt : ""
+		gitCommitUpdatedAt: typeof value.gitCommitUpdatedAt === "string" ? value.gitCommitUpdatedAt : "",
+		commandReviewPrompt: typeof value.commandReviewPrompt === "string" ? normalizePrompt(value.commandReviewPrompt) : "",
+		commandReviewUpdatedAt: typeof value.commandReviewUpdatedAt === "string" ? value.commandReviewUpdatedAt : ""
 	};
 }
 
@@ -61,7 +68,9 @@ export async function setUserPromptConfig(patch: UserPromptConfigPatch): Promise
 		prompt: patch.prompt === undefined ? current.prompt : normalizePrompt(patch.prompt),
 		updatedAt: patch.prompt === undefined ? current.updatedAt : now,
 		gitCommitPrompt: patch.gitCommitPrompt === undefined ? current.gitCommitPrompt : normalizePrompt(patch.gitCommitPrompt),
-		gitCommitUpdatedAt: patch.gitCommitPrompt === undefined ? current.gitCommitUpdatedAt : now
+		gitCommitUpdatedAt: patch.gitCommitPrompt === undefined ? current.gitCommitUpdatedAt : now,
+		commandReviewPrompt: patch.commandReviewPrompt === undefined ? current.commandReviewPrompt : normalizePrompt(patch.commandReviewPrompt),
+		commandReviewUpdatedAt: patch.commandReviewPrompt === undefined ? current.commandReviewUpdatedAt : now
 	};
 	await writeJsonFileAtomic(getUserPromptConfigPath(), config);
 	return config;

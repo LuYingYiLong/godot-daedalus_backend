@@ -25,7 +25,7 @@ export type PresetRunInput = {
 	tailLines?: number | undefined;
 };
 
-export type TerminalSandboxMode = "os-sandbox" | "full-trust" | "preset";
+export type TerminalSandboxMode = "os-sandbox" | "approved-unsandboxed" | "full-trust" | "preset";
 
 export type CommandRunInput = {
 	commandLine: string;
@@ -53,6 +53,7 @@ export type TerminalCommandResult = {
 	workspaceRoot?: string | undefined;
 	trusted?: boolean | undefined;
 	consentText?: string | undefined;
+	authorizationSource?: "model" | "user" | undefined;
 	stdout: string;
 	stderr: string;
 	durationMs: number;
@@ -90,6 +91,7 @@ export type TerminalJobRecord = {
 	workspaceRoot?: string | undefined;
 	trusted?: boolean | undefined;
 	consentText?: string | undefined;
+	authorizationSource?: "model" | "user" | undefined;
 	error?: string | undefined;
 };
 

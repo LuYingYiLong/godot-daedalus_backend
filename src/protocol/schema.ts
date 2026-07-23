@@ -49,7 +49,8 @@ const providerModelRoutingSchema = z.object({
 	workflowPlanner: providerTaskModelRefSchema.nullable().optional(),
 	sessionTitle: providerTaskModelRefSchema.nullable().optional(),
 	imageGeneration: providerTaskModelRefSchema.nullable().optional(),
-	gitCommit: providerTaskModelRefSchema.nullable().optional()
+	gitCommit: providerTaskModelRefSchema.nullable().optional(),
+	commandReview: providerTaskModelRefSchema.nullable().optional()
 });
 
 const sessionUiMetadataParamsSchema = z.object({
@@ -438,6 +439,7 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		params: z.object({
 			prompt: z.string().max(20000).optional(),
 			gitCommitPrompt: z.string().max(20000).optional(),
+			commandReviewPrompt: z.string().max(20000).optional(),
 		}),
 	}),
 	z.object({
@@ -452,6 +454,7 @@ export const clientRequestSchema = z.discriminatedUnion("method", [
 		method: z.literal("generalSettings.update"),
 		params: z.object({
 			autoExpandTodoList: z.boolean().optional(),
+			godotExecutablePath: z.string().min(1).nullable().optional(),
 		}),
 	}),
 	z.object({

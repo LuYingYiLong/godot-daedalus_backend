@@ -709,6 +709,13 @@ function formatSignalMethodReference(nodePath: string, method: string): string {
 	return nodePath === "." ? `.${method}` : `${nodePath}.${method}`;
 }
 
+function resolveScriptNodeReferencePath(data: TscnData, scriptNodePath: string, referencedPath: string): string {
+	const relativeScriptNodePath: string = toSceneRelativeNodePath(data, scriptNodePath);
+	return relativeScriptNodePath === "."
+		? referencedPath
+		: `${relativeScriptNodePath}/${referencedPath}`;
+}
+
 export function validateSceneScriptReferences(
 	sceneContent: string,
 	scriptContentByNodePath: Record<string, string> = {}
@@ -729,7 +736,8 @@ export function validateSceneScriptReferences(
 		}
 
 		for (const referencedPath of collectRegexMatches(referenceContent, /\$([A-Za-z_][A-Za-z0-9_\/]*)/g)) {
-			if (findNodeInTscn(data, referencedPath) === null) {
+			const resolvedPath: string = resolveScriptNodeReferencePath(data, nodePath, referencedPath);
+			if (findNodeInTscn(data, resolvedPath) === null) {
 				missingNodePaths.push(`${nodePath}: $${referencedPath}`);
 			}
 		}

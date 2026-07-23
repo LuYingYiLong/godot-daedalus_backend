@@ -1,7 +1,7 @@
 import type { ChatCompletionMessageToolCall, ChatCompletionToolMessageParam } from "openai/resources/chat/completions";
 import type { McpHost } from "../mcp/mcp-host.js";
 import { type ApprovalGateway, type PendingApproval } from "./approval-gateway.js";
-import type { ToolRequiredConsent } from "./tool-policy.js";
+import type { ToolRequiredConsent, ToolReviewAudit } from "./tool-policy.js";
 import { describeToolEvent, type ToolEventDisplay } from "./tool-event-describer.js";
 import { executeLlmToolWithIdempotency } from "./tool-idempotency.js";
 import type { IdempotentToolExecutionResult } from "./tool-idempotency.js";
@@ -11,6 +11,7 @@ import type { ImageGenerationResult } from "../providers/image-generation.js";
 import type { ToolExecutionContext } from "./tool-catalog.js";
 import { logger } from "../logger.js";
 import { getApprovalReasonFromArgs, stripApprovalReasonArg } from "./approval-reason.js";
+import { createTerminalCommandAuthorization, type TerminalCommandAuthorization } from "../mcp/terminal/authorization.js";
 
 export type ToolEvent =
 	| { type: "ai.delta"; text: string }
@@ -20,6 +21,7 @@ export type ToolEvent =
 	| ({ type: "tool.progress"; step: number; toolCallId: string; toolName: string } & ToolProgressUpdate)
 	| ({ type: "tool.result"; step: number; toolCallId: string; toolName: string; resultChars: number; truncated: boolean; cached?: boolean; fileEditDraft?: FileEditBatchDraft | undefined; imageGeneration?: ImageGenerationResult | undefined } & ParsedToolResultSummary)
 	| { type: "tool.error"; step: number; toolCallId: string; toolName: string; message: string }
+	| { type: "tool.reviewed"; step: number; toolCallId: string; toolName: string; decision: "allow" | "ask_user" | "deny"; reason: string; authorizationSource: ToolReviewAudit["source"]; provider?: string | undefined; model?: string | undefined }
 	| ({ type: "tool.approval_required"; step: number; toolCallId: string; toolName: string; approvalId: string; reason: string; args: Record<string, unknown>; requiredConsent?: ToolRequiredConsent | undefined } & ToolEventDisplay);
 
 export type OnToolEvent = (event: ToolEvent) => void;
@@ -37,6 +39,73 @@ export type ToolResultEnricher = (input: {
 	result: IdempotentToolExecutionResult;
 	onProgress?: ((progress: ToolProgressUpdate) => void) | undefined;
 }) => Promise<IdempotentToolExecutionResult>;
+
+type RuntimeCapabilityKind = "godot_cli" | "godot_lsp" | "godot_dap";
+
+const unavailableRuntimeCapabilities: Map<string, Map<RuntimeCapabilityKind, { reason: string; expiresAt: number }>> = new Map();
+const RUNTIME_CAPABILITY_CACHE_TTL_MS: number = 30 * 60 * 1000;
+
+function getRuntimeCapabilityKind(toolName: string, args: Record<string, unknown>): RuntimeCapabilityKind | null {
+	if (toolName.startsWith("mcp_godot_lsp_")) {
+		return "godot_lsp";
+	}
+	if (toolName.startsWith("mcp_godot_dap_")) {
+		return "godot_dap";
+	}
+	if (
+		toolName === "mcp_godot_launch_editor"
+		|| toolName === "mcp_godot_run_project"
+		|| (
+			(toolName === "mcp_terminal_run_safe_preset" || toolName === "mcp_terminal_run_write_preset")
+			&& typeof args.presetName === "string"
+			&& args.presetName.startsWith("godot.")
+		)
+	) {
+		return "godot_cli";
+	}
+	return null;
+}
+
+function getCachedRuntimeCapabilityFailure(
+	requestId: string | undefined,
+	kind: RuntimeCapabilityKind | null
+): string | null {
+	if (requestId === undefined || kind === null) {
+		return null;
+	}
+	const cached = unavailableRuntimeCapabilities.get(requestId)?.get(kind);
+	if (cached === undefined) {
+		return null;
+	}
+	if (cached.expiresAt <= Date.now()) {
+		unavailableRuntimeCapabilities.get(requestId)?.delete(kind);
+		return null;
+	}
+	return cached.reason;
+}
+
+function cacheRuntimeCapabilityFailure(
+	requestId: string | undefined,
+	kind: RuntimeCapabilityKind | null,
+	reason: string
+): void {
+	if (requestId === undefined || kind === null) {
+		return;
+	}
+	if (unavailableRuntimeCapabilities.size > 500) {
+		for (const [cachedRequestId, capabilities] of unavailableRuntimeCapabilities) {
+			if ([...capabilities.values()].every((item): boolean => item.expiresAt <= Date.now())) {
+				unavailableRuntimeCapabilities.delete(cachedRequestId);
+			}
+		}
+	}
+	const capabilities = unavailableRuntimeCapabilities.get(requestId) ?? new Map();
+	capabilities.set(kind, {
+		reason,
+		expiresAt: Date.now() + RUNTIME_CAPABILITY_CACHE_TTL_MS
+	});
+	unavailableRuntimeCapabilities.set(requestId, capabilities);
+}
 
 export class ToolApprovalRequiredError extends Error {
 	readonly pendingApproval: PendingApproval;
@@ -94,7 +163,23 @@ async function executeSingleToolCall(
 	const workspaceId: string | undefined = toolContext?.workspaceId ?? mcpHost.getActiveWorkspaceId();
 	const executionArgs: Record<string, unknown> = stripApprovalReasonArg(argsParsed);
 	const approvalReason: string = getApprovalReasonFromArgs(argsParsed, "");
-	const decision = await gateway.evaluate(functionName, executionArgs, toolCall.id, workspaceId);
+	const decision = await gateway.evaluate(functionName, executionArgs, toolCall.id, workspaceId, {
+		requestId: toolContext?.requestId,
+		sessionId: toolContext?.sessionId
+	});
+	if (decision.review !== undefined) {
+		onEvent?.({
+			type: "tool.reviewed",
+			step,
+			toolCallId: toolCall.id,
+			toolName: functionName,
+			decision: decision.review.decision,
+			reason: decision.review.reason,
+			authorizationSource: decision.review.source,
+			provider: decision.review.provider,
+			model: decision.review.model
+		});
+	}
 	logger.debug("tool", "policy_evaluated", {
 		toolCallId: toolCall.id,
 		toolName: functionName,
@@ -121,7 +206,17 @@ async function executeSingleToolCall(
 
 	if (decision.action === "request_approval") {
 		const reason: string = approvalReason.length > 0 ? approvalReason : decision.reason;
-		const pending = gateway.requestApproval(functionName, executionArgs, toolCall.id, reason, workspaceId, toolContext?.editorInstanceId, toolContext?.sessionId, decision.requiredConsent);
+		const pending = gateway.requestApproval(
+			functionName,
+			executionArgs,
+			toolCall.id,
+			reason,
+			workspaceId,
+			toolContext?.editorInstanceId,
+			toolContext?.sessionId,
+			decision.requiredConsent,
+			toolContext?.requestId
+		);
 		logger.info("tool", "approval_required", {
 			toolCallId: toolCall.id,
 			toolName: functionName,
@@ -157,6 +252,38 @@ async function executeSingleToolCall(
 		});
 	}
 
+	const runtimeCapabilityKind: RuntimeCapabilityKind | null = getRuntimeCapabilityKind(functionName, executionArgs);
+	const cachedCapabilityFailure: string | null = getCachedRuntimeCapabilityFailure(toolContext?.requestId, runtimeCapabilityKind);
+	if (cachedCapabilityFailure !== null) {
+		const content: string = JSON.stringify({
+			ok: false,
+			code: "runtime_capability_unavailable_cached",
+			environmentIssue: true,
+			error: cachedCapabilityFailure,
+			cached: true
+		});
+		onEvent?.({
+			type: "tool.result",
+			step,
+			toolCallId: toolCall.id,
+			toolName: functionName,
+			resultChars: content.length,
+			truncated: false,
+			cached: true,
+			ok: false,
+			validationStatus: "failed",
+			environmentIssue: true,
+			summary: cachedCapabilityFailure,
+			failedChecks: [cachedCapabilityFailure],
+			artifactRefs: []
+		});
+		return {
+			role: "tool",
+			tool_call_id: toolCall.id,
+			content
+		};
+	}
+
 	const startedAtMs: number = Date.now();
 	logger.info("tool", "call_started", {
 		toolCallId: toolCall.id,
@@ -169,7 +296,28 @@ async function executeSingleToolCall(
 		if (abortSignal?.aborted) {
 			throw new Error("Request cancelled");
 		}
-		const rawResult = await executeLlmToolWithIdempotency(mcpHost, functionName, executionArgs, workspaceId, toolContext?.editorInstanceId, toolContext?.sessionId, abortSignal);
+		const commandAuthorization: TerminalCommandAuthorization | undefined = functionName === "mcp_terminal_run_command" && decision.review?.decision === "allow"
+			? createTerminalCommandAuthorization({
+				source: "model",
+				requestId: toolContext?.requestId ?? toolCall.id,
+				toolCallId: toolCall.id,
+				workspaceId,
+				args: executionArgs
+			})
+			: undefined;
+		const rawResult = await executeLlmToolWithIdempotency(
+			mcpHost,
+			functionName,
+			executionArgs,
+			workspaceId,
+			toolContext?.editorInstanceId,
+			toolContext?.sessionId,
+			abortSignal,
+			commandAuthorization
+		);
+		if (abortSignal?.aborted) {
+			throw new Error("Request cancelled");
+		}
 		const result: IdempotentToolExecutionResult = enricher === undefined
 			? rawResult
 			: await enricher({
@@ -188,7 +336,17 @@ async function executeSingleToolCall(
 						});
 					}
 			});
+		if (abortSignal?.aborted) {
+			throw new Error("Request cancelled");
+		}
 		const parsedSummary: ParsedToolResultSummary = parseToolResultSummary(functionName, executionArgs, result.content);
+		if (parsedSummary.environmentIssue === true) {
+			cacheRuntimeCapabilityFailure(
+				toolContext?.requestId,
+				runtimeCapabilityKind,
+				parsedSummary.summary ?? `${functionName} is unavailable in the current runtime environment.`
+			);
+		}
 		logger.info("tool", "call_finished", {
 			toolCallId: toolCall.id,
 			toolName: functionName,

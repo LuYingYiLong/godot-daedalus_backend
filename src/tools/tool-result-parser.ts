@@ -78,6 +78,9 @@ function isDiagnosticsTool(toolName: string): boolean {
 }
 
 function isDiagnosticsEnvironmentIssue(toolName: string, record: Record<string, unknown>): boolean {
+	if (record.environmentIssue === true) {
+		return true;
+	}
 	if (!isDiagnosticsTool(toolName)) {
 		return false;
 	}
@@ -196,8 +199,9 @@ function parseTerminalSummary(record: Record<string, unknown>, args: Record<stri
 	const exitCode: number | null | undefined = getNumberOrNull(record.exitCode);
 	const resourcePath: string | undefined = getString(record.resourcePath) ?? getString(args.resourcePath);
 	const failureMessage: string = createFailureMessage(record, `exitCode=${String(exitCode)}`);
-	const environmentIssue: boolean = presetName.startsWith("godot.")
-		&& (status === "spawn_error" || GODOT_TERMINAL_ENVIRONMENT_ERROR_PATTERN.test(failureMessage));
+	const environmentIssue: boolean = record.environmentIssue === true
+		|| (presetName.startsWith("godot.")
+			&& (status === "spawn_error" || GODOT_TERMINAL_ENVIRONMENT_ERROR_PATTERN.test(failureMessage)));
 	if (status === "running") {
 		return {
 			ok: undefined,

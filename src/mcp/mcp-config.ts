@@ -12,7 +12,7 @@ const defaultWs = getDefaultWorkspace();
 const DEFAULT_GODOT_PROJECT_PATH: string | undefined = process.env.GODOT_PROJECT_PATH ?? defaultWs?.rootPath;
 const DEFAULT_GODOT_EXECUTABLE_PATH: string | undefined = process.env.GODOT_EXECUTABLE_PATH ?? defaultWs?.godotExecutablePath;
 
-export function buildGlobalMcpServerConfigs(): McpServerConfig[] {
+export function buildGlobalMcpServerConfigs(defaultGodotExecutablePath?: string | undefined): McpServerConfig[] {
 	const terminalEnv: Record<string, string> = {
 		BACKEND_DIR: process.cwd()
 	};
@@ -21,8 +21,9 @@ export function buildGlobalMcpServerConfigs(): McpServerConfig[] {
 	if (DEFAULT_GODOT_PROJECT_PATH !== undefined) {
 		terminalEnv.GODOT_PROJECT_PATH = DEFAULT_GODOT_PROJECT_PATH;
 	}
-	if (DEFAULT_GODOT_EXECUTABLE_PATH !== undefined) {
-		terminalEnv.GODOT_EXECUTABLE_PATH = DEFAULT_GODOT_EXECUTABLE_PATH;
+	const effectiveExecutablePath: string | undefined = defaultGodotExecutablePath ?? DEFAULT_GODOT_EXECUTABLE_PATH;
+	if (effectiveExecutablePath !== undefined) {
+		terminalEnv.GODOT_EXECUTABLE_PATH = effectiveExecutablePath;
 	}
 
 	return [
@@ -48,7 +49,7 @@ export function buildGlobalMcpServerConfigs(): McpServerConfig[] {
 	];
 }
 
-export function buildMcpServerConfigs(workspace?: WorkspaceConfig): McpServerConfig[] {
+export function buildMcpServerConfigs(workspace?: WorkspaceConfig, defaultGodotExecutablePath?: string | undefined): McpServerConfig[] {
 	const projectPath: string | undefined = workspace?.rootPath;
 
 	if (!projectPath) {
@@ -70,6 +71,7 @@ export function buildMcpServerConfigs(workspace?: WorkspaceConfig): McpServerCon
 
 	const isGodotProject: boolean = existsSync(join(projectPath, "project.godot"));
 	if (isGodotProject) {
+		const godotExecutablePath: string | undefined = workspace?.godotExecutablePath ?? defaultGodotExecutablePath;
 		configs.push({
 			id: "godot",
 			name: "Godot Project MCP",
@@ -77,7 +79,8 @@ export function buildMcpServerConfigs(workspace?: WorkspaceConfig): McpServerCon
 			command: "npx",
 			args: ["tsx", "src/mcp/godot/server.ts"],
 			env: {
-				GODOT_PROJECT_PATH: projectPath
+				GODOT_PROJECT_PATH: projectPath,
+				...(godotExecutablePath === undefined ? {} : { GODOT_EXECUTABLE_PATH: godotExecutablePath })
 			}
 		});
 	}

@@ -15,6 +15,8 @@ import {
 } from "../tools/dynamic-mcp-tools.js";
 import { getCurrentMcpWorkspaceId } from "./request-context.js";
 import { getApprovalMode } from "../approval-settings-store.js";
+import type { TerminalCommandAuthorization } from "./terminal/authorization.js";
+import { resolveEffectiveGodotExecutable } from "../godot-executable-resolver.js";
 import { logger } from "../logger.js";
 
 const CUSTOM_MCP_CONNECT_TIMEOUT_MS: number = 30_000;
@@ -130,8 +132,9 @@ export class McpHost {
 	}
 
 	private async initializeWorkspace(workspace: WorkspaceConfig): Promise<void> {
+		const effectiveGodot = await resolveEffectiveGodotExecutable(workspace.godotExecutablePath);
 		const configs: McpServerConfig[] = [
-			...buildMcpServerConfigs(workspace)
+			...buildMcpServerConfigs(workspace, effectiveGodot.path)
 		];
 		if (configs.length === 0) {
 			throw new Error(`MCP workspace has no project path: ${workspace.id}`);
@@ -277,7 +280,8 @@ export class McpHost {
 		const sessions: Map<string, McpSession> = new Map();
 
 		try {
-			for (const config of buildGlobalMcpServerConfigs()) {
+			const effectiveGodot = await resolveEffectiveGodotExecutable();
+			for (const config of buildGlobalMcpServerConfigs(effectiveGodot.path)) {
 				const session: McpSession = new McpSession(config);
 				await this.connectSession(config, session);
 				sessions.set(config.id, session);
@@ -296,6 +300,38 @@ export class McpHost {
 
 		this.globalInternalSessions = sessions;
 		this.globalInternalInitialized = true;
+	}
+
+	async refreshGodotExecutableConfiguration(): Promise<void> {
+		const activeWorkspaceId: string | undefined = this.activeWorkspaceId;
+		const workspaceIds: string[] = Array.from(this.workspaceSessions.keys());
+		for (const session of this.globalInternalSessions.values()) {
+			await session.close();
+		}
+		this.globalInternalSessions.clear();
+		this.globalInternalInitialized = false;
+
+		for (const workspaceId of workspaceIds) {
+			const sessions: Map<string, McpSession> | undefined = this.workspaceSessions.get(workspaceId);
+			if (sessions !== undefined) {
+				for (const session of sessions.values()) {
+					await session.close();
+				}
+			}
+			this.workspaceSessions.delete(workspaceId);
+			const workspace: WorkspaceConfig | undefined = findWorkspace(workspaceId);
+			if (workspace !== undefined) {
+				await this.ensureWorkspace(workspace);
+			}
+		}
+		await this.ensureGlobalInternalServers();
+		if (activeWorkspaceId !== undefined) {
+			const activeWorkspace: WorkspaceConfig | undefined = findWorkspace(activeWorkspaceId);
+			if (activeWorkspace !== undefined) {
+				this.activeWorkspaceId = activeWorkspaceId;
+				this.diagnosticsBridge.setWorkspace(activeWorkspace);
+			}
+		}
 	}
 
 	async ensureGlobalCustomServers(): Promise<void> {
@@ -536,20 +572,26 @@ export class McpHost {
 			.map(([_key, status]: [string, CustomMcpServerRuntimeStatus]): CustomMcpServerRuntimeStatus => status);
 	}
 
-	private async createTerminalArgs(args: Record<string, unknown>, workspaceId?: string | undefined): Promise<Record<string, unknown>> {
+	private async createTerminalArgs(
+		args: Record<string, unknown>,
+		workspaceId?: string | undefined,
+		commandAuthorization?: TerminalCommandAuthorization | undefined
+	): Promise<Record<string, unknown>> {
 		const resolvedWorkspaceId: string | undefined = workspaceId ?? getCurrentMcpWorkspaceId() ?? this.activeWorkspaceId;
 		const approvalMode = await getApprovalMode();
 		if (resolvedWorkspaceId === undefined) {
 			return {
 				...args,
-				__daedalusApprovalMode: approvalMode
+				__daedalusApprovalMode: approvalMode,
+				__daedalusCommandAuthorization: commandAuthorization
 			};
 		}
 
 		return {
 			...args,
 			__daedalusWorkspaceId: resolvedWorkspaceId,
-			__daedalusApprovalMode: approvalMode
+			__daedalusApprovalMode: approvalMode,
+			__daedalusCommandAuthorization: commandAuthorization
 		};
 	}
 
@@ -574,11 +616,15 @@ export class McpHost {
 		name: string,
 		args: Record<string, unknown>,
 		workspaceId?: string | undefined,
-		editorInstanceId?: string | undefined
+		editorInstanceId?: string | undefined,
+		commandAuthorization?: TerminalCommandAuthorization | undefined
 	) {
 		if (serverId === TERMINAL_MCP_SERVER_ID) {
 			await this.ensureGlobalInternalServers();
-			return this.getSession(serverId, workspaceId).callTool(name, await this.createTerminalArgs(args, workspaceId));
+			return this.getSession(serverId, workspaceId).callTool(
+				name,
+				await this.createTerminalArgs(args, workspaceId, commandAuthorization)
+			);
 		}
 
 		if (serverId === GODOT_EDITOR_SERVER_ID) {

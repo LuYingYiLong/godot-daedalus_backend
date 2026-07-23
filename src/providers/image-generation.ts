@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import type { Image, ImageGenerateParamsNonStreaming, ImagesResponse } from "openai/resources/images";
 import type { ProviderId } from "../protocol/types.js";
 import type { GeneratedImageArtifactMetadata } from "../session/session-attachments.js";
-import { readGeneratedImageDataUrl, readImageAttachmentDataUrl, saveGeneratedImageArtifact } from "../session/session-attachments.js";
+import { deleteGeneratedImageArtifact, readGeneratedImageDataUrl, readImageAttachmentDataUrl, saveGeneratedImageArtifact } from "../session/session-attachments.js";
 import { SUPPORTED_IMAGE_MIME_TYPES } from "../protocol/image-attachments.js";
 import { getProviderFallbackModels } from "./provider-registry.js";
 import type { ProviderChatOptions, ProviderModelInfo } from "./provider-types.js";
@@ -28,6 +28,15 @@ export type ImageGenerationResult = {
 	model: string;
 	artifacts: GeneratedImageArtifactMetadata[];
 	sourceImages?: ImageGenerationSourceImageRef[] | undefined;
+};
+
+export type ImageGenerationAvailability = {
+	available: boolean;
+	provider: ProviderId | null;
+	model: string | null;
+	supportsGeneration: boolean;
+	supportsEdit: boolean;
+	reason: string | null;
 };
 
 export type ImageGenerationSourceImageRef = {
@@ -228,6 +237,33 @@ function modelSupportsImageEdit(provider: ProviderId, modelId: string): boolean 
 	return fallback?.capabilities.imageEdit === true;
 }
 
+export async function resolveImageGenerationAvailability(): Promise<ImageGenerationAvailability> {
+	try {
+		const resolved = await resolveConfiguredProviderTaskModelOptions("imageGeneration");
+		const supportsGeneration: boolean = modelSupportsImageGeneration(resolved.provider, resolved.model);
+		const supportsEdit: boolean = modelSupportsImageEdit(resolved.provider, resolved.model);
+		return {
+			available: supportsGeneration || supportsEdit,
+			provider: resolved.provider,
+			model: resolved.model,
+			supportsGeneration,
+			supportsEdit,
+			reason: supportsGeneration || supportsEdit
+				? null
+				: `Model ${resolved.provider}/${resolved.model} does not support image generation or editing.`
+		};
+	} catch (error: unknown) {
+		return {
+			available: false,
+			provider: null,
+			model: null,
+			supportsGeneration: false,
+			supportsEdit: false,
+			reason: error instanceof Error ? error.message : "Image generation is not configured."
+		};
+	}
+}
+
 function createImageEditUnsupportedMessage(provider: ProviderId, modelId: string): string {
 	if (provider === "zhipu") {
 		return `Model ${provider}/${modelId} is configured for text-to-image only. Zhipu's official image API does not currently expose a documented image-to-image request shape.`;
@@ -297,6 +333,57 @@ function createPrompt(input: ImageGenerationInput): string {
 	return segments.join("\n");
 }
 
+type ImageGenerationRuntime = {
+	abortSignal?: AbortSignal | undefined;
+	savedArtifacts: GeneratedImageArtifactMetadata[];
+};
+
+function throwIfImageGenerationAborted(runtime: ImageGenerationRuntime): void {
+	if (runtime.abortSignal?.aborted) {
+		throw new Error("Request cancelled");
+	}
+}
+
+async function saveGeneratedImage(
+	runtime: ImageGenerationRuntime,
+	input: Parameters<typeof saveGeneratedImageArtifact>[0]
+): Promise<GeneratedImageArtifactMetadata> {
+	throwIfImageGenerationAborted(runtime);
+	const artifact: GeneratedImageArtifactMetadata = await saveGeneratedImageArtifact(input);
+	runtime.savedArtifacts.push(artifact);
+	throwIfImageGenerationAborted(runtime);
+	return artifact;
+}
+
+type DownloadedGeneratedImage = {
+	bytes: Buffer;
+	mimeType: string;
+	revisedPrompt?: string | undefined;
+};
+
+async function persistDownloadedImages(
+	runtime: ImageGenerationRuntime,
+	options: ProviderChatOptions,
+	input: ImageGenerationInput,
+	model: string,
+	images: readonly DownloadedGeneratedImage[]
+): Promise<GeneratedImageArtifactMetadata[]> {
+	throwIfImageGenerationAborted(runtime);
+	const artifacts: GeneratedImageArtifactMetadata[] = [];
+	for (const image of images) {
+		artifacts.push(await saveGeneratedImage(runtime, {
+			sessionId: input.sessionId,
+			bytes: image.bytes,
+			mimeType: image.mimeType,
+			provider: options.provider,
+			model,
+			prompt: input.prompt,
+			revisedPrompt: image.revisedPrompt
+		}));
+	}
+	return artifacts;
+}
+
 function guessMimeType(response: ImagesResponse, image: Image): string {
 	if (response.output_format === "jpeg") {
 		return "image/jpeg";
@@ -314,28 +401,28 @@ function guessMimeType(response: ImagesResponse, image: Image): string {
 	return "image/png";
 }
 
-async function readImageBytes(response: ImagesResponse, image: Image): Promise<Buffer> {
+async function readImageBytes(response: ImagesResponse, image: Image, abortSignal?: AbortSignal | undefined): Promise<Buffer> {
 	if (typeof image.b64_json === "string" && image.b64_json.length > 0) {
 		return Buffer.from(image.b64_json, "base64");
 	}
 	if (typeof image.url === "string") {
-		return readImageUrlBytes(image.url);
+		return readImageUrlBytes(image.url, abortSignal);
 	}
 	throw new ImageGenerationError("image_generation_failed", "Provider did not return image data.");
 }
 
-async function readImageUrlBytes(url: string): Promise<Buffer> {
+async function readImageUrlBytes(url: string, abortSignal?: AbortSignal | undefined): Promise<Buffer> {
 	if (url.length === 0) {
 		throw new ImageGenerationError("image_generation_failed", "Provider did not return image data.");
 	}
-	const imageResponse: Response = await fetch(url);
+	const imageResponse: Response = await fetch(url, { signal: abortSignal ?? null });
 	if (!imageResponse.ok) {
 		throw new ImageGenerationError("image_generation_failed", `Failed to download generated image: HTTP ${imageResponse.status}`);
 	}
 	return Buffer.from(await imageResponse.arrayBuffer());
 }
 
-async function generateOpenAIImages(options: ProviderChatOptions, input: ImageGenerationInput): Promise<ImageGenerationResult> {
+async function generateOpenAIImages(options: ProviderChatOptions, input: ImageGenerationInput, runtime: ImageGenerationRuntime): Promise<ImageGenerationResult> {
 	const model: string = options.model ?? "gpt-image-1";
 	const client: OpenAI = createOpenAIClient(options);
 	const response: ImagesResponse = await client.images.generate({
@@ -345,26 +432,18 @@ async function generateOpenAIImages(options: ProviderChatOptions, input: ImageGe
 		size: mapAspectRatioToOpenAIImageSize(input.aspectRatio ?? "1:1"),
 		output_format: "png",
 		stream: false
-	});
+	}, { signal: runtime.abortSignal });
 	const images: Image[] = response.data ?? [];
 	if (images.length === 0) {
 		throw new ImageGenerationError("image_generation_failed", "Provider returned no generated images.");
 	}
 
-	const artifacts: GeneratedImageArtifactMetadata[] = [];
-	for (const image of images) {
-		const mimeType: string = guessMimeType(response, image);
-		const bytes: Buffer = await readImageBytes(response, image);
-		artifacts.push(await saveGeneratedImageArtifact({
-			sessionId: input.sessionId,
-			bytes,
-			mimeType,
-			provider: options.provider,
-			model,
-			prompt: input.prompt,
-			revisedPrompt: image.revised_prompt ?? undefined
-		}));
-	}
+	const downloaded: DownloadedGeneratedImage[] = await Promise.all(images.map(async (image: Image): Promise<DownloadedGeneratedImage> => ({
+		bytes: await readImageBytes(response, image, runtime.abortSignal),
+		mimeType: guessMimeType(response, image),
+		revisedPrompt: image.revised_prompt ?? undefined
+	})));
+	const artifacts: GeneratedImageArtifactMetadata[] = await persistDownloadedImages(runtime, options, input, model, downloaded);
 
 	return {
 		status: "completed",
@@ -415,7 +494,7 @@ type MiniMaxImageGenerationResponse = {
 	} | undefined;
 };
 
-async function generateZhipuImages(options: ProviderChatOptions, input: ImageGenerationInput): Promise<ImageGenerationResult> {
+async function generateZhipuImages(options: ProviderChatOptions, input: ImageGenerationInput, runtime: ImageGenerationRuntime): Promise<ImageGenerationResult> {
 	const model: string = options.model ?? "glm-image";
 	const baseUrl: string = resolveProviderBaseUrl(options.provider, options.baseUrl);
 	const response: Response = await fetch(`${baseUrl}/images/generations`, {
@@ -429,7 +508,8 @@ async function generateZhipuImages(options: ProviderChatOptions, input: ImageGen
 			prompt: createPrompt(input),
 			size: mapAspectRatioToZhipuImageSize(input.aspectRatio ?? "1:1"),
 			watermark_enabled: false
-		})
+		}),
+		signal: runtime.abortSignal ?? null
 	});
 	const text: string = await response.text();
 	let parsed: ZhipuImageGenerationResponse;
@@ -450,21 +530,16 @@ async function generateZhipuImages(options: ProviderChatOptions, input: ImageGen
 		throw new ImageGenerationError("image_generation_failed", "Provider returned no generated images.");
 	}
 
-	const artifacts: GeneratedImageArtifactMetadata[] = [];
-	for (const image of images.slice(0, input.count ?? 1)) {
-		const bytes: Buffer = typeof image.b64_json === "string" && image.b64_json.length > 0
-			? Buffer.from(image.b64_json, "base64")
-			: await readImageUrlBytes(image.url ?? "");
-		artifacts.push(await saveGeneratedImageArtifact({
-			sessionId: input.sessionId,
-			bytes,
+	const downloaded: DownloadedGeneratedImage[] = await Promise.all(
+		images.slice(0, input.count ?? 1).map(async (image): Promise<DownloadedGeneratedImage> => ({
+			bytes: typeof image.b64_json === "string" && image.b64_json.length > 0
+				? Buffer.from(image.b64_json, "base64")
+				: await readImageUrlBytes(image.url ?? "", runtime.abortSignal),
 			mimeType: image.url !== undefined && /\.jpe?g(?:$|\?)/iu.test(image.url) ? "image/jpeg" : "image/png",
-			provider: options.provider,
-			model,
-			prompt: input.prompt,
 			revisedPrompt: image.revised_prompt
-		}));
-	}
+		}))
+	);
+	const artifacts: GeneratedImageArtifactMetadata[] = await persistDownloadedImages(runtime, options, input, model, downloaded);
 
 	return {
 		status: "completed",
@@ -475,7 +550,7 @@ async function generateZhipuImages(options: ProviderChatOptions, input: ImageGen
 	};
 }
 
-async function generateVolcengineImages(options: ProviderChatOptions, input: ImageGenerationInput): Promise<ImageGenerationResult> {
+async function generateVolcengineImages(options: ProviderChatOptions, input: ImageGenerationInput, runtime: ImageGenerationRuntime): Promise<ImageGenerationResult> {
 	const model: string = options.model ?? "doubao-seedream-5-0-pro-260628";
 	const baseUrl: string = resolveProviderBaseUrl(options.provider, options.baseUrl);
 	const response: Response = await fetch(`${baseUrl}/images/generations`, {
@@ -491,7 +566,8 @@ async function generateVolcengineImages(options: ProviderChatOptions, input: Ima
 			size: mapAspectRatioToOpenAIImageSize(input.aspectRatio ?? "1:1"),
 			response_format: "url",
 			watermark: false
-		})
+		}),
+		signal: runtime.abortSignal ?? null
 	});
 	const text: string = await response.text();
 	let parsed: VolcengineImageGenerationResponse;
@@ -512,26 +588,20 @@ async function generateVolcengineImages(options: ProviderChatOptions, input: Ima
 		throw new ImageGenerationError("image_generation_failed", "Provider returned no generated images.");
 	}
 
-	const artifacts: GeneratedImageArtifactMetadata[] = [];
-	for (const image of images.slice(0, input.count ?? 1)) {
-		const bytes: Buffer = typeof image.b64_json === "string" && image.b64_json.length > 0
-			? Buffer.from(image.b64_json, "base64")
-			: await readImageUrlBytes(image.url ?? "");
-		const mimeType: string = parsed.output_format === "jpeg" || (image.url !== undefined && /\.jpe?g(?:$|\?)/iu.test(image.url))
-			? "image/jpeg"
-			: parsed.output_format === "webp" || (image.url !== undefined && /\.webp(?:$|\?)/iu.test(image.url))
-				? "image/webp"
-				: "image/png";
-		artifacts.push(await saveGeneratedImageArtifact({
-			sessionId: input.sessionId,
-			bytes,
-			mimeType,
-			provider: options.provider,
-			model,
-			prompt: input.prompt,
+	const downloaded: DownloadedGeneratedImage[] = await Promise.all(
+		images.slice(0, input.count ?? 1).map(async (image): Promise<DownloadedGeneratedImage> => ({
+			bytes: typeof image.b64_json === "string" && image.b64_json.length > 0
+				? Buffer.from(image.b64_json, "base64")
+				: await readImageUrlBytes(image.url ?? "", runtime.abortSignal),
+			mimeType: parsed.output_format === "jpeg" || (image.url !== undefined && /\.jpe?g(?:$|\?)/iu.test(image.url))
+				? "image/jpeg"
+				: parsed.output_format === "webp" || (image.url !== undefined && /\.webp(?:$|\?)/iu.test(image.url))
+					? "image/webp"
+					: "image/png",
 			revisedPrompt: image.revised_prompt
-		}));
-	}
+		}))
+	);
+	const artifacts: GeneratedImageArtifactMetadata[] = await persistDownloadedImages(runtime, options, input, model, downloaded);
 
 	return {
 		status: "completed",
@@ -559,7 +629,7 @@ function guessMiniMaxUrlMimeType(url: string): string {
 	return "image/png";
 }
 
-async function generateMiniMaxImages(options: ProviderChatOptions, input: ImageGenerationInput): Promise<ImageGenerationResult> {
+async function generateMiniMaxImages(options: ProviderChatOptions, input: ImageGenerationInput, runtime: ImageGenerationRuntime): Promise<ImageGenerationResult> {
 	const model: string = options.model ?? "image-01";
 	const baseUrl: string = resolveProviderBaseUrl(options.provider, options.baseUrl);
 	const response: Response = await fetch(`${baseUrl}/image_generation`, {
@@ -576,7 +646,8 @@ async function generateMiniMaxImages(options: ProviderChatOptions, input: ImageG
 			n: input.count ?? 1,
 			prompt_optimizer: true,
 			aigc_watermark: false
-		})
+		}),
+		signal: runtime.abortSignal ?? null
 	});
 	const text: string = await response.text();
 	let parsed: MiniMaxImageGenerationResponse;
@@ -598,27 +669,27 @@ async function generateMiniMaxImages(options: ProviderChatOptions, input: ImageG
 		throw new ImageGenerationError("image_generation_failed", "Provider returned no generated images.");
 	}
 
-	const artifacts: GeneratedImageArtifactMetadata[] = [];
-	for (const imageBase64 of base64Images.slice(0, input.count ?? 1)) {
-		artifacts.push(await saveGeneratedImageArtifact({
-			sessionId: input.sessionId,
+	const targetCount: number = input.count ?? 1;
+	const downloadedFromBase64: DownloadedGeneratedImage[] = base64Images
+		.slice(0, targetCount)
+		.map((imageBase64: string): DownloadedGeneratedImage => ({
 			bytes: Buffer.from(imageBase64, "base64"),
-			mimeType: "image/jpeg",
-			provider: options.provider,
-			model,
-			prompt: input.prompt
+			mimeType: "image/jpeg"
 		}));
-	}
-	for (const url of imageUrls.slice(0, Math.max(0, (input.count ?? 1) - artifacts.length))) {
-		artifacts.push(await saveGeneratedImageArtifact({
-			sessionId: input.sessionId,
-			bytes: await readImageUrlBytes(url),
-			mimeType: guessMiniMaxUrlMimeType(url),
-			provider: options.provider,
-			model,
-			prompt: input.prompt
-		}));
-	}
+	const remainingUrls: string[] = imageUrls.slice(0, Math.max(0, targetCount - downloadedFromBase64.length));
+	const downloadedFromUrls: DownloadedGeneratedImage[] = await Promise.all(
+		remainingUrls.map(async (url: string): Promise<DownloadedGeneratedImage> => ({
+			bytes: await readImageUrlBytes(url, runtime.abortSignal),
+			mimeType: guessMiniMaxUrlMimeType(url)
+		}))
+	);
+	const artifacts: GeneratedImageArtifactMetadata[] = await persistDownloadedImages(
+		runtime,
+		options,
+		input,
+		model,
+		[...downloadedFromBase64, ...downloadedFromUrls]
+	);
 
 	return {
 		status: "completed",
@@ -691,7 +762,7 @@ function createDashScopeImageParameters(model: string, input: ImageGenerationInp
 	return parameters;
 }
 
-async function generateDashScopeImages(options: ProviderChatOptions, input: ImageGenerationInput): Promise<ImageGenerationResult> {
+async function generateDashScopeImages(options: ProviderChatOptions, input: ImageGenerationInput, runtime: ImageGenerationRuntime): Promise<ImageGenerationResult> {
 	const model: string = options.model ?? "qwen-image-2.0-pro";
 	const sourceImages: ImageGenerationSourceImage[] = await resolveImageGenerationSourceImages(input.sessionId, input.sourceImages);
 	const content: DashScopeImageContent[] = [
@@ -713,7 +784,8 @@ async function generateDashScopeImages(options: ProviderChatOptions, input: Imag
 				}]
 			},
 			parameters: createDashScopeImageParameters(model, input)
-		})
+		}),
+		signal: runtime.abortSignal ?? null
 	});
 	const text: string = await response.text();
 	let parsed: DashScopeImageGenerationResponse;
@@ -734,18 +806,13 @@ async function generateDashScopeImages(options: ProviderChatOptions, input: Imag
 		throw new ImageGenerationError("image_generation_failed", "Provider returned no generated images.");
 	}
 
-	const artifacts: GeneratedImageArtifactMetadata[] = [];
-	for (const url of urls.slice(0, getDashScopeImageCount(model, input))) {
-		const bytes: Buffer = await readImageUrlBytes(url);
-		artifacts.push(await saveGeneratedImageArtifact({
-			sessionId: input.sessionId,
-			bytes,
-			mimeType: /\.jpe?g(?:$|\?)/iu.test(url) ? "image/jpeg" : "image/png",
-			provider: options.provider,
-			model,
-			prompt: input.prompt
-		}));
-	}
+	const downloaded: DownloadedGeneratedImage[] = await Promise.all(
+		urls.slice(0, getDashScopeImageCount(model, input)).map(async (url: string): Promise<DownloadedGeneratedImage> => ({
+			bytes: await readImageUrlBytes(url, runtime.abortSignal),
+			mimeType: /\.jpe?g(?:$|\?)/iu.test(url) ? "image/jpeg" : "image/png"
+		}))
+	);
+	const artifacts: GeneratedImageArtifactMetadata[] = await persistDownloadedImages(runtime, options, input, model, downloaded);
 
 	return {
 		status: "completed",
@@ -757,8 +824,10 @@ async function generateDashScopeImages(options: ProviderChatOptions, input: Imag
 	};
 }
 
-export async function generateImage(input: ImageGenerationInput): Promise<ImageGenerationResult> {
+export async function generateImage(input: ImageGenerationInput, abortSignal?: AbortSignal | undefined): Promise<ImageGenerationResult> {
+	const runtime: ImageGenerationRuntime = { abortSignal, savedArtifacts: [] };
 	try {
+		throwIfImageGenerationAborted(runtime);
 		const resolved = await resolveConfiguredProviderTaskModelOptions("imageGeneration");
 		const options: ProviderChatOptions = resolved.options;
 		const hasSourceImages: boolean = (input.sourceImages?.length ?? 0) > 0;
@@ -780,7 +849,7 @@ export async function generateImage(input: ImageGenerationInput): Promise<ImageG
 				);
 			}
 			if (options.provider === "dashscope") {
-				return await generateDashScopeImages(options, input);
+				return await generateDashScopeImages(options, input, runtime);
 			}
 
 			await resolveImageGenerationSourceImages(input.sessionId, input.sourceImages);
@@ -791,19 +860,19 @@ export async function generateImage(input: ImageGenerationInput): Promise<ImageG
 		}
 
 		if (options.provider === "zhipu") {
-			return await generateZhipuImages(options, input);
+			return await generateZhipuImages(options, input, runtime);
 		}
 
 		if (options.provider === "dashscope") {
-			return await generateDashScopeImages(options, input);
+			return await generateDashScopeImages(options, input, runtime);
 		}
 
 		if (options.provider === "volcengine") {
-			return await generateVolcengineImages(options, input);
+			return await generateVolcengineImages(options, input, runtime);
 		}
 
 		if (options.provider === "minimax") {
-			return await generateMiniMaxImages(options, input);
+			return await generateMiniMaxImages(options, input, runtime);
 		}
 
 		if (options.provider !== "openai") {
@@ -813,8 +882,11 @@ export async function generateImage(input: ImageGenerationInput): Promise<ImageG
 			);
 		}
 
-		return await generateOpenAIImages(options, input);
+		return await generateOpenAIImages(options, input, runtime);
 	} catch (error: unknown) {
+		await Promise.allSettled(
+			runtime.savedArtifacts.map((artifact: GeneratedImageArtifactMetadata): Promise<void> => deleteGeneratedImageArtifact(artifact))
+		);
 		if (error instanceof ImageGenerationError) {
 			throw error;
 		}

@@ -240,6 +240,8 @@ export async function handlePlanRequest(socket: WebSocket, request: ClientReques
 						runId: activePlanOperation.runRequestId,
 						requestId: activePlanOperation.runRequestId,
 						status: "done",
+						resultStatus: "completed",
+						warnings: [],
 						sequence: session.workbenchActiveRun.sequence ?? session.workbenchActiveRunSequence,
 						operationRequestId: request.id,
 						planId: plan.metadata.planId
@@ -295,6 +297,8 @@ export async function handlePlanRequest(socket: WebSocket, request: ClientReques
 						runId: activePlanOperation.runRequestId,
 						requestId: activePlanOperation.runRequestId,
 						status: "done",
+						resultStatus: "completed",
+						warnings: [],
 						sequence: session.workbenchActiveRun.sequence ?? session.workbenchActiveRunSequence,
 						operationRequestId: request.id,
 						planId: plan.metadata.planId

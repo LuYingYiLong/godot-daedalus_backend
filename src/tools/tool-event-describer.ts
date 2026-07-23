@@ -81,6 +81,17 @@ export function describeToolEvent(toolName: string, args: Record<string, unknown
 			label: "generated image"
 		});
 	}
+	if (toolName.startsWith("mcp_image_") && toolName.includes("workspace")) {
+		const relativePath: string = getStringArg(args, "relativePath") ?? "workspace image";
+		const category: ToolEventCategory = toolName.includes("propose")
+			? "propose"
+			: "write";
+		return createDisplay("image", "Image Generation", category, "Import image", relativePath, {
+			kind: "file",
+			path: relativePath,
+			label: relativePath
+		});
+	}
 	if (toolName === "mcp_web_search") {
 		const query: string = getStringArg(args, "query") ?? "search";
 		return createDisplay("web_search", "Web Search", "read", "联网搜索", `搜索：${query.slice(0, 100)}`, {

@@ -10,6 +10,7 @@ import { captureFileEditBatchDraft, type FileEditBatchDraft } from "./file-edit-
 import { logger } from "../logger.js";
 import type { ImageGenerationResult } from "../providers/image-generation.js";
 import { stripApprovalReasonArg } from "./approval-reason.js";
+import type { TerminalCommandAuthorization } from "../mcp/terminal/authorization.js";
 
 const TOOL_EXECUTION_DEDUP_TTL_MS: number = 30 * 60 * 1000;
 const MAX_COMPLETED_TOOL_EXECUTIONS: number = 500;
@@ -57,6 +58,8 @@ let ledgerLoadPromise: Promise<void> | null = null;
 let ledgerWriteQueue: Promise<void> = Promise.resolve();
 
 const GODOT_PROJECT_MUTATION_TOOLS: ReadonlySet<string> = new Set([
+	"mcp_image_import_to_workspace",
+	"mcp_image_replace_workspace_asset",
 	"mcp_workspace_create_text_file",
 	"mcp_workspace_overwrite_text_file",
 	"mcp_workspace_replace_text_in_file",
@@ -222,6 +225,9 @@ function enqueueLedgerWrite(record: ToolExecutionRecord): Promise<void> {
 }
 
 export function shouldDedupeLlmToolExecution(llmToolName: string, workspaceId?: string | undefined): boolean {
+	if (llmToolName === "mcp_terminal_run_command" || llmToolName === "mcp_terminal_cancel_job") {
+		return false;
+	}
 	const policy = getToolPolicy(llmToolName, workspaceId);
 	return policy?.risk === "write" || policy?.risk === "destructive";
 }
@@ -323,9 +329,10 @@ async function executeMappedTool(
 	args: Record<string, unknown>,
 	fingerprint?: string | undefined,
 	workspaceId?: string | undefined,
-	editorInstanceId?: string | undefined
+	editorInstanceId?: string | undefined,
+	commandAuthorization?: TerminalCommandAuthorization | undefined
 ): Promise<IdempotentToolExecutionResult> {
-	const result = await mcpHost.callTool(serverId, toolName, args, workspaceId, editorInstanceId) as ToolResultContent;
+	const result = await mcpHost.callTool(serverId, toolName, args, workspaceId, editorInstanceId, commandAuthorization) as ToolResultContent;
 	const textResult: string = extractTextContent(result);
 	const truncated: boolean = textResult.length > MAX_TOOL_RESULT_CHARS;
 	return {
@@ -337,13 +344,17 @@ async function executeMappedTool(
 	};
 }
 
-async function executeImageGenerationTool(args: Record<string, unknown>, sessionId?: string | undefined): Promise<IdempotentToolExecutionResult> {
+async function executeImageGenerationTool(
+	args: Record<string, unknown>,
+	sessionId?: string | undefined,
+	abortSignal?: AbortSignal | undefined
+): Promise<IdempotentToolExecutionResult> {
 	if (sessionId === undefined || sessionId.length === 0) {
 		throw new Error("Image generation requires an active session.");
 	}
 	const { generateImage, parseImageGenerationToolArgs } = await import("../providers/image-generation.js");
 	const { getGeneratedImageArtifactLocalPath } = await import("../session/session-attachments.js");
-	const imageGeneration: ImageGenerationResult = await generateImage(parseImageGenerationToolArgs(args, sessionId));
+	const imageGeneration: ImageGenerationResult = await generateImage(parseImageGenerationToolArgs(args, sessionId), abortSignal);
 	const artifactsForToolResult = imageGeneration.artifacts.map((artifact) => {
 		const absolutePath: string = getGeneratedImageArtifactLocalPath(artifact);
 		return {
@@ -360,7 +371,7 @@ async function executeImageGenerationTool(args: Record<string, unknown>, session
 		provider: imageGeneration.provider,
 		model: imageGeneration.model,
 		prompt: imageGeneration.prompt,
-		usageHint: "When referencing a generated image in the final answer, use artifacts[n].absolutePath or artifacts[n].markdownImage. Do not use fileName by itself.",
+		usageHint: "Use mcp_image_propose_import_to_workspace and mcp_image_import_to_workspace to place this image in the active project. Use mcp_image_replace_workspace_asset only when replacing an existing asset with user approval. For chat display, use artifacts[n].absolutePath or artifacts[n].markdownImage.",
 		artifacts: artifactsForToolResult
 	});
 	return {
@@ -369,6 +380,44 @@ async function executeImageGenerationTool(args: Record<string, unknown>, session
 		truncated: content.length > MAX_TOOL_RESULT_CHARS,
 		reused: false,
 		imageGeneration
+	};
+}
+
+async function executeImageWorkspaceImportTool(
+	llmToolName: string,
+	args: Record<string, unknown>,
+	workspaceId?: string | undefined,
+	sessionId?: string | undefined,
+	abortSignal?: AbortSignal | undefined
+): Promise<IdempotentToolExecutionResult> {
+	if (workspaceId === undefined || sessionId === undefined) {
+		throw new Error("Image workspace import requires an active workspace and session.");
+	}
+	const imageId: unknown = args.imageId;
+	const relativePath: unknown = args.relativePath;
+	if (typeof imageId !== "string" || typeof relativePath !== "string") {
+		throw new Error("Image workspace import requires imageId and relativePath.");
+	}
+	const { executeImageWorkspaceImport } = await import("./image-workspace-import.js");
+	const mode = llmToolName === "mcp_image_propose_import_to_workspace"
+		? "propose"
+		: llmToolName === "mcp_image_replace_workspace_asset"
+			? "replace"
+			: "create";
+	const imported = await executeImageWorkspaceImport({
+		mode,
+		imageId,
+		relativePath,
+		sessionId,
+		workspaceId,
+		abortSignal
+	});
+	const content: string = JSON.stringify(imported);
+	return {
+		content: trimToolResult(content),
+		rawContentLength: content.length,
+		truncated: content.length > MAX_TOOL_RESULT_CHARS,
+		reused: false
 	};
 }
 
@@ -394,10 +443,29 @@ export async function executeLlmToolWithIdempotency(
 	workspaceId?: string | undefined,
 	editorInstanceId?: string | undefined,
 	sessionId?: string | undefined,
-	abortSignal?: AbortSignal | undefined
+	abortSignal?: AbortSignal | undefined,
+	commandAuthorization?: TerminalCommandAuthorization | undefined
 ): Promise<IdempotentToolExecutionResult> {
 	if (llmToolName === "mcp_image_generate") {
-		return executeImageGenerationTool(args, sessionId);
+		return executeImageGenerationTool(args, sessionId, abortSignal);
+	}
+	if (
+		llmToolName === "mcp_image_propose_import_to_workspace"
+		|| llmToolName === "mcp_image_import_to_workspace"
+		|| llmToolName === "mcp_image_replace_workspace_asset"
+	) {
+		const executeImport = (): Promise<IdempotentToolExecutionResult> => executeImageWorkspaceImportTool(
+			llmToolName,
+			args,
+			workspaceId,
+			sessionId,
+			abortSignal
+		);
+		const result: IdempotentToolExecutionResult = llmToolName === "mcp_image_propose_import_to_workspace"
+			? await executeImport()
+			: await captureFileEditBatchDraft(mcpHost, llmToolName, args, executeImport);
+		refreshEditorFilesystemAfterGodotMutation(mcpHost, llmToolName, args, workspaceId);
+		return result;
 	}
 	if (llmToolName === "mcp_web_search") {
 		return executeWebSearchTool(args, abortSignal);
@@ -410,7 +478,16 @@ export async function executeLlmToolWithIdempotency(
 			mcpHost,
 			llmToolName,
 			args,
-			(): Promise<IdempotentToolExecutionResult> => executeMappedTool(mcpHost, mapping.serverId, mapping.toolName, args, undefined, workspaceId, editorInstanceId)
+			(): Promise<IdempotentToolExecutionResult> => executeMappedTool(
+				mcpHost,
+				mapping.serverId,
+				mapping.toolName,
+				args,
+				undefined,
+				workspaceId,
+				editorInstanceId,
+				commandAuthorization
+			)
 		);
 		refreshEditorFilesystemAfterGodotMutation(mcpHost, llmToolName, args, workspaceId);
 		return result;

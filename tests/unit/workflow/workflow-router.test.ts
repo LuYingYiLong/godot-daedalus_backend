@@ -207,7 +207,7 @@ test("explicit write-capable skills keep write tools in hidden tool answer", asy
 	assert.equal(source.includes("toolNamesIncludeWriteRisk(builtinToolRestriction"), true);
 });
 
-test("chat orchestrator cancel releases the active run immediately", async (): Promise<void> => {
+test("chat orchestrator cancel requests abort and leaves finalization to the active run", async (): Promise<void> => {
 	const source: string = await readFile(new URL("../../../src/server/chat-orchestrator.ts", import.meta.url), "utf8");
 	const cancelStart: number = source.indexOf("case \"ai.cancel\"");
 	const chatStart: number = source.indexOf("case \"ai.chat\"");
@@ -215,10 +215,14 @@ test("chat orchestrator cancel releases the active run immediately", async (): P
 
 	assert.ok(cancelStart >= 0);
 	assert.ok(chatStart > cancelStart);
-	assert.equal(cancelBlock.includes("finishSessionRun(session.sessionId, targetRequestId);"), true);
-	assert.equal(cancelBlock.includes("setWorkbenchActiveRun(session, { status: \"idle\" });"), true);
-	assert.equal(cancelBlock.includes("id: targetRequestId"), true);
-	assert.equal(cancelBlock.includes("sendAgentCancelled(socket, targetRequestId, session);"), true);
+	assert.equal(cancelBlock.includes("status: \"cancelling\""), true);
+	assert.equal(cancelBlock.includes("controller.abort();"), true);
+	assert.equal(cancelBlock.includes("cancellationRequested: controller !== undefined"), true);
+	assert.equal(cancelBlock.includes("sendAgentCancelled(socket, targetRequestId, session);"), false);
+	const pendingCancellationGuard: number = cancelBlock.indexOf("if (cancelledApprovalIds.length > 0 || cancelledToolBudgetIds.length > 0)");
+	const finishRun: number = cancelBlock.indexOf("finishSessionRun(session.sessionId, targetRequestId);");
+	assert.ok(pendingCancellationGuard >= 0);
+	assert.ok(finishRun > pendingCancellationGuard);
 });
 
 test("chat orchestrator final cleanup only updates the workbench for the owned run", async (): Promise<void> => {

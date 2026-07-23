@@ -64,6 +64,16 @@ export function createAgentToolEventForwarder(
 			}, persistRequestId);
 			return;
 		}
+		if (event.type === "tool.reviewed") {
+			sendSessionEvent(socket, requestId, session, "agent.tool.reviewed", {
+				...event,
+				type: "agent.tool.reviewed",
+				runId,
+				stepRunId,
+				...eventMetadata
+			}, persistRequestId);
+			return;
+		}
 		if (event.type === "tool.progress") {
 			if (event.toolName === "mcp_skills_load") {
 				return;

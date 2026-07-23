@@ -775,6 +775,70 @@ test("canonical timeline restores image generation body part from tool events", 
 	}
 });
 
+test("canonical timeline restores completion warnings once", (): void => {
+	const warning = "Godot executable was not found; verification was skipped.";
+	const stored: StoredSession = session(
+		[
+			{ role: "user", requestId: "request-warning", content: "Verify this scene", createdAt: "2026-07-09T00:08:00.000Z" },
+			{ role: "assistant", requestId: "request-warning", content: "Implemented.", createdAt: "2026-07-09T00:08:04.000Z" }
+		],
+		[
+			event("event-workflow-done", "request-warning", "workflow.done", "2026-07-09T00:08:03.000Z", {
+				resultStatus: "completed_with_warnings",
+				warnings: [warning]
+			}),
+			event("event-run-done", "request-warning", "agent.run.done", "2026-07-09T00:08:04.000Z", {
+				resultStatus: "completed_with_warnings",
+				warnings: [warning]
+			})
+		]
+	);
+
+	const assistant = assistantBlock(buildCanonicalTimelineBlocks(stored).blocks[1]);
+	const warningParts = assistant.bodyParts.filter((part) => {
+		return part.type === "status" && part.code === "verification_unverified";
+	});
+	assert.equal(warningParts.length, 1);
+	const warningPart = warningParts[0];
+	assert.equal(warningPart?.type, "status");
+	if (warningPart?.type === "status") {
+		assert.equal(warningPart.status, "warning");
+		assert.equal(warningPart.details, warning);
+		assert.equal(warningPart.actionId, "configure_godot");
+		assert.equal(warningPart.actionLabel, "Configure Godot");
+	}
+});
+
+test("canonical timeline marks an interrupted image generation as failed", (): void => {
+	const stored: StoredSession = session(
+		[
+			{ role: "user", requestId: "request-cancel-image", content: "Generate an icon", createdAt: "2026-07-09T00:09:00.000Z" }
+		],
+		[
+			event("event-call", "request-cancel-image", "agent.tool.call", "2026-07-09T00:09:01.000Z", {
+				toolCallId: "image-tool-cancelled",
+				toolName: "mcp_image_generate",
+				args: { prompt: "blue icon" }
+			}),
+			event("event-cancelled", "request-cancel-image", "agent.run.cancelled", "2026-07-09T00:09:02.000Z", {
+				reason: "Cancelled by user."
+			})
+		]
+	);
+
+	const assistant = assistantBlock(buildCanonicalTimelineBlocks(stored).blocks[1]);
+	const imagePart = assistant.bodyParts.find((part) => part.type === "image_generation");
+	assert.equal(imagePart?.type, "image_generation");
+	if (imagePart?.type === "image_generation") {
+		assert.equal(imagePart.status, "failed");
+		assert.equal(imagePart.error, "Cancelled by user.");
+	}
+	const statusPart = assistant.bodyParts.find((part) => {
+		return part.type === "status" && part.code === "agent_run_cancelled";
+	});
+	assert.equal(statusPart?.type, "status");
+});
+
 test("canonical timeline restores failed transcript-only turn with tool, error and inline diff", (): void => {
 	const fileEditBatch = {
 		batchId: "edit-failed",

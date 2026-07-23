@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { AdditionalContextItem, AiChatParams } from "../protocol/types.js";
@@ -279,6 +279,30 @@ export async function readGeneratedImageDataUrl(sessionId: string, imageId: stri
 		dataUrl: `data:${metadata.mimeType};base64,${bytes.toString("base64")}`,
 		metadata
 	};
+}
+
+export async function readGeneratedImageArtifact(
+	sessionId: string,
+	imageId: string
+): Promise<{ metadata: GeneratedImageArtifactMetadata; bytes: Buffer }> {
+	await openSession(sessionId);
+	const metadataRaw: string = await readFile(generatedImageMetadataPath(sessionId, imageId), "utf8");
+	const metadata: GeneratedImageArtifactMetadata = JSON.parse(metadataRaw) as GeneratedImageArtifactMetadata;
+	if (metadata.sessionId !== sessionId || metadata.imageId !== imageId) {
+		throw new Error("Generated image metadata does not match request.");
+	}
+	const bytes: Buffer = await readFile(generatedImagePath(sessionId, imageId, metadata.mimeType));
+	if (bytes.byteLength !== metadata.byteSize) {
+		throw new Error("Generated image bytes do not match metadata.");
+	}
+	return { metadata, bytes };
+}
+
+export async function deleteGeneratedImageArtifact(metadata: GeneratedImageArtifactMetadata): Promise<void> {
+	await Promise.all([
+		rm(generatedImagePath(metadata.sessionId, metadata.imageId, metadata.mimeType), { force: true }),
+		rm(generatedImageMetadataPath(metadata.sessionId, metadata.imageId), { force: true })
+	]);
 }
 
 export async function hydrateImageAttachmentContexts(sessionId: string | undefined, params: AiChatParams): Promise<AiChatParams> {
