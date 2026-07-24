@@ -8,7 +8,7 @@ For the long-term split between the lightweight Godot editor plugin and the stan
 
 ## Requirements
 
-- Node.js 22.12.0 or newer.
+- Node.js 24.18.0 or newer.
 - npm.
 - Godot 4.7 for the public Beta validation path. Godot 4.x may work, but Windows + Godot 4.7 is the first supported Beta target.
 

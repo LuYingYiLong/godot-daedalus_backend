@@ -884,3 +884,71 @@ test("write completion contract accepts the actual target artifact", (): void =>
 	assert.equal(outcome.status, "completed");
 	assert.deepEqual(outcome.failedChecks, []);
 });
+
+test("write completion contract accepts bare filename target matching a project-relative artifact", (): void => {
+	const phase: WorkflowPhase = {
+		...createPhase("repair-main-scene", "write"),
+		completionContract: {
+			targets: [{ kind: "artifact", path: "Main.tscn" }],
+			requireAll: true
+		}
+	};
+	const observations: WorkflowToolObservation[] = applyEvents([
+		{
+			type: "tool.call",
+			step: 0,
+			toolCallId: "patch-main",
+			toolName: "mcp_godot_apply_scene_patch",
+			args: { scenePath: "scenes/Main.tscn", operations: [{ op: "add_node" }] },
+			serverId: "godot",
+			serverName: "Godot",
+			category: "scene",
+			title: "Apply scene patch",
+			summary: "scenes/Main.tscn",
+			target: { kind: "file", path: "scenes/Main.tscn", label: "Main.tscn" }
+		},
+		{
+			type: "tool.result",
+			step: 0,
+			toolCallId: "patch-main",
+			toolName: "mcp_godot_apply_scene_patch",
+			resultChars: 40,
+			truncated: false,
+			ok: true,
+			validationStatus: "passed",
+			summary: "Scene patched.",
+			artifactRefs: ["scenes/Main.tscn"]
+		},
+		{
+			type: "tool.call",
+			step: 1,
+			toolCallId: "inspect-main",
+			toolName: "mcp_godot_inspect_scene_tree",
+			args: { relativePath: "scenes/Main.tscn" },
+			serverId: "godot",
+			serverName: "Godot",
+			category: "read",
+			title: "Inspect scene tree",
+			summary: "scenes/Main.tscn",
+			target: { kind: "file", path: "scenes/Main.tscn", label: "Main.tscn" }
+		},
+		{
+			type: "tool.result",
+			step: 1,
+			toolCallId: "inspect-main",
+			toolName: "mcp_godot_inspect_scene_tree",
+			resultChars: 40,
+			truncated: false,
+			ok: true,
+			validationStatus: "passed",
+			summary: "Scene tree valid.",
+			artifactRefs: ["scenes/Main.tscn"]
+		}
+	]);
+
+	const outcome = createWorkflowPhaseOutcome(phase, "phase-run-main", "", observations);
+	assert.equal(outcome.status, "completed");
+	assert.deepEqual(outcome.failedChecks, []);
+	assert.deepEqual(outcome.modifiedArtifacts, ["scenes/Main.tscn"]);
+	assert.deepEqual(outcome.verifiedArtifacts, ["scenes/Main.tscn"]);
+});

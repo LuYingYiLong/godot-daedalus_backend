@@ -361,7 +361,10 @@ function observationMatchesCompletionTarget(observation: WorkflowToolObservation
 	}
 
 	const expected: string = normalizeTargetValue(target.path);
-	return observationTargetValues(observation).some((value: string): boolean => value === expected);
+	const expectedIsBareFilename: boolean = !expected.includes("/");
+	return observationTargetValues(observation).some((value: string): boolean => (
+		value === expected || (expectedIsBareFilename && value.endsWith(`/${expected}`))
+	));
 }
 
 function isSuccessfulMutation(observation: WorkflowToolObservation): boolean {
