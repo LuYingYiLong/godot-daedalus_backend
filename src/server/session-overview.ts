@@ -1,8 +1,8 @@
-import { readdir, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { getSessionDir, openSession, type SessionMetadata } from "../session/session-store.js";
 import type { GeneratedImageArtifactMetadata, ImageAttachmentMetadata } from "../session/session-attachments.js";
-import type { StoredPlanMetadata } from "./plan-store.js";
+import { getSessionDatabase, parseSqlJson } from "../session/session-database.js";
 import { isInsideGitWorkTree, readGitBranch, runGit } from "./git-utils.js";
 
 const DEFAULT_OVERVIEW_LIMIT: number = 3;
@@ -71,16 +71,6 @@ function getOptionalNumber(value: Record<string, unknown>, key: string): number 
 	return typeof raw === "number" && Number.isFinite(raw) ? raw : undefined;
 }
 
-async function readJsonFile(filePath: string): Promise<Record<string, unknown> | null> {
-	try {
-		const raw: string = await readFile(filePath, "utf8");
-		const parsed: unknown = JSON.parse(raw);
-		return isRecord(parsed) ? parsed : null;
-	} catch {
-		return null;
-	}
-}
-
 async function loadGitInfo(workspaceRoot: string | undefined): Promise<SessionOverviewGitInfo | null> {
 	if (workspaceRoot === undefined || workspaceRoot.trim().length === 0) {
 		return null;
@@ -129,46 +119,26 @@ async function loadGitInfo(workspaceRoot: string | undefined): Promise<SessionOv
 }
 
 async function listPlanItems(sessionId: string, limit: number): Promise<{ total: number; items: SessionOverviewPlanItem[] }> {
-	const plansDir: string = path.join(getSessionDir(sessionId), "plans");
-	let entries;
-	try {
-		entries = await readdir(plansDir, { withFileTypes: true });
-	} catch {
-		return { total: 0, items: [] };
-	}
-
-	const items: SessionOverviewPlanItem[] = [];
-	for (const entry of entries) {
-		if (!entry.isDirectory() || !entry.name.startsWith("plan-")) {
-			continue;
-		}
-		const planDir: string = path.join(plansDir, entry.name);
-		const metadata = await readJsonFile(path.join(planDir, "metadata.json"));
-		if (metadata === null) {
-			continue;
-		}
-		let markdown: string;
-		try {
-			markdown = await readFile(path.join(planDir, "PLAN.md"), "utf8");
-		} catch {
-			continue;
-		}
-		const planId: string = getString(metadata, "planId") || entry.name;
-		const updatedAt: string = getString(metadata, "updatedAt") || getString(metadata, "createdAt") || "";
-		items.push({
+	const db = await getSessionDatabase();
+	const countRow = db.prepare("SELECT COUNT(*) AS total FROM plans WHERE session_id = ?").get(sessionId) as Record<string, unknown>;
+	const rows = db.prepare(`
+		SELECT metadata_json, markdown FROM plans WHERE session_id = ? ORDER BY updated_at DESC LIMIT ?
+	`).all(sessionId, limit) as Record<string, unknown>[];
+	const items: SessionOverviewPlanItem[] = rows.map((row: Record<string, unknown>): SessionOverviewPlanItem => {
+		const metadata: Record<string, unknown> = parseSqlJson<Record<string, unknown>>(row.metadata_json);
+		const planId: string = getString(metadata, "planId");
+		return {
 			planId,
 			title: getString(metadata, "title") || "Untitled plan",
 			status: getString(metadata, "status") || "unknown",
-			updatedAt,
+			updatedAt: getString(metadata, "updatedAt") || getString(metadata, "createdAt"),
 			planPath: getString(metadata, "planPath") || `plans/${planId}/PLAN.md`,
-			previewMarkdown: getString(metadata, "previewMarkdown") || markdown.slice(0, 4000)
-		});
-	}
-
-	items.sort((left: SessionOverviewPlanItem, right: SessionOverviewPlanItem): number => right.updatedAt.localeCompare(left.updatedAt));
+			previewMarkdown: getString(metadata, "previewMarkdown") || String(row.markdown).slice(0, 4000)
+		};
+	});
 	return {
-		total: items.length,
-		items: items.slice(0, limit)
+		total: Number(countRow.total),
+		items
 	};
 }
 
@@ -176,11 +146,7 @@ function createDataUrl(mimeType: string, bytes: Buffer): string {
 	return `data:${mimeType};base64,${bytes.toString("base64")}`;
 }
 
-async function readAttachmentSource(sessionId: string, metadataPath: string): Promise<SessionOverviewSourceItem | null> {
-	const metadataRaw: Record<string, unknown> | null = await readJsonFile(metadataPath);
-	if (metadataRaw === null) {
-		return null;
-	}
+async function readAttachmentSource(sessionId: string, metadataRaw: Record<string, unknown>): Promise<SessionOverviewSourceItem | null> {
 	const metadata: ImageAttachmentMetadata = metadataRaw as ImageAttachmentMetadata;
 	if (!metadata.id?.startsWith("image-") || typeof metadata.mimeType !== "string") {
 		return null;
@@ -205,11 +171,7 @@ async function readAttachmentSource(sessionId: string, metadataPath: string): Pr
 	}
 }
 
-async function readGeneratedImageSource(sessionId: string, metadataPath: string): Promise<SessionOverviewSourceItem | null> {
-	const metadataRaw: Record<string, unknown> | null = await readJsonFile(metadataPath);
-	if (metadataRaw === null) {
-		return null;
-	}
+async function readGeneratedImageSource(sessionId: string, metadataRaw: Record<string, unknown>): Promise<SessionOverviewSourceItem | null> {
 	const metadata: GeneratedImageArtifactMetadata = metadataRaw as GeneratedImageArtifactMetadata;
 	if (!metadata.imageId?.startsWith("generated-image-") || metadata.sessionId !== sessionId || typeof metadata.mimeType !== "string") {
 		return null;
@@ -235,44 +197,25 @@ async function readGeneratedImageSource(sessionId: string, metadataPath: string)
 }
 
 async function listSourceItems(sessionId: string, limit: number): Promise<{ total: number; items: SessionOverviewSourceItem[] }> {
-	const attachmentsDir: string = path.join(getSessionDir(sessionId), "attachments");
-	const generatedImagesDir: string = path.join(attachmentsDir, "images");
+	const db = await getSessionDatabase();
+	const countRow = db.prepare("SELECT COUNT(*) AS total FROM attachments WHERE session_id = ?").get(sessionId) as Record<string, unknown>;
+	const rows = db.prepare(`
+		SELECT kind, metadata_json FROM attachments WHERE session_id = ? ORDER BY created_at DESC LIMIT ?
+	`).all(sessionId, limit) as Record<string, unknown>[];
 	const items: SessionOverviewSourceItem[] = [];
-
-	try {
-		const attachmentEntries = await readdir(attachmentsDir, { withFileTypes: true });
-		for (const entry of attachmentEntries) {
-			if (!entry.isFile() || !entry.name.endsWith(".json")) {
-				continue;
-			}
-			const item: SessionOverviewSourceItem | null = await readAttachmentSource(sessionId, path.join(attachmentsDir, entry.name));
-			if (item !== null) {
-				items.push(item);
-			}
+	for (const row of rows) {
+		const metadata: Record<string, unknown> = parseSqlJson<Record<string, unknown>>(row.metadata_json);
+		const item: SessionOverviewSourceItem | null = row.kind === "generated_image"
+			? await readGeneratedImageSource(sessionId, metadata)
+			: await readAttachmentSource(sessionId, metadata);
+		if (item !== null) {
+			items.push(item);
 		}
-	} catch {
-		// 会话没有附件目录时 source 为空。
 	}
 
-	try {
-		const generatedEntries = await readdir(generatedImagesDir, { withFileTypes: true });
-		for (const entry of generatedEntries) {
-			if (!entry.isFile() || !entry.name.endsWith(".json")) {
-				continue;
-			}
-			const item: SessionOverviewSourceItem | null = await readGeneratedImageSource(sessionId, path.join(generatedImagesDir, entry.name));
-			if (item !== null) {
-				items.push(item);
-			}
-		}
-	} catch {
-		// 会话没有生成图目录时 source 为空。
-	}
-
-	items.sort((left: SessionOverviewSourceItem, right: SessionOverviewSourceItem): number => right.createdAt.localeCompare(left.createdAt));
 	return {
-		total: items.length,
-		items: items.slice(0, limit)
+		total: Number(countRow.total),
+		items
 	};
 }
 

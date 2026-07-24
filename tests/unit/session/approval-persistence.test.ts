@@ -189,6 +189,8 @@ test("cancelling a request clears pending approval continuation and persistence"
 		assert.equal(events.some((event: StoredApprovalEvent): boolean => event.event === "cancelled"), true);
 		assert.deepEqual(foldPendingApprovalStates(events), []);
 	} finally {
+		const { resetSessionDatabaseForTests } = await import("../../../src/session/session-database.js");
+		await resetSessionDatabaseForTests();
 		if (previousUserProfile === undefined) {
 			delete process.env.USERPROFILE;
 		} else {

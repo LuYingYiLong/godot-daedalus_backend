@@ -25,6 +25,8 @@ async function withTempAppData<T>(
 		const transcriptHistory = await import(`../../../src/server/transcript-history.js?case=${suffix}`);
 		return await fn(store, transcriptHistory);
 	} finally {
+		const { resetSessionDatabaseForTests } = await import("../../../src/session/session-database.js");
+		await resetSessionDatabaseForTests();
 		if (previousUserProfile === undefined) {
 			delete process.env.USERPROFILE;
 		} else {
@@ -139,6 +141,8 @@ test("chat turn persistence reuses pre-saved user message", async (): Promise<vo
 		assert.equal(opened.messages.length, 2);
 		assert.deepEqual(opened.messages.map((message: ChatMessage): string => message.role), ["user", "assistant"]);
 	} finally {
+		const { resetSessionDatabaseForTests } = await import("../../../src/session/session-database.js");
+		await resetSessionDatabaseForTests();
 		if (previousUserProfile === undefined) {
 			delete process.env.USERPROFILE;
 		} else {
@@ -196,6 +200,8 @@ test("chat turn persistence merges with stored messages instead of overwriting f
 			"request-new"
 		]);
 	} finally {
+		const { resetSessionDatabaseForTests } = await import("../../../src/session/session-database.js");
+		await resetSessionDatabaseForTests();
 		if (previousUserProfile === undefined) {
 			delete process.env.USERPROFILE;
 		} else {
@@ -253,6 +259,8 @@ test("concurrent chat persistence serializes writes by session", async (): Promi
 			"request-third:assistant"
 		]);
 	} finally {
+		const { resetSessionDatabaseForTests } = await import("../../../src/session/session-database.js");
+		await resetSessionDatabaseForTests();
 		if (previousUserProfile === undefined) {
 			delete process.env.USERPROFILE;
 		} else {

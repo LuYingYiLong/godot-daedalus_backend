@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { AdditionalContextItem, AiChatParams } from "../protocol/types.js";
 import { MAX_IMAGE_BYTES, SUPPORTED_IMAGE_MIME_TYPES } from "../protocol/image-attachments.js";
 import { getSessionDir, openSession } from "./session-store.js";
+import { getSessionDatabase, parseSqlJson, sqlJson } from "./session-database.js";
 
 const ATTACHMENT_ID_PATTERN: RegExp = /^image-[a-zA-Z0-9_-]+$/;
 const GENERATED_IMAGE_ID_PATTERN: RegExp = /^generated-image-[a-zA-Z0-9_-]+$/;
@@ -82,10 +83,6 @@ function attachmentImagePath(sessionId: string, attachmentId: string): string {
 	return join(getAttachmentsDir(sessionId), `${assertSafeAttachmentId(attachmentId)}.png`);
 }
 
-function attachmentMetadataPath(sessionId: string, attachmentId: string): string {
-	return join(getAttachmentsDir(sessionId), `${assertSafeAttachmentId(attachmentId)}.json`);
-}
-
 function assertSafeGeneratedImageId(imageId: string): string {
 	if (!GENERATED_IMAGE_ID_PATTERN.test(imageId)) {
 		throw new Error(`Invalid generated image id: ${imageId}`);
@@ -109,10 +106,6 @@ function generatedImagePath(sessionId: string, imageId: string, mimeType: string
 
 function generatedImageStoragePath(fileName: string): string {
 	return `attachments/images/${fileName}`;
-}
-
-function generatedImageMetadataPath(sessionId: string, imageId: string): string {
-	return join(getGeneratedImagesDir(sessionId), `${assertSafeGeneratedImageId(imageId)}.json`);
 }
 
 function parseImageDataUrl(mimeType: string, dataUrl: string): Buffer {
@@ -173,6 +166,33 @@ function createImageAttachmentContext(metadata: ImageAttachmentMetadata, thumbna
 	};
 }
 
+async function writeAttachmentMetadata(
+	sessionId: string,
+	attachmentId: string,
+	kind: "image" | "generated_image",
+	metadata: ImageAttachmentMetadata | GeneratedImageArtifactMetadata,
+	storagePath: string
+): Promise<void> {
+	(await getSessionDatabase()).prepare(`
+		INSERT INTO attachments(attachment_id, session_id, kind, metadata_json, storage_path, created_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(attachment_id) DO UPDATE SET
+			metadata_json = excluded.metadata_json,
+			storage_path = excluded.storage_path
+	`).run(attachmentId, sessionId, kind, sqlJson(metadata), storagePath, metadata.createdAt);
+}
+
+async function readAttachmentMetadata<T>(sessionId: string, attachmentId: string, kind: string): Promise<T> {
+	const row = (await getSessionDatabase()).prepare(`
+		SELECT metadata_json FROM attachments
+		WHERE session_id = ? AND attachment_id = ? AND kind = ?
+	`).get(sessionId, attachmentId, kind) as Record<string, unknown> | undefined;
+	if (row === undefined) {
+		throw new Error(`Attachment not found: ${attachmentId}`);
+	}
+	return parseSqlJson<T>(row.metadata_json);
+}
+
 export async function saveImageAttachment(input: SaveImageAttachmentInput): Promise<AdditionalContextItem> {
 	await openSession(input.sessionId);
 	if (!SUPPORTED_IMAGE_MIME_TYPES.includes(input.mimeType)) {
@@ -209,14 +229,22 @@ export async function saveImageAttachment(input: SaveImageAttachmentInput): Prom
 
 	await mkdir(getAttachmentsDir(input.sessionId), { recursive: true });
 	await writeFile(attachmentImagePath(input.sessionId, attachmentId), bytes);
-	await writeFile(attachmentMetadataPath(input.sessionId, attachmentId), JSON.stringify(metadata, null, 2), "utf8");
+	try {
+		await writeAttachmentMetadata(input.sessionId, attachmentId, "image", metadata, `attachments/${metadata.fileName}`);
+	} catch (error: unknown) {
+		await rm(attachmentImagePath(input.sessionId, attachmentId), { force: true });
+		throw error;
+	}
 	return createImageAttachmentContext(metadata, input.dataUrl);
 }
 
 export async function readImageAttachmentDataUrl(sessionId: string, attachmentId: string): Promise<string> {
 	await openSession(sessionId);
-	const metadataRaw: string = await readFile(attachmentMetadataPath(sessionId, attachmentId), "utf8");
-	const metadata: ImageAttachmentMetadata = JSON.parse(metadataRaw) as ImageAttachmentMetadata;
+	const metadata: ImageAttachmentMetadata = await readAttachmentMetadata<ImageAttachmentMetadata>(
+		sessionId,
+		assertSafeAttachmentId(attachmentId),
+		"image"
+	);
 	const bytes: Buffer = await readFile(attachmentImagePath(sessionId, attachmentId));
 	return `data:${metadata.mimeType};base64,${bytes.toString("base64")}`;
 }
@@ -257,7 +285,12 @@ export async function saveGeneratedImageArtifact(input: SaveGeneratedImageArtifa
 
 	await mkdir(getGeneratedImagesDir(input.sessionId), { recursive: true });
 	await writeFile(generatedImagePath(input.sessionId, imageId, input.mimeType), input.bytes);
-	await writeFile(generatedImageMetadataPath(input.sessionId, imageId), JSON.stringify(metadata, null, 2), "utf8");
+	try {
+		await writeAttachmentMetadata(input.sessionId, imageId, "generated_image", metadata, metadata.storagePath);
+	} catch (error: unknown) {
+		await rm(generatedImagePath(input.sessionId, imageId, input.mimeType), { force: true });
+		throw error;
+	}
 	return metadata;
 }
 
@@ -267,8 +300,11 @@ export function getGeneratedImageArtifactLocalPath(metadata: GeneratedImageArtif
 
 export async function readGeneratedImageDataUrl(sessionId: string, imageId: string): Promise<{ imageId: string; mimeType: string; dataUrl: string; metadata: GeneratedImageArtifactMetadata }> {
 	await openSession(sessionId);
-	const metadataRaw: string = await readFile(generatedImageMetadataPath(sessionId, imageId), "utf8");
-	const metadata: GeneratedImageArtifactMetadata = JSON.parse(metadataRaw) as GeneratedImageArtifactMetadata;
+	const metadata: GeneratedImageArtifactMetadata = await readAttachmentMetadata<GeneratedImageArtifactMetadata>(
+		sessionId,
+		assertSafeGeneratedImageId(imageId),
+		"generated_image"
+	);
 	if (metadata.sessionId !== sessionId || metadata.imageId !== imageId) {
 		throw new Error("Generated image metadata does not match request.");
 	}
@@ -286,8 +322,11 @@ export async function readGeneratedImageArtifact(
 	imageId: string
 ): Promise<{ metadata: GeneratedImageArtifactMetadata; bytes: Buffer }> {
 	await openSession(sessionId);
-	const metadataRaw: string = await readFile(generatedImageMetadataPath(sessionId, imageId), "utf8");
-	const metadata: GeneratedImageArtifactMetadata = JSON.parse(metadataRaw) as GeneratedImageArtifactMetadata;
+	const metadata: GeneratedImageArtifactMetadata = await readAttachmentMetadata<GeneratedImageArtifactMetadata>(
+		sessionId,
+		assertSafeGeneratedImageId(imageId),
+		"generated_image"
+	);
 	if (metadata.sessionId !== sessionId || metadata.imageId !== imageId) {
 		throw new Error("Generated image metadata does not match request.");
 	}
@@ -299,10 +338,10 @@ export async function readGeneratedImageArtifact(
 }
 
 export async function deleteGeneratedImageArtifact(metadata: GeneratedImageArtifactMetadata): Promise<void> {
-	await Promise.all([
-		rm(generatedImagePath(metadata.sessionId, metadata.imageId, metadata.mimeType), { force: true }),
-		rm(generatedImageMetadataPath(metadata.sessionId, metadata.imageId), { force: true })
-	]);
+	await rm(generatedImagePath(metadata.sessionId, metadata.imageId, metadata.mimeType), { force: true });
+	(await getSessionDatabase()).prepare(`
+		DELETE FROM attachments WHERE session_id = ? AND attachment_id = ? AND kind = 'generated_image'
+	`).run(metadata.sessionId, metadata.imageId);
 }
 
 export async function hydrateImageAttachmentContexts(sessionId: string | undefined, params: AiChatParams): Promise<AiChatParams> {

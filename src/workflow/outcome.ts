@@ -1,6 +1,7 @@
 import type { ToolEvent } from "../tools/tool-dispatcher.js";
 import { getEffectiveToolPolicy, getToolPolicy } from "../tools/tool-policy.js";
 import type {
+	WorkflowCompletionTarget,
 	WorkflowFailedCheck,
 	WorkflowPhase,
 	WorkflowPhaseOutput,
@@ -331,6 +332,95 @@ function collectFailedChecks(phase: WorkflowPhase, observations: WorkflowToolObs
 	return failedChecks;
 }
 
+const COMPLETION_FAILURE_CODES: ReadonlySet<string> = new Set([
+	"required_mutation_missing",
+	"target_artifact_missing",
+	"target_readback_failed"
+]);
+
+function normalizeTargetValue(value: string): string {
+	return value.replace(/^res:\/\//iu, "").replace(/\\/g, "/").replace(/^\.\//u, "").toLowerCase();
+}
+
+function observationTargetValues(observation: WorkflowToolObservation): string[] {
+	const args: Record<string, unknown> = observation.argsSummary ?? {};
+	const values: string[] = [...(observation.artifactRefs ?? [])];
+	for (const key of ["relativePath", "resourcePath", "scenePath", "scriptPath", "path"]) {
+		const value: unknown = args[key];
+		if (typeof value === "string" && value.length > 0) {
+			values.push(value);
+		}
+	}
+	return values.map(normalizeTargetValue);
+}
+
+function observationMatchesCompletionTarget(observation: WorkflowToolObservation, target: WorkflowCompletionTarget): boolean {
+	if (target.kind === "project_setting") {
+		const key: unknown = observation.argsSummary?.key;
+		return typeof key === "string" && normalizeTargetValue(key) === normalizeTargetValue(target.key);
+	}
+
+	const expected: string = normalizeTargetValue(target.path);
+	return observationTargetValues(observation).some((value: string): boolean => value === expected);
+}
+
+function isSuccessfulMutation(observation: WorkflowToolObservation): boolean {
+	return observation.status === "succeeded" && (observation.risk === "write" || observation.risk === "destructive");
+}
+
+function isReadbackObservation(observation: WorkflowToolObservation): boolean {
+	return observation.risk === "read"
+		|| observation.risk === "verify"
+		|| observation.toolName.includes("read_text_file")
+		|| observation.toolName.includes("inspect_scene_tree");
+}
+
+function collectCompletionContractFailedChecks(
+	phase: WorkflowPhase,
+	observations: WorkflowToolObservation[]
+): WorkflowFailedCheck[] {
+	const contract = phase.completionContract;
+	if (phase.toolGroup !== "write" || contract === undefined || contract.targets.length === 0) {
+		return [];
+	}
+
+	const failedChecks: WorkflowFailedCheck[] = [];
+	for (const target of contract.targets) {
+		const matchingMutations: WorkflowToolObservation[] = observations.filter((observation: WorkflowToolObservation): boolean => (
+			isSuccessfulMutation(observation) && observationMatchesCompletionTarget(observation, target)
+		));
+		if (matchingMutations.length === 0) {
+			failedChecks.push({
+				code: target.kind === "artifact" ? "target_artifact_missing" : "required_mutation_missing",
+				message: target.kind === "artifact"
+					? `写入阶段没有实际创建或修改目标文件 ${target.path}。`
+					: `写入阶段没有实际修改目标项目设置 ${target.key}。`,
+				artifact: target.kind === "artifact" ? target.path : target.key,
+				severity: "error"
+			});
+			if (!contract.requireAll) {
+				break;
+			}
+			continue;
+		}
+
+		const readbacks: WorkflowToolObservation[] = observations.filter((observation: WorkflowToolObservation): boolean => (
+			isReadbackObservation(observation) && observationMatchesCompletionTarget(observation, target)
+		));
+		if (readbacks.length > 0 && !readbacks.some((observation: WorkflowToolObservation): boolean => observation.status === "succeeded")) {
+			failedChecks.push({
+				code: "target_readback_failed",
+				message: target.kind === "artifact"
+					? `目标文件 ${target.path} 的回读或检查失败。`
+					: `目标项目设置 ${target.key} 的回读失败。`,
+				artifact: target.kind === "artifact" ? target.path : target.key,
+				severity: "error"
+			});
+		}
+	}
+	return failedChecks;
+}
+
 function collectSummaries(observations: WorkflowToolObservation[]): string[] {
 	return observations
 		.map((observation: WorkflowToolObservation, index: number): string | undefined => {
@@ -398,6 +488,12 @@ function createOutcomeStatus(
 	}
 
 	if (failedChecks.length > 0) {
+		if (
+			phase.toolGroup === "write"
+			&& failedChecks.every((check: WorkflowFailedCheck): boolean => COMPLETION_FAILURE_CODES.has(check.code))
+		) {
+			return "needs_fix";
+		}
 		return phase.toolGroup === "write" ? "failed" : "needs_fix";
 	}
 
@@ -410,7 +506,10 @@ export function createWorkflowPhaseOutcome(
 	agentResultText: string,
 	observations: WorkflowToolObservation[]
 ): WorkflowPhaseOutput {
-	const failedChecks: WorkflowFailedCheck[] = collectFailedChecks(phase, observations, agentResultText);
+	const failedChecks: WorkflowFailedCheck[] = [
+		...collectFailedChecks(phase, observations, agentResultText),
+		...collectCompletionContractFailedChecks(phase, observations)
+	];
 	const status: WorkflowPhaseOutcomeStatus = createOutcomeStatus(phase, failedChecks, observations);
 	const summaries: string[] = failedChecks.some((check: WorkflowFailedCheck): boolean => check.code === "summary_requested_tool")
 		? failedChecks.map((check: WorkflowFailedCheck): string => check.message)

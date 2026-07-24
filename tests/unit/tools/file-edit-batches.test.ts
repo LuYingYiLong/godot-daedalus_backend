@@ -16,6 +16,8 @@ async function withTempAppData<T>(fn: (store: typeof import("../../../src/sessio
 		const batches = await import(`../../../src/server/file-edit-batches.js?case=${suffix}`);
 		return await fn(store, batches);
 	} finally {
+		const { resetSessionDatabaseForTests } = await import("../../../src/session/session-database.js");
+		await resetSessionDatabaseForTests();
 		if (previousUserProfile === undefined) {
 			delete process.env.USERPROFILE;
 		} else {

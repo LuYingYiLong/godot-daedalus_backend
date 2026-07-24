@@ -88,12 +88,17 @@ function sendUnhandledRequestError(socket: WebSocket, request: ClientRequest, er
 		requestId: request.id,
 		method: request.method
 	});
-	sendProtocolError(
-		socket,
-		"internal_error",
-		error instanceof Error ? error.message : "Unhandled request error",
-		request.id
-	);
+	const storageError = error as Error & { code?: string };
+	if (storageError.code === "session_storage_unavailable") {
+		sendProtocolError(
+			socket,
+			"session_storage_unavailable",
+			storageError.message,
+			request.id
+		);
+		return;
+	}
+	sendProtocolError(socket, "internal_error", error instanceof Error ? error.message : "Unhandled request error", request.id);
 }
 
 function getRemoteAddress(request: Parameters<WebSocketServer["emit"]>[1]): string {

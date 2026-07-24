@@ -5,15 +5,19 @@ import path from "node:path";
 import test from "node:test";
 import type { ChatMessage } from "../../../src/protocol/types.js";
 
-async function withTempAppData<T>(fn: (store: typeof import("../../../src/session/session-store.js")) => Promise<T>): Promise<T> {
+async function withTempAppData<T>(
+	fn: (store: typeof import("../../../src/session/session-store.js"), appDataDir: string) => Promise<T>
+): Promise<T> {
 	const previousUserProfile: string | undefined = process.env.USERPROFILE;
 	const appDataDir: string = await fs.mkdtemp(path.join(os.tmpdir(), "godot-daedalus-session-appdata-"));
 	process.env.USERPROFILE = appDataDir;
 
 	try {
 		const store = await import(`../../../src/session/session-store.js?case=${Date.now()}-${Math.random()}`);
-		return await fn(store);
+		return await fn(store, appDataDir);
 	} finally {
+		const { resetSessionDatabaseForTests } = await import("../../../src/session/session-database.js");
+		await resetSessionDatabaseForTests();
 		if (previousUserProfile === undefined) {
 			delete process.env.USERPROFILE;
 		} else {
@@ -24,11 +28,12 @@ async function withTempAppData<T>(fn: (store: typeof import("../../../src/sessio
 }
 
 test("session store creates, opens, pages, rewinds, archives, restores, and deletes sessions", async (): Promise<void> => {
-	await withTempAppData(async (store): Promise<void> => {
+	await withTempAppData(async (store, appDataDir): Promise<void> => {
 		const metadata = await store.createSession("First session", "workspace-a", "gdscript.review");
 		assert.match(metadata.id, /^session-/);
 		assert.equal(metadata.title, "First session");
 		assert.equal(metadata.workspaceId, "workspace-a");
+		await assert.rejects(fs.stat(path.join(appDataDir, ".daedalus", "sessions")));
 
 		const firstMessage: ChatMessage = {
 			role: "user",
@@ -96,6 +101,7 @@ test("session store creates, opens, pages, rewinds, archives, restores, and dele
 		assert.equal(archived.archivedAt !== undefined, true);
 		assert.equal((await store.listSessions()).length, 0);
 		assert.equal((await store.listArchivedSessions()).length, 1);
+		await assert.rejects(fs.stat(path.join(appDataDir, ".daedalus", "archived_sessions")));
 
 		const restored = await store.restoreArchivedSession(metadata.id);
 		assert.equal(restored.archivedAt, undefined);
@@ -270,20 +276,10 @@ test("session integrity check reports cross-session event records", async (): Pr
 			sessionId: metadata.id,
 			text: "good"
 		});
-		await fs.appendFile(
-			path.join(store.getSessionDir(metadata.id), "events.jsonl"),
-			JSON.stringify({
-				id: "event-bad",
-				requestId: "request-bad",
-				event: "agent.message.delta",
-				data: {
-					sessionId: "session-20260720-other",
-					text: "wrong session"
-				},
-				createdAt: "2026-07-20T00:00:00.000Z"
-			}) + "\n",
-			"utf8"
-		);
+		await store.appendSessionEvent(metadata.id, "request-bad", "agent.message.delta", {
+			sessionId: "session-20260720-other",
+			text: "wrong session"
+		});
 
 		const result = await store.checkSessionIntegrity(metadata.id);
 
@@ -317,5 +313,36 @@ test("session store rejects unsafe session ids", async (): Promise<void> => {
 		await assert.rejects(() => store.openSession("../session-escape"), /Invalid session id/);
 		await assert.rejects(() => store.deleteSession("session-../escape"), /Invalid session id/);
 		await assert.rejects(() => store.restoreArchivedSession("session-..\\escape"), /Invalid session id/);
+	});
+});
+
+test("recent timeline pagination only decodes payloads for the selected SQL page", async (): Promise<void> => {
+	await withTempAppData(async (store): Promise<void> => {
+		const metadata = await store.createSession("Paged payload session");
+		await store.appendMessage(metadata.id, {
+			role: "user",
+			content: "old message",
+			requestId: "request-old",
+			createdAt: "2026-07-03T00:00:00.000Z"
+		});
+		await store.appendMessage(metadata.id, {
+			role: "assistant",
+			content: "recent message",
+			requestId: "request-recent",
+			createdAt: "2026-07-03T00:00:01.000Z"
+		});
+		const { getSessionDatabase } = await import("../../../src/session/session-database.js");
+		const db = await getSessionDatabase();
+		db.prepare(`
+			UPDATE messages SET payload_json = '{invalid-json'
+			WHERE session_id = ? AND request_id = 'request-old'
+		`).run(metadata.id);
+
+		const recent = await store.openSessionRecentTimeline(metadata.id, 1);
+		assert.equal(recent.blockCount, 2);
+		assert.equal(recent.timelineBlocks.length, 1);
+		assert.equal(recent.timelineBlocks[0]?.requestId, "request-recent");
+		assert.deepEqual(recent.messages.map((message) => message.requestId), ["request-recent"]);
+		await assert.rejects(store.openSession(metadata.id), /JSON/u);
 	});
 });

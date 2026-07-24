@@ -176,6 +176,24 @@ import { logger } from "../logger.js";
 import { getApprovalMode } from "../approval-settings-store.js";
 import { resolveSessionCreateWorkspaceId } from "./session-create-workspace.js";
 
+function sessionRpcError(
+	error: unknown,
+	fallbackCode: string,
+	fallbackMessage: string
+): { code: string; message: string } {
+	const candidate = error as Error & { code?: string };
+	if (candidate.code === "session_storage_unavailable") {
+		return {
+			code: candidate.code,
+			message: candidate.message
+		};
+	}
+	return {
+		code: fallbackCode,
+		message: error instanceof Error ? error.message : fallbackMessage
+	};
+}
+
 function restoreWorkspaceFromSessionMetadata(metadata: SessionMetadata): WorkspaceConfig | undefined {
 	if (metadata.workspaceId === undefined || metadata.workspaceRoot === undefined) {
 		return undefined;
@@ -725,10 +743,7 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 					type: "response",
 					id: request.id,
 					ok: false,
-					error: {
-						code: "session_not_found",
-						message: error instanceof Error ? error.message : "Session not found"
-					}
+					error: sessionRpcError(error, "session_not_found", "Session not found")
 				});
 			}
 			break;
@@ -825,10 +840,7 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 					type: "response",
 					id: request.id,
 					ok: false,
-					error: {
-						code: "session_timeline_error",
-						message: error instanceof Error ? error.message : "Failed to load session timeline"
-					}
+					error: sessionRpcError(error, "session_timeline_error", "Failed to load session timeline")
 				});
 			}
 			break;
@@ -847,10 +859,7 @@ export async function handleSessionRequest(socket: WebSocket, request: ClientReq
 					type: "response",
 					id: request.id,
 					ok: false,
-					error: {
-						code: "session_integrity_check_failed",
-						message: error instanceof Error ? error.message : "Failed to check session integrity"
-					}
+					error: sessionRpcError(error, "session_integrity_check_failed", "Failed to check session integrity")
 				});
 			}
 			break;

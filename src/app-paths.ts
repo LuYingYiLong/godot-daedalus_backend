@@ -14,6 +14,7 @@ export type DaedalusPathKey =
 	| "skills.root"
 	| "sessions.activeRoot"
 	| "sessions.archivedRoot"
+	| "sessions.database"
 	| "logs.root"
 	| "terminalJobs.root"
 	| "toolExecution.ledger"
@@ -45,6 +46,7 @@ function buildDaedalusPathRegistry(): DaedalusPathRegistry {
 		"skills.root": join(root, "skills"),
 		"sessions.activeRoot": join(root, "sessions"),
 		"sessions.archivedRoot": join(root, "archived_sessions"),
+		"sessions.database": join(root, "sessions.sqlite"),
 		"logs.root": join(root, "logs"),
 		"terminalJobs.root": join(root, "terminal-jobs"),
 		"toolExecution.ledger": join(root, "tool-executions.jsonl"),
@@ -98,6 +100,10 @@ export function getDefaultSessionsDir(): string {
 
 export function getDefaultArchivedSessionsDir(): string {
 	return getDaedalusPath("sessions.archivedRoot");
+}
+
+export function getSessionsDatabasePath(): string {
+	return getDaedalusPath("sessions.database");
 }
 
 export function getLogsDir(): string {

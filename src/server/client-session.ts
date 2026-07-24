@@ -66,6 +66,8 @@ export type WorkbenchNextStepHints = {
 export type ThinkingEventBuffer = {
 	sessionId: string;
 	requestId: string;
+	eventName: string;
+	data: Record<string, unknown>;
 	text: string;
 };
 

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, readdir } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -7,15 +7,19 @@ import { aiChatParamsSchema } from "../../../src/protocol/schema.js";
 
 async function withTempAppData(run: () => Promise<void>): Promise<void> {
 	const previousUserProfile: string | undefined = process.env.USERPROFILE;
-	process.env.USERPROFILE = await mkdtemp(join(tmpdir(), "daedalus-session-attachments-"));
+	const appDataDir: string = await mkdtemp(join(tmpdir(), "daedalus-session-attachments-"));
+	process.env.USERPROFILE = appDataDir;
 	try {
 		await run();
 	} finally {
+		const { resetSessionDatabaseForTests } = await import("../../../src/session/session-database.js");
+		await resetSessionDatabaseForTests();
 		if (previousUserProfile === undefined) {
 			delete process.env.USERPROFILE;
 		} else {
 			process.env.USERPROFILE = previousUserProfile;
 		}
+		await rm(appDataDir, { recursive: true, force: true });
 	}
 }
 
@@ -67,7 +71,11 @@ test("image attachments are saved under the session and hydrate to dataUrl", asy
 		assert.equal((context.data as Record<string, unknown>).sourcePath, "D:/Pictures/reference.png");
 
 		const attachmentId: string = String((context.data as Record<string, unknown>).attachmentId);
-		const rawMetadata: string = await readFile(join(sessionStore.getSessionDir(metadata.id), "attachments", `${attachmentId}.json`), "utf8");
+		const { getSessionDatabase } = await import("../../../src/session/session-database.js");
+		const db = await getSessionDatabase();
+		const row = db.prepare("SELECT metadata_json FROM attachments WHERE session_id = ? AND attachment_id = ?")
+			.get(metadata.id, attachmentId) as { metadata_json: string };
+		const rawMetadata: string = row.metadata_json;
 		assert.equal(rawMetadata.includes("aGVsbG8="), false);
 		assert.equal(rawMetadata.includes("D:/Pictures/reference.png"), true);
 
@@ -114,7 +122,8 @@ test("timeline result hydrates session-backed image thumbnails without persistin
 			requestId: "request-image"
 		}]);
 
-		const rawMessages: string = await readFile(join(sessionStore.getSessionDir(metadata.id), "messages.jsonl"), "utf8");
+		const opened = await sessionStore.openSession(metadata.id);
+		const rawMessages: string = JSON.stringify(opened.messages);
 		assert.equal(rawMessages.includes("aGVsbG8="), false);
 
 		const page = await sessionStore.openSessionRecentTimeline(metadata.id, 10);
@@ -154,9 +163,13 @@ test("generated image artifacts are saved under the session and read through dat
 		const imagesDir: string = join(sessionStore.getSessionDir(metadata.id), "attachments", "images");
 		const files: string[] = await readdir(imagesDir);
 		assert.equal(files.includes(`${artifact.imageId}.png`), true);
-		assert.equal(files.includes(`${artifact.imageId}.json`), true);
+		assert.equal(files.includes(`${artifact.imageId}.json`), false);
 
-		const rawMetadata: string = await readFile(join(imagesDir, `${artifact.imageId}.json`), "utf8");
+		const { getSessionDatabase } = await import("../../../src/session/session-database.js");
+		const db = await getSessionDatabase();
+		const row = db.prepare("SELECT metadata_json FROM attachments WHERE session_id = ? AND attachment_id = ?")
+			.get(metadata.id, artifact.imageId) as { metadata_json: string };
+		const rawMetadata: string = row.metadata_json;
 		assert.equal(rawMetadata.includes(bytes.toString("base64")), false);
 		assert.equal(rawMetadata.includes("A blue robot app icon"), true);
 

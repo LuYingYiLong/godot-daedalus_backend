@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { insertWorkflowAutoRepairPhases } from "../../../src/workflow/repair.js";
+import { countWorkflowAutoRepairRounds, insertWorkflowAutoRepairPhases } from "../../../src/workflow/repair.js";
 import type { WorkflowFailedCheck, WorkflowPhase, WorkflowPlan, WorkflowTodoItem } from "../../../src/workflow/types.js";
 
 function createPhase(id: string, title: string, toolGroup: WorkflowPhase["toolGroup"]): WorkflowPhase {
@@ -63,7 +63,51 @@ test("workflow auto repair insertion preserves current todos and adds repair plu
 	assert.ok(!repairedPlan.phases[3]?.allowedTools.includes("mcp_godot_propose_replace_text_in_file"));
 	assert.match(repairedPlan.phases[3]?.instruction ?? "", /第一步必须调用/);
 	assert.ok(repairedPlan.phases[4]?.allowedTools.includes("mcp_terminal_run_safe_preset"));
+	assert.equal(countWorkflowAutoRepairRounds(repairedPlan), 1);
 	assert.equal(repairedPlan.revision, 1);
+});
+
+test("workflow repair permits two actual rounds and preserves missing target contracts", (): void => {
+	const write: WorkflowPhase = {
+		...createPhase("create-main", "Create main scene", "write"),
+		completionContract: {
+			targets: [{ kind: "artifact", path: "scenes/Main.tscn" }],
+			requireAll: true
+		}
+	};
+	const summarize: WorkflowPhase = createPhase("summarize", "Summarize", "summarize");
+	const plan: WorkflowPlan = {
+		id: "workflow-target-repair",
+		title: "Create Main.tscn",
+		source: "llm",
+		revision: 0,
+		phases: [write, summarize],
+		todos: [createTodo(write, "failed"), createTodo(summarize)]
+	};
+	const failedChecks: WorkflowFailedCheck[] = [{
+		code: "target_artifact_missing",
+		message: "The target scene was not created.",
+		artifact: "scenes/Main.tscn"
+	}];
+
+	const firstRepair = insertWorkflowAutoRepairPhases(plan, 1, write, "Missing Main.tscn", failedChecks);
+	const firstRepairPhase = firstRepair.phases.find((phase: WorkflowPhase): boolean => phase.id === "auto-repair-1");
+	assert.equal(countWorkflowAutoRepairRounds(firstRepair), 1);
+	assert.equal(firstRepairPhase?.allowedTools.includes("mcp_godot_create_scene"), true);
+	assert.deepEqual(firstRepairPhase?.completionContract, {
+		targets: [{ kind: "artifact", path: "scenes/Main.tscn" }],
+		requireAll: true
+	});
+
+	const secondRepair = insertWorkflowAutoRepairPhases(
+		firstRepair,
+		firstRepair.phases.length - 1,
+		firstRepairPhase!,
+		"Main.tscn is still missing",
+		failedChecks
+	);
+	assert.equal(countWorkflowAutoRepairRounds(secondRepair), 2);
+	assert.equal(secondRepair.phases.some((phase: WorkflowPhase): boolean => phase.id === "auto-repair-2"), true);
 });
 
 test("workflow verification-only failures add reverify without write repair", (): void => {

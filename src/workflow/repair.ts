@@ -1,6 +1,13 @@
 import { READ_TOOLS, VERIFY_TOOLS, WRITE_TOOLS } from "./planner.js";
 import { getToolPolicy } from "../tools/tool-policy.js";
-import type { WorkflowFailedCheck, WorkflowPhase, WorkflowPlan, WorkflowTodoItem } from "./types.js";
+import type {
+	WorkflowCompletionContract,
+	WorkflowCompletionTarget,
+	WorkflowFailedCheck,
+	WorkflowPhase,
+	WorkflowPlan,
+	WorkflowTodoItem
+} from "./types.js";
 
 const AUTO_REPAIR_ID_PREFIX: string = "auto-repair-";
 const AUTO_VERIFY_ID_PREFIX: string = "auto-verify-";
@@ -57,9 +64,9 @@ function isWriteGuardFailure(failedPhase: WorkflowPhase, failedChecks: WorkflowF
 }
 
 export function countWorkflowAutoRepairRounds(plan: WorkflowPlan): number {
-	return plan.phases.filter((phase: WorkflowPhase): boolean => (
-		phase.id.startsWith(AUTO_REPAIR_ID_PREFIX) || phase.id.startsWith(AUTO_VERIFY_ID_PREFIX)
-	)).length;
+	return plan.phases.reduce((highestRound: number, phase: WorkflowPhase): number => (
+		Math.max(highestRound, phase.repairRound ?? 0)
+	), 0);
 }
 
 function createUniquePhaseId(plan: WorkflowPlan, prefix: string, round: number): string {
@@ -317,6 +324,52 @@ function createAutoVerifyPhase(
 	};
 }
 
+function normalizeCompletionTarget(value: string): string {
+	return value.replace(/^res:\/\//iu, "").replace(/\\/g, "/").toLowerCase();
+}
+
+function completionTargetValue(target: WorkflowCompletionTarget): string {
+	return target.kind === "artifact" ? target.path : target.key;
+}
+
+function createRepairCompletionContract(
+	failedPhase: WorkflowPhase,
+	failedChecks: WorkflowFailedCheck[]
+): WorkflowCompletionContract | undefined {
+	const completionChecks: WorkflowFailedCheck[] = failedChecks.filter((check: WorkflowFailedCheck): boolean => (
+		check.code === "required_mutation_missing"
+			|| check.code === "target_artifact_missing"
+			|| check.code === "target_readback_failed"
+	));
+	if (completionChecks.length === 0) {
+		return undefined;
+	}
+
+	const missingTargets: Set<string> = new Set(completionChecks
+		.map((check: WorkflowFailedCheck): string | undefined => check.artifact)
+		.filter((value: string | undefined): value is string => value !== undefined)
+		.map(normalizeCompletionTarget));
+	const inheritedTargets: WorkflowCompletionTarget[] = failedPhase.completionContract?.targets
+		.filter((target: WorkflowCompletionTarget): boolean => (
+			missingTargets.size === 0 || missingTargets.has(normalizeCompletionTarget(completionTargetValue(target)))
+		))
+		.map((target: WorkflowCompletionTarget): WorkflowCompletionTarget => ({ ...target }))
+		?? [];
+	if (inheritedTargets.length > 0) {
+		return { targets: inheritedTargets, requireAll: true };
+	}
+
+	const targets: WorkflowCompletionTarget[] = completionChecks.flatMap((check: WorkflowFailedCheck): WorkflowCompletionTarget[] => {
+		if (check.artifact === undefined) {
+			return [];
+		}
+		return check.code === "required_mutation_missing"
+			? [{ kind: "project_setting", key: check.artifact }]
+			: [{ kind: "artifact", path: check.artifact }];
+	});
+	return targets.length > 0 ? { targets, requireAll: true } : undefined;
+}
+
 export function insertWorkflowAutoRepairPhases(
 	plan: WorkflowPlan,
 	insertIndex: number,
@@ -357,7 +410,9 @@ export function insertWorkflowAutoRepairPhases(
 		repairOf: failedPhase.id,
 		repairRound: round,
 		acceptanceCriteria,
-		instruction: createRepairInstruction(failedPhase, verifyFailureReason, repairWriteTools, failedChecks)
+		instruction: createRepairInstruction(failedPhase, verifyFailureReason, repairWriteTools, failedChecks),
+		completionContract: createRepairCompletionContract(failedPhase, failedChecks),
+		requireToolCallOnFirstStep: true
 	};
 	const phases: WorkflowPhase[] = [
 		...plan.phases.slice(0, insertIndex),

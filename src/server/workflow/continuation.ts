@@ -32,8 +32,48 @@ import { withProviderUsageContext } from "../../usage/provider-recorder.js";
 
 const MAX_WORKFLOW_WRITE_GUARD_RETRY_ATTEMPTS: number = 2;
 
-function collectWorkflowWarnings(outputs: WorkflowPhaseOutput[]): string[] {
-	return [...new Set(outputs.flatMap((output: WorkflowPhaseOutput): string[] => output.warnings ?? []))];
+export function collectWorkflowCompletionStatus(
+	plan: WorkflowPlan,
+	outputs: WorkflowPhaseOutput[]
+): {
+	resultStatus: "completed" | "completed_with_warnings";
+	verificationStatus: "verified" | "unverified";
+	warnings: string[];
+} {
+	const warnings: string[] = [...new Set(outputs.flatMap((output: WorkflowPhaseOutput): string[] => output.warnings ?? []))];
+	let lastWriteOutputIndex: number = -1;
+	for (let index: number = 0; index < outputs.length; index += 1) {
+		const output: WorkflowPhaseOutput | undefined = outputs[index];
+		if (output?.toolObservations.some((observation: WorkflowToolObservation): boolean => (
+			observation.status === "succeeded"
+			&& (observation.risk === "write" || observation.risk === "destructive")
+		)) === true) {
+			lastWriteOutputIndex = index;
+		}
+	}
+
+	const hasSuccessfulVerifyAfterWrite: boolean = lastWriteOutputIndex >= 0 && outputs.some((
+		output: WorkflowPhaseOutput,
+		index: number
+	): boolean => {
+		if (index <= lastWriteOutputIndex || output.status !== "completed" || output.verificationStatus !== "verified") {
+			return false;
+		}
+		return plan.phases.find((phase: WorkflowPhase): boolean => phase.id === output.phaseId)?.toolGroup === "verify";
+	});
+	if (lastWriteOutputIndex >= 0 && !hasSuccessfulVerifyAfterWrite) {
+		warnings.push("修改已完成，但最后一次写入后没有成功的验证阶段。");
+	}
+
+	const uniqueWarnings: string[] = [...new Set(warnings)];
+	const verificationStatus: "verified" | "unverified" = lastWriteOutputIndex < 0
+		? (uniqueWarnings.length === 0 ? "verified" : "unverified")
+		: (hasSuccessfulVerifyAfterWrite && uniqueWarnings.length === 0 ? "verified" : "unverified");
+	return {
+		resultStatus: uniqueWarnings.length > 0 ? "completed_with_warnings" : "completed",
+		verificationStatus,
+		warnings: uniqueWarnings
+	};
 }
 
 function stringifyWorkflowFailedChecks(value: unknown): string[] {
@@ -510,7 +550,7 @@ export async function continueWorkflowExecution(
 		sendWorkflowTodoSnapshot(socket, requestId, session, plan, persistRequestId, phaseOutputs);
 
 		if (isFinalPhase) {
-			const warnings: string[] = collectWorkflowWarnings(phaseOutputs);
+			const completionStatus = collectWorkflowCompletionStatus(plan, phaseOutputs);
 			await appendChatTurnToSession(
 				session,
 				state.history,
@@ -529,9 +569,9 @@ export async function continueWorkflowExecution(
 				requestId: persistRequestId,
 				sequence: session.workbenchActiveRun.sequence ?? session.workbenchActiveRunSequence,
 				title: plan.title,
-				resultStatus: warnings.length > 0 ? "completed_with_warnings" : "completed",
-				verificationStatus: warnings.length > 0 ? "unverified" : "verified",
-				warnings
+				resultStatus: completionStatus.resultStatus,
+				verificationStatus: completionStatus.verificationStatus,
+				warnings: completionStatus.warnings
 			}, persistRequestId);
 
 			if (streamFinal) {

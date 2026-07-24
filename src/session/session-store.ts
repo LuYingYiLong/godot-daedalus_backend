@@ -1,19 +1,28 @@
-import { access, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
+import type { DatabaseSync } from "node:sqlite";
 import { getDefaultArchivedSessionsDir, getDefaultSessionsDir } from "../app-paths.js";
-import { writeJsonFileAtomic } from "../json-file-store.js";
 import type { ChatMessage } from "../protocol/types.js";
 import type { WorkspaceConfig } from "../workspace/types.js";
-import { buildCanonicalTimelineBlocks, type TimelineBlock, type TimelinePlanApproval, type TimelinePlanClarification } from "./timeline-blocks.js";
+import {
+	getSessionDatabase,
+	parseSqlJson,
+	runSessionTransaction,
+	sqlJson,
+	toSqlValue
+} from "./session-database.js";
+import {
+	buildCanonicalTimelineBlocks,
+	type TimelineBlock,
+	type TimelinePlanApproval,
+	type TimelinePlanClarification
+} from "./timeline-blocks.js";
 
 const SESSIONS_DIR: string = getDefaultSessionsDir();
 const ARCHIVED_SESSIONS_DIR: string = getDefaultArchivedSessionsDir();
 const SESSION_ID_PATTERN: RegExp = /^session-[a-zA-Z0-9_-]+$/;
 
 export type SessionChatMode = "agent" | "ask" | "plan";
-
-let ensureSessionsDirPromise: Promise<void> | null = null;
-let ensureArchivedSessionsDirPromise: Promise<void> | null = null;
 
 export type SessionMetadata = {
 	id: string;
@@ -97,14 +106,6 @@ export type StoredSessionTimelinePage = {
 	latestPlanApproval: TimelinePlanApproval | null;
 };
 
-type TimelineCacheEntry = {
-	key: string;
-	result: ReturnType<typeof buildCanonicalTimelineBlocks>;
-};
-
-const timelineCacheBySessionId: Map<string, TimelineCacheEntry> = new Map();
-const transcriptWriteQueuesBySessionId: Map<string, Promise<void>> = new Map();
-
 type RewindableEvent = {
 	requestId: string;
 	createdAt: string;
@@ -126,6 +127,9 @@ export type SessionIntegrityCheckResult = {
 	ok: boolean;
 	issues: SessionIntegrityIssue[];
 	checkedFiles: StoredEventFileKind[];
+	storage?: "sqlite" | undefined;
+	integrityCheck?: string | undefined;
+	foreignKeyIssueCount?: number | undefined;
 };
 
 type TranscriptUpdate<T> = {
@@ -141,16 +145,22 @@ export type SessionSummary = {
 	generatedAt: string;
 };
 
+const timelineCacheBySessionId: Map<string, ReturnType<typeof buildCanonicalTimelineBlocks>> = new Map();
+const transcriptWriteQueuesBySessionId: Map<string, Promise<void>> = new Map();
+
 function assertSafeSessionId(sessionId: string): string {
 	if (!SESSION_ID_PATTERN.test(sessionId)) {
 		throw new Error(`Invalid session id: ${sessionId}`);
 	}
-
 	return sessionId;
 }
 
 export function getSessionDir(sessionId: string): string {
 	return join(SESSIONS_DIR, assertSafeSessionId(sessionId));
+}
+
+function getArchivedSessionDir(sessionId: string): string {
+	return join(ARCHIVED_SESSIONS_DIR, assertSafeSessionId(sessionId));
 }
 
 function invalidateTimelineCache(sessionId: string): void {
@@ -161,199 +171,14 @@ async function enqueueTranscriptWrite<T>(sessionId: string, operation: () => Pro
 	const safeSessionId: string = assertSafeSessionId(sessionId);
 	const previousWrite: Promise<void> = transcriptWriteQueuesBySessionId.get(safeSessionId) ?? Promise.resolve();
 	const nextWrite: Promise<T> = previousWrite.then(operation, operation);
-	const queuedWrite: Promise<void> = nextWrite.then(
-		(): void => undefined,
-		(): void => undefined
-	);
-	transcriptWriteQueuesBySessionId.set(safeSessionId, queuedWrite);
-
+	const tracked: Promise<void> = nextWrite.then((): void => undefined, (): void => undefined);
+	transcriptWriteQueuesBySessionId.set(safeSessionId, tracked);
 	try {
 		return await nextWrite;
 	} finally {
-		if (transcriptWriteQueuesBySessionId.get(safeSessionId) === queuedWrite) {
+		if (transcriptWriteQueuesBySessionId.get(safeSessionId) === tracked) {
 			transcriptWriteQueuesBySessionId.delete(safeSessionId);
 		}
-	}
-}
-
-function getArchivedSessionDir(sessionId: string): string {
-	return join(ARCHIVED_SESSIONS_DIR, assertSafeSessionId(sessionId));
-}
-
-async function ensureSessionsDir(): Promise<void> {
-	if (!ensureSessionsDirPromise) {
-		ensureSessionsDirPromise = (async (): Promise<void> => {
-			await mkdir(SESSIONS_DIR, { recursive: true });
-		})();
-	}
-
-	await ensureSessionsDirPromise;
-}
-
-async function ensureArchivedSessionsDir(): Promise<void> {
-	if (!ensureArchivedSessionsDirPromise) {
-		ensureArchivedSessionsDirPromise = (async (): Promise<void> => {
-			await mkdir(ARCHIVED_SESSIONS_DIR, { recursive: true });
-		})();
-	}
-
-	await ensureArchivedSessionsDirPromise;
-}
-
-async function createSessionDir(sessionId: string): Promise<string> {
-	await ensureSessionsDir();
-	const dir: string = getSessionDir(sessionId);
-	await mkdir(dir, { recursive: true });
-	return dir;
-}
-
-function metaPath(sessionId: string): string {
-	return join(getSessionDir(sessionId), "metadata.json");
-}
-
-function archivedMetaPath(sessionId: string): string {
-	return join(getArchivedSessionDir(sessionId), "metadata.json");
-}
-
-function messagesPath(sessionId: string): string {
-	return join(getSessionDir(sessionId), "messages.jsonl");
-}
-
-function eventsPath(sessionId: string): string {
-	return join(getSessionDir(sessionId), "events.jsonl");
-}
-
-function approvalEventsPath(sessionId: string): string {
-	return join(getSessionDir(sessionId), "approval-events.jsonl");
-}
-
-function workflowEventsPath(sessionId: string): string {
-	return join(getSessionDir(sessionId), "workflow-events.jsonl");
-}
-
-function agentEventsPath(sessionId: string): string {
-	return join(getSessionDir(sessionId), "agent-events.jsonl");
-}
-
-export function createWorkspaceMetadataSnapshot(workspace: WorkspaceConfig | undefined): Partial<SessionMetadata> {
-	if (workspace === undefined) {
-		return {};
-	}
-
-	const metadata: Partial<SessionMetadata> = {
-		workspaceId: workspace.id,
-		workspaceName: workspace.name,
-		workspaceKind: workspace.kind,
-		workspaceRoot: workspace.rootPath
-	};
-
-	if (workspace.godotExecutablePath !== undefined) {
-		metadata.godotExecutablePath = workspace.godotExecutablePath;
-	}
-
-	return metadata;
-}
-
-export function createWorkspaceMetadataBackfill(existing: SessionMetadata, workspace: WorkspaceConfig | undefined): Partial<SessionMetadata> {
-	if (existing.workspaceId !== undefined || existing.workspaceRoot !== undefined) {
-		return {};
-	}
-
-	return createWorkspaceMetadataSnapshot(workspace);
-}
-
-function mergeSessionMetadata(existing: SessionMetadata, metadata?: Partial<SessionMetadata>): SessionMetadata {
-	const updated: SessionMetadata = {
-		...existing,
-		updatedAt: new Date().toISOString()
-	};
-	delete (updated as SessionMetadata & { webSearchEnabled?: unknown }).webSearchEnabled;
-
-	if (metadata === undefined) {
-		return updated;
-	}
-
-	for (const [key, value] of Object.entries(metadata) as [keyof SessionMetadata, SessionMetadata[keyof SessionMetadata]][]) {
-		if (value !== undefined) {
-			updated[key] = value as never;
-		}
-	}
-
-	return updated;
-}
-
-export async function createSession(
-	title: string,
-	workspaceId?: string,
-	skillId?: string,
-	workspaceSnapshot?: WorkspaceConfig | undefined,
-	initialMetadata?: Partial<SessionMetadata> | undefined
-): Promise<SessionMetadata> {
-	const timestamp: string = new Date().toISOString();
-	const dateStr: string = timestamp.slice(0, 10).replace(/-/g, "");
-	const id: string = `session-${dateStr}-${Date.now().toString(36)}`;
-
-	const metadata: SessionMetadata = {
-		...initialMetadata,
-		id,
-		title,
-		workspaceId,
-		...createWorkspaceMetadataSnapshot(workspaceSnapshot),
-		createdAt: timestamp,
-		updatedAt: timestamp
-	};
-
-	const dir: string = await createSessionDir(id);
-	await writeJsonFileAtomic(join(dir, "metadata.json"), metadata);
-	await writeFile(join(dir, "messages.jsonl"), "", "utf8");
-	await writeFile(join(dir, "events.jsonl"), "", "utf8");
-	await writeFile(join(dir, "approval-events.jsonl"), "", "utf8");
-	await writeFile(join(dir, "workflow-events.jsonl"), "", "utf8");
-	await writeFile(join(dir, "agent-events.jsonl"), "", "utf8");
-
-	return metadata;
-}
-
-function parseJsonLines<T>(rawLines: string): T[] {
-	const items: T[] = [];
-
-	for (const line of rawLines.split("\n")) {
-		const trimmed: string = line.trim();
-		if (trimmed.length === 0) {
-			continue;
-		}
-
-		try {
-			items.push(JSON.parse(trimmed) as T);
-		} catch {
-			// Skip corrupted lines
-		}
-	}
-
-	return items;
-}
-
-async function readSessionMetadata(sessionId: string): Promise<SessionMetadata> {
-	await ensureSessionsDir();
-	const metaFile: string = metaPath(sessionId);
-
-	try {
-		const raw: string = await readFile(metaFile, "utf8");
-		return JSON.parse(raw) as SessionMetadata;
-	} catch {
-		throw new Error(`Session not found: ${sessionId}`);
-	}
-}
-
-async function readArchivedSessionMetadata(sessionId: string): Promise<SessionMetadata> {
-	await ensureArchivedSessionsDir();
-	const metaFile: string = archivedMetaPath(sessionId);
-
-	try {
-		const raw: string = await readFile(metaFile, "utf8");
-		return JSON.parse(raw) as SessionMetadata;
-	} catch {
-		throw new Error(`Archived session not found: ${sessionId}`);
 	}
 }
 
@@ -366,75 +191,428 @@ async function pathExists(path: string): Promise<boolean> {
 	}
 }
 
-async function createTimelineCacheKey(sessionId: string): Promise<string> {
-	const paths: string[] = [
-		metaPath(sessionId),
-		messagesPath(sessionId),
-		eventsPath(sessionId),
-		approvalEventsPath(sessionId),
-		workflowEventsPath(sessionId),
-		agentEventsPath(sessionId)
-	];
-	const parts: string[] = [];
-	for (const filePath of paths) {
-		try {
-			const stats = await stat(filePath);
-			parts.push(`${stats.mtimeMs}:${stats.size}`);
-		} catch {
-			parts.push("missing");
-		}
+function rowMetadata(row: Record<string, unknown> | undefined, sessionId: string): SessionMetadata {
+	if (row === undefined) {
+		throw new Error(`Session not found: ${sessionId}`);
 	}
-	return parts.join("|");
+	return parseSqlJson<SessionMetadata>(row.metadata_json);
 }
 
-async function listSessionMetadataFromDir(rootDir: string): Promise<SessionMetadata[]> {
-	const entries: string[] = await readdir(rootDir, { withFileTypes: true })
-		.then((items) => items.filter((d) => d.isDirectory()).map((d) => d.name));
-
-	const sessions: SessionMetadata[] = [];
-
-	for (const entry of entries) {
-		try {
-			const raw: string = await readFile(join(rootDir, entry, "metadata.json"), "utf8");
-			sessions.push(JSON.parse(raw) as SessionMetadata);
-		} catch {
-			// Skip invalid sessions
-		}
+async function readSessionMetadata(sessionId: string, archived?: boolean): Promise<SessionMetadata> {
+	const safeSessionId: string = assertSafeSessionId(sessionId);
+	const db: DatabaseSync = await getSessionDatabase();
+	const archivedClause: string = archived === undefined ? "" : archived ? " AND archived_at IS NOT NULL" : " AND archived_at IS NULL";
+	const row = db.prepare(`SELECT metadata_json FROM sessions WHERE session_id = ?${archivedClause}`).get(safeSessionId) as Record<string, unknown> | undefined;
+	if (row === undefined) {
+		throw new Error(`${archived ? "Archived session" : "Session"} not found: ${safeSessionId}`);
 	}
-
-	sessions.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-	return sessions;
+	return rowMetadata(row, safeSessionId);
 }
 
-async function getCachedTimelineBuildResult(stored: StoredSession): Promise<ReturnType<typeof buildCanonicalTimelineBlocks>> {
-	const sessionId: string = stored.metadata.id;
-	const key: string = await createTimelineCacheKey(sessionId);
-	const cached: TimelineCacheEntry | undefined = timelineCacheBySessionId.get(sessionId);
-	if (cached !== undefined && cached.key === key) {
-		return cached.result;
+function mergeSessionMetadata(existing: SessionMetadata, metadata?: Partial<SessionMetadata>): SessionMetadata {
+	const updated: SessionMetadata = { ...existing, updatedAt: new Date().toISOString() };
+	delete (updated as SessionMetadata & { webSearchEnabled?: unknown }).webSearchEnabled;
+	if (metadata !== undefined) {
+		for (const [key, value] of Object.entries(metadata) as [keyof SessionMetadata, SessionMetadata[keyof SessionMetadata]][]) {
+			if (value !== undefined) {
+				updated[key] = value as never;
+			}
+		}
 	}
+	return updated;
+}
 
-	const result: ReturnType<typeof buildCanonicalTimelineBlocks> = buildCanonicalTimelineBlocks(stored);
-	timelineCacheBySessionId.set(sessionId, { key, result });
+function writeMetadataRow(db: DatabaseSync, metadata: SessionMetadata): void {
+	db.prepare(`
+		UPDATE sessions
+		SET title = ?, workspace_id = ?, metadata_json = ?, archived_at = ?, updated_at = ?
+		WHERE session_id = ?
+	`).run(
+		metadata.title,
+		toSqlValue(metadata.workspaceId),
+		sqlJson(metadata),
+		toSqlValue(metadata.archivedAt),
+		metadata.updatedAt,
+		metadata.id
+	);
+}
+
+export function createWorkspaceMetadataSnapshot(workspace: WorkspaceConfig | undefined): Partial<SessionMetadata> {
+	if (workspace === undefined) {
+		return {};
+	}
+	const metadata: Partial<SessionMetadata> = {
+		workspaceId: workspace.id,
+		workspaceName: workspace.name,
+		workspaceKind: workspace.kind,
+		workspaceRoot: workspace.rootPath
+	};
+	if (workspace.godotExecutablePath !== undefined) {
+		metadata.godotExecutablePath = workspace.godotExecutablePath;
+	}
+	return metadata;
+}
+
+export function createWorkspaceMetadataBackfill(existing: SessionMetadata, workspace: WorkspaceConfig | undefined): Partial<SessionMetadata> {
+	if (existing.workspaceId !== undefined || existing.workspaceRoot !== undefined) {
+		return {};
+	}
+	return createWorkspaceMetadataSnapshot(workspace);
+}
+
+export async function createSession(
+	title: string,
+	workspaceId?: string,
+	skillId?: string,
+	workspaceSnapshot?: WorkspaceConfig | undefined,
+	initialMetadata?: Partial<SessionMetadata> | undefined
+): Promise<SessionMetadata> {
+	const timestamp: string = new Date().toISOString();
+	const dateStr: string = timestamp.slice(0, 10).replace(/-/g, "");
+	const id: string = `session-${dateStr}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+	const metadata: SessionMetadata = {
+		...initialMetadata,
+		id,
+		title,
+		workspaceId,
+		activeSkillId: skillId,
+		...createWorkspaceMetadataSnapshot(workspaceSnapshot),
+		createdAt: timestamp,
+		updatedAt: timestamp
+	};
+	const db: DatabaseSync = await getSessionDatabase();
+	db.prepare(`
+		INSERT INTO sessions(session_id, title, workspace_id, metadata_json, archived_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, NULL, ?, ?)
+	`).run(id, title, toSqlValue(metadata.workspaceId), sqlJson(metadata), timestamp, timestamp);
+	return metadata;
+}
+
+function readMessages(db: DatabaseSync, sessionId: string): StoredMessage[] {
+	const rows = db.prepare(`
+		SELECT payload_json FROM messages WHERE session_id = ? ORDER BY sequence
+	`).all(sessionId) as Record<string, unknown>[];
+	return rows.map((row: Record<string, unknown>): StoredMessage => parseSqlJson<StoredMessage>(row.payload_json));
+}
+
+function readEvents(db: DatabaseSync, sessionId: string, channel: string = "timeline"): StoredSessionEvent[] {
+	const rows = db.prepare(`
+		SELECT event_id, request_id, event_name, data_json, created_at
+		FROM session_events WHERE session_id = ? AND channel = ? ORDER BY sequence
+	`).all(sessionId, channel) as Record<string, unknown>[];
+	return rows.map((row: Record<string, unknown>): StoredSessionEvent => ({
+		id: String(row.event_id),
+		requestId: String(row.request_id),
+		event: String(row.event_name),
+		data: parseSqlJson<unknown>(row.data_json),
+		createdAt: String(row.created_at)
+	}));
+}
+
+export async function openSession(sessionId: string): Promise<StoredSession> {
+	const safeSessionId: string = assertSafeSessionId(sessionId);
+	const db: DatabaseSync = await getSessionDatabase();
+	const metadata: SessionMetadata = rowMetadata(
+		db.prepare("SELECT metadata_json FROM sessions WHERE session_id = ? AND archived_at IS NULL").get(safeSessionId) as Record<string, unknown> | undefined,
+		safeSessionId
+	);
+	return {
+		metadata,
+		messages: readMessages(db, safeSessionId),
+		events: readEvents(db, safeSessionId)
+	};
+}
+
+function getTimelineBuildResult(stored: StoredSession): ReturnType<typeof buildCanonicalTimelineBlocks> {
+	const cached = timelineCacheBySessionId.get(stored.metadata.id);
+	if (cached !== undefined) {
+		return cached;
+	}
+	const result = buildCanonicalTimelineBlocks(stored);
+	timelineCacheBySessionId.set(stored.metadata.id, result);
 	return result;
 }
 
-async function createTimelinePageFromStoredSession(stored: StoredSession, offset: number, limit: number): Promise<StoredSessionTimelinePage> {
-	const timeline = await getCachedTimelineBuildResult(stored);
-	const blockCount: number = timeline.blocks.length;
-	const normalizedOffset: number = Math.max(0, Math.min(offset, blockCount));
-	const normalizedLimit: number = Math.max(0, limit);
-	const endOffset: number = Math.min(blockCount, normalizedOffset + normalizedLimit);
-	const timelineBlocks: TimelineBlock[] = timeline.blocks.slice(normalizedOffset, endOffset);
+type TimelineIndexEntry = {
+	requestId: string;
+	sourceRequestIds: Set<string>;
+	userCreatedAt?: string | undefined;
+	assistantCreatedAt?: string | undefined;
+	firstEventAt?: string | undefined;
+	orderAt: string;
+	sequence: number;
+	hasEvents: boolean;
+};
 
+type TimelineBlockIndex = {
+	key: string;
+	requestId: string;
+	type: "user" | "assistant";
+	sourceRequestIds: string[];
+};
+
+function timelineBlockKey(requestId: string, type: "user" | "assistant"): string {
+	return `${requestId}\n${type}`;
+}
+
+function parseAliasRequestId(value: unknown): string {
+	if (typeof value !== "string") {
+		return "";
+	}
+	try {
+		const parsed: unknown = JSON.parse(value);
+		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+			return "";
+		}
+		const requestId: unknown = (parsed as Record<string, unknown>).requestId;
+		return typeof requestId === "string" ? requestId.trim() : "";
+	} catch {
+		return "";
+	}
+}
+
+function buildTimelineBlockIndex(db: DatabaseSync, sessionId: string): TimelineBlockIndex[] | null {
+	const messageRows = db.prepare(`
+		SELECT request_id, role, created_at FROM messages WHERE session_id = ? ORDER BY sequence
+	`).all(sessionId) as Record<string, unknown>[];
+	if (messageRows.some((row: Record<string, unknown>): boolean => (
+		(row.role === "user" || row.role === "assistant")
+			&& (typeof row.request_id !== "string" || row.request_id.length === 0)
+	))) {
+		return null;
+	}
+
+	const eventRows = db.prepare(`
+		SELECT event_id, request_id, event_name, created_at,
+			CASE WHEN event_name LIKE 'plan.%' THEN data_json ELSE NULL END AS alias_data
+		FROM session_events
+		WHERE session_id = ? AND channel = 'timeline'
+		ORDER BY created_at, event_id
+	`).all(sessionId) as Record<string, unknown>[];
+	const aliases: Map<string, string> = new Map();
+	for (const row of eventRows) {
+		const eventName: string = String(row.event_name);
+		if (!eventName.startsWith("plan.") || eventName === "plan.execution.started") {
+			continue;
+		}
+		const sourceRequestId: string = String(row.request_id);
+		const canonicalRequestId: string = parseAliasRequestId(row.alias_data);
+		if (sourceRequestId.length > 0 && canonicalRequestId.length > 0 && sourceRequestId !== canonicalRequestId) {
+			aliases.set(sourceRequestId, canonicalRequestId);
+		}
+	}
+
+	const entries: Map<string, TimelineIndexEntry> = new Map();
+	let sequence: number = 0;
+	const getOrCreate = (requestId: string, orderAt: string): TimelineIndexEntry => {
+		const existing: TimelineIndexEntry | undefined = entries.get(requestId);
+		if (existing !== undefined) {
+			if (orderAt.length > 0 && (existing.orderAt.length === 0 || orderAt < existing.orderAt)) {
+				existing.orderAt = orderAt;
+			}
+			existing.sequence = Math.min(existing.sequence, sequence);
+			return existing;
+		}
+		const entry: TimelineIndexEntry = {
+			requestId,
+			sourceRequestIds: new Set([requestId]),
+			orderAt,
+			sequence,
+			hasEvents: false
+		};
+		entries.set(requestId, entry);
+		return entry;
+	};
+
+	for (const row of messageRows) {
+		const role: string = String(row.role);
+		if (role !== "user" && role !== "assistant") {
+			sequence += 1;
+			continue;
+		}
+		const requestId: string = String(row.request_id);
+		const createdAt: string = String(row.created_at);
+		const entry: TimelineIndexEntry = getOrCreate(requestId, createdAt);
+		if (role === "user" && (entry.userCreatedAt === undefined || createdAt < entry.userCreatedAt)) {
+			entry.userCreatedAt = createdAt;
+		}
+		if (role === "assistant" && (entry.assistantCreatedAt === undefined || createdAt > entry.assistantCreatedAt)) {
+			entry.assistantCreatedAt = createdAt;
+		}
+		entry.orderAt = entry.userCreatedAt ?? entry.firstEventAt ?? entry.assistantCreatedAt ?? entry.orderAt;
+		sequence += 1;
+	}
+
+	const eventGroups: Map<string, { firstAt: string; sourceRequestIds: Set<string> }> = new Map();
+	for (const row of eventRows) {
+		const sourceRequestId: string = String(row.request_id);
+		const requestId: string = aliases.get(sourceRequestId) ?? sourceRequestId;
+		if (requestId.length === 0) {
+			continue;
+		}
+		const createdAt: string = String(row.created_at);
+		const existing = eventGroups.get(requestId);
+		if (existing === undefined) {
+			eventGroups.set(requestId, { firstAt: createdAt, sourceRequestIds: new Set([sourceRequestId]) });
+		} else {
+			existing.sourceRequestIds.add(sourceRequestId);
+			if (createdAt < existing.firstAt) {
+				existing.firstAt = createdAt;
+			}
+		}
+	}
+	for (const [requestId, group] of eventGroups) {
+		const entry: TimelineIndexEntry = getOrCreate(requestId, group.firstAt);
+		entry.hasEvents = true;
+		entry.firstEventAt = group.firstAt;
+		entry.sourceRequestIds = group.sourceRequestIds;
+		entry.orderAt = entry.userCreatedAt ?? entry.firstEventAt ?? entry.assistantCreatedAt ?? entry.orderAt;
+		sequence += 1;
+	}
+
+	const hasAnyEvents: boolean = eventGroups.size > 0;
+	const sortedEntries: TimelineIndexEntry[] = [...entries.values()]
+		.filter((entry: TimelineIndexEntry): boolean => !(
+			hasAnyEvents
+				&& !entry.hasEvents
+				&& entry.userCreatedAt !== undefined
+				&& entry.assistantCreatedAt !== undefined
+		))
+		.sort((left: TimelineIndexEntry, right: TimelineIndexEntry): number => (
+			left.orderAt.localeCompare(right.orderAt) || left.sequence - right.sequence
+		));
+	return sortedEntries.flatMap((entry: TimelineIndexEntry): TimelineBlockIndex[] => {
+		const blocks: TimelineBlockIndex[] = [];
+		if (entry.userCreatedAt !== undefined) {
+			blocks.push({
+				key: timelineBlockKey(entry.requestId, "user"),
+				requestId: entry.requestId,
+				type: "user",
+				sourceRequestIds: [...entry.sourceRequestIds]
+			});
+		}
+		if (entry.assistantCreatedAt !== undefined || entry.hasEvents) {
+			blocks.push({
+				key: timelineBlockKey(entry.requestId, "assistant"),
+				requestId: entry.requestId,
+				type: "assistant",
+				sourceRequestIds: [...entry.sourceRequestIds]
+			});
+		}
+		return blocks;
+	});
+}
+
+function eventFromRow(row: Record<string, unknown>): StoredSessionEvent {
+	return {
+		id: String(row.event_id),
+		requestId: String(row.request_id),
+		event: String(row.event_name),
+		data: parseSqlJson<unknown>(row.data_json),
+		createdAt: String(row.created_at)
+	};
+}
+
+function readLatestTimelineSnapshots(db: DatabaseSync, sessionId: string): ReturnType<typeof buildCanonicalTimelineBlocks> {
+	const snapshotEventNames: string[] = [
+		"workflow.todo.updated",
+		"workflow.todo.dismissed",
+		"agent.run.snapshot",
+		"agent.run.error",
+		"plan.clarification.required",
+		"plan.generated",
+		"plan.revised",
+		"plan.approved",
+		"plan.execution.started",
+		"plan.error"
+	];
+	const placeholders: string = snapshotEventNames.map((): string => "?").join(",");
+	const rows = db.prepare(`
+		SELECT event_id, request_id, event_name, data_json, created_at
+		FROM session_events
+		WHERE session_id = ? AND channel = 'timeline' AND event_name IN (${placeholders})
+		ORDER BY sequence
+	`).all(sessionId, ...snapshotEventNames) as Record<string, unknown>[];
+	return buildCanonicalTimelineBlocks({
+		metadata: { id: sessionId, title: "", createdAt: "", updatedAt: "" },
+		messages: [],
+		events: rows.map(eventFromRow)
+	});
+}
+
+async function createSqlTimelinePage(sessionId: string, offset: number | null, limit: number): Promise<StoredSessionTimelinePage | null> {
+	const safeSessionId: string = assertSafeSessionId(sessionId);
+	const db: DatabaseSync = await getSessionDatabase();
+	const metadata: SessionMetadata = rowMetadata(
+		db.prepare("SELECT metadata_json FROM sessions WHERE session_id = ? AND archived_at IS NULL").get(safeSessionId) as Record<string, unknown> | undefined,
+		safeSessionId
+	);
+	const index: TimelineBlockIndex[] | null = buildTimelineBlockIndex(db, safeSessionId);
+	if (index === null) {
+		return null;
+	}
+	const blockCount: number = index.length;
+	const blockOffset: number = offset === null
+		? Math.max(0, blockCount - Math.max(0, limit))
+		: Math.max(0, Math.min(offset, blockCount));
+	const endOffset: number = Math.min(blockCount, blockOffset + Math.max(0, limit));
+	const selectedIndex: TimelineBlockIndex[] = index.slice(blockOffset, endOffset);
+	const requestIds: string[] = [...new Set(selectedIndex.map((item: TimelineBlockIndex): string => item.requestId))];
+	const sourceRequestIds: string[] = [...new Set(selectedIndex.flatMap((item: TimelineBlockIndex): string[] => item.sourceRequestIds))];
+	const selectedMessages = requestIds.length === 0
+		? []
+		: db.prepare(`SELECT payload_json FROM messages WHERE session_id = ? AND request_id IN (${requestIds.map((): string => "?").join(",")}) ORDER BY sequence`)
+			.all(safeSessionId, ...requestIds) as Record<string, unknown>[];
+	const selectedEvents = sourceRequestIds.length === 0
+		? []
+		: db.prepare(`SELECT event_id, request_id, event_name, data_json, created_at FROM session_events WHERE session_id = ? AND channel = 'timeline' AND request_id IN (${sourceRequestIds.map((): string => "?").join(",")}) ORDER BY sequence`)
+			.all(safeSessionId, ...sourceRequestIds) as Record<string, unknown>[];
+	const messages: StoredMessage[] = selectedMessages.map((row: Record<string, unknown>): StoredMessage => parseSqlJson<StoredMessage>(row.payload_json));
+	const events: StoredSessionEvent[] = selectedEvents.map(eventFromRow);
+	const timeline = buildCanonicalTimelineBlocks({ metadata, messages, events });
+	const blocksByKey: Map<string, TimelineBlock> = new Map(timeline.blocks.map((block: TimelineBlock): [string, TimelineBlock] => [
+		timelineBlockKey(block.requestId, block.type),
+		block
+	]));
+	const timelineBlocks: TimelineBlock[] = selectedIndex
+		.map((item: TimelineBlockIndex): TimelineBlock | undefined => blocksByKey.get(item.key))
+		.filter((block: TimelineBlock | undefined): block is TimelineBlock => block !== undefined);
+	if (timelineBlocks.length !== selectedIndex.length) {
+		return null;
+	}
+	const snapshots = readLatestTimelineSnapshots(db, safeSessionId);
+	const eventCountRow = db.prepare(`
+		SELECT COUNT(*) AS count FROM session_events WHERE session_id = ? AND channel = 'timeline'
+	`).get(safeSessionId) as Record<string, unknown>;
+	return {
+		metadata,
+		messages,
+		timelineBlocks,
+		blockCount,
+		blockOffset,
+		eventCount: Number(eventCountRow.count),
+		hasMoreBefore: blockOffset > 0,
+		hasMoreAfter: endOffset < blockCount,
+		latestWorkflowSnapshot: snapshots.latestWorkflowSnapshot,
+		latestAgentSnapshot: snapshots.latestAgentSnapshot,
+		latestPlanClarification: snapshots.latestPlanClarification,
+		latestPlanApproval: snapshots.latestPlanApproval
+	};
+}
+
+function createTimelinePage(stored: StoredSession, offset: number, limit: number): StoredSessionTimelinePage {
+	const timeline = getTimelineBuildResult(stored);
+	const blockCount: number = timeline.blocks.length;
+	const blockOffset: number = Math.max(0, Math.min(offset, blockCount));
+	const endOffset: number = Math.min(blockCount, blockOffset + Math.max(0, limit));
 	return {
 		metadata: stored.metadata,
 		messages: stored.messages,
-		timelineBlocks,
+		timelineBlocks: timeline.blocks.slice(blockOffset, endOffset),
 		blockCount,
-		blockOffset: normalizedOffset,
+		blockOffset,
 		eventCount: timeline.eventCount,
-		hasMoreBefore: normalizedOffset > 0,
+		hasMoreBefore: blockOffset > 0,
 		hasMoreAfter: endOffset < blockCount,
 		latestWorkflowSnapshot: timeline.latestWorkflowSnapshot,
 		latestAgentSnapshot: timeline.latestAgentSnapshot,
@@ -443,67 +621,47 @@ async function createTimelinePageFromStoredSession(stored: StoredSession, offset
 	};
 }
 
-export async function openSession(sessionId: string): Promise<StoredSession> {
-	const metadata: SessionMetadata = await readSessionMetadata(sessionId);
-	const msgFile: string = messagesPath(sessionId);
-
-	let messages: StoredMessage[] = [];
-
-	try {
-		const rawLines: string = await readFile(msgFile, "utf8");
-		messages = parseJsonLines<StoredMessage>(rawLines);
-	} catch {
-		// No messages yet
-	}
-
-	let events: StoredSessionEvent[] = [];
-
-	try {
-		const rawLines: string = await readFile(eventsPath(sessionId), "utf8");
-		events = parseJsonLines<StoredSessionEvent>(rawLines);
-	} catch {
-		// No timeline events yet
-	}
-
-	return { metadata, messages, events };
-}
-
 export async function openSessionRecentTimeline(sessionId: string, limit: number): Promise<StoredSessionTimelinePage> {
+	const sqlPage: StoredSessionTimelinePage | null = await createSqlTimelinePage(sessionId, null, limit);
+	if (sqlPage !== null) {
+		return sqlPage;
+	}
 	const stored: StoredSession = await openSession(sessionId);
-	const timeline = await getCachedTimelineBuildResult(stored);
-	const blockOffset: number = Math.max(0, timeline.blocks.length - limit);
-	return createTimelinePageFromStoredSession(stored, blockOffset, limit);
+	const blockCount: number = getTimelineBuildResult(stored).blocks.length;
+	return createTimelinePage(stored, Math.max(0, blockCount - limit), limit);
 }
 
 export async function openSessionTimelinePage(sessionId: string, beforeOffset: number, limit: number): Promise<StoredSessionTimelinePage> {
-	const stored: StoredSession = await openSession(sessionId);
 	const endOffset: number = Math.max(0, beforeOffset);
 	const blockOffset: number = Math.max(0, endOffset - limit);
-	return createTimelinePageFromStoredSession(stored, blockOffset, endOffset - blockOffset);
+	const sqlPage: StoredSessionTimelinePage | null = await createSqlTimelinePage(sessionId, blockOffset, endOffset - blockOffset);
+	if (sqlPage !== null) {
+		return sqlPage;
+	}
+	const stored: StoredSession = await openSession(sessionId);
+	return createTimelinePage(stored, blockOffset, endOffset - blockOffset);
 }
 
 export async function openSessionTimelinePageAfter(sessionId: string, afterOffset: number, limit: number): Promise<StoredSessionTimelinePage> {
-	const stored: StoredSession = await openSession(sessionId);
-	const blockOffset: number = Math.max(0, afterOffset);
-	return createTimelinePageFromStoredSession(stored, blockOffset, limit);
+	const sqlPage: StoredSessionTimelinePage | null = await createSqlTimelinePage(sessionId, Math.max(0, afterOffset), limit);
+	if (sqlPage !== null) {
+		return sqlPage;
+	}
+	return createTimelinePage(await openSession(sessionId), Math.max(0, afterOffset), limit);
 }
 
-async function writeSessionMessagesAndMetadata(sessionId: string, existing: StoredSession, messages: ChatMessage[], metadata?: Partial<SessionMetadata>): Promise<void> {
-	const metaFile: string = metaPath(sessionId);
-	const msgFile: string = messagesPath(sessionId);
-
-	const updated: SessionMetadata = mergeSessionMetadata(existing.metadata, metadata);
-	await writeJsonFileAtomic(metaFile, updated);
-
+function replaceMessages(db: DatabaseSync, sessionId: string, messages: ChatMessage[]): void {
+	db.prepare("DELETE FROM messages WHERE session_id = ?").run(sessionId);
+	const insert = db.prepare(`
+		INSERT INTO messages(session_id, sequence, request_id, role, payload_json, created_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`);
 	const timestamp: string = new Date().toISOString();
-	const lines: string[] = [];
-
-	for (const message of messages) {
-		lines.push(JSON.stringify({ ...message, createdAt: message.createdAt ?? timestamp }) + "\n");
+	for (let index: number = 0; index < messages.length; index += 1) {
+		const message: ChatMessage = messages[index]!;
+		const stored: StoredMessage = { ...message, createdAt: message.createdAt ?? timestamp };
+		insert.run(sessionId, index + 1, toSqlValue(message.requestId), message.role, sqlJson(stored), stored.createdAt);
 	}
-
-	await writeFile(msgFile, lines.join(""), "utf8");
-	invalidateTimelineCache(sessionId);
 }
 
 export async function updateSessionTranscript<T>(
@@ -513,544 +671,374 @@ export async function updateSessionTranscript<T>(
 	return enqueueTranscriptWrite(sessionId, async (): Promise<T> => {
 		const stored: StoredSession = await openSession(sessionId);
 		const update: TranscriptUpdate<T> = await updater(stored);
-		await writeSessionMessagesAndMetadata(sessionId, stored, update.messages, update.metadata);
+		const updatedMetadata: SessionMetadata = mergeSessionMetadata(stored.metadata, update.metadata);
+		const db: DatabaseSync = await getSessionDatabase();
+		runSessionTransaction(db, (): void => {
+			replaceMessages(db, sessionId, update.messages);
+			writeMetadataRow(db, updatedMetadata);
+		});
+		invalidateTimelineCache(sessionId);
 		return update.result;
 	});
 }
 
 export async function saveSession(sessionId: string, messages: ChatMessage[], metadata?: Partial<SessionMetadata>): Promise<void> {
-	await updateSessionTranscript(sessionId, (): TranscriptUpdate<void> => ({
-		messages,
-		metadata,
-		result: undefined
-	}));
+	await updateSessionTranscript(sessionId, (): TranscriptUpdate<void> => ({ messages, metadata, result: undefined }));
 }
 
 export async function updateSessionMetadata(sessionId: string, metadata: Partial<SessionMetadata>): Promise<SessionMetadata> {
-	const metaFile: string = metaPath(sessionId);
-	const existing: StoredSession = await openSession(sessionId);
-	const updated: SessionMetadata = mergeSessionMetadata(existing.metadata, metadata);
-	await writeJsonFileAtomic(metaFile, updated);
+	const existing: SessionMetadata = await readSessionMetadata(sessionId, false);
+	const updated: SessionMetadata = mergeSessionMetadata(existing, metadata);
+	writeMetadataRow(await getSessionDatabase(), updated);
 	invalidateTimelineCache(sessionId);
 	return updated;
+}
+
+function findRewindBoundaryCreatedAt(events: RewindableEvent[], removedRequestIds: Set<string>): string | null {
+	let boundary: string | null = null;
+	for (const event of events) {
+		if (removedRequestIds.has(event.requestId) && (boundary === null || event.createdAt < boundary)) {
+			boundary = event.createdAt;
+		}
+	}
+	return boundary;
 }
 
 export async function rewindSessionFromRequest(sessionId: string, requestId: string): Promise<StoredMessage[]> {
 	return enqueueTranscriptWrite(sessionId, async (): Promise<StoredMessage[]> => {
 		const stored: StoredSession = await openSession(sessionId);
 		const startIndex: number = stored.messages.findIndex((message: StoredMessage): boolean => message.requestId === requestId);
-		const eventBoundaryCreatedAt: string | null = findRewindBoundaryCreatedAt(stored.events, new Set([requestId]));
-		if (startIndex < 0 && eventBoundaryCreatedAt === null) {
+		const eventBoundary: string | null = findRewindBoundaryCreatedAt(stored.events, new Set([requestId]));
+		if (startIndex < 0 && eventBoundary === null) {
 			return stored.messages;
 		}
-
-		const fallbackBoundaryCreatedAt: string = eventBoundaryCreatedAt ?? "";
+		const fallbackBoundary: string = eventBoundary ?? "";
 		const keptMessages: StoredMessage[] = startIndex >= 0
 			? stored.messages.slice(0, startIndex)
-			: stored.messages.filter((message: StoredMessage): boolean => {
-				return message.createdAt.length === 0 || message.createdAt < fallbackBoundaryCreatedAt;
-			});
-		const removedRequestIds: Set<string> = new Set(
-			[
-				requestId,
-				...stored.messages
-				.slice(startIndex >= 0 ? startIndex : 0)
-				.filter((message: StoredMessage): boolean => {
-					return startIndex >= 0 || message.createdAt >= fallbackBoundaryCreatedAt;
-				})
+			: stored.messages.filter((message: StoredMessage): boolean => message.createdAt.length === 0 || message.createdAt < fallbackBoundary);
+		const removedRequestIds: Set<string> = new Set([
+			requestId,
+			...stored.messages.slice(startIndex >= 0 ? startIndex : 0)
+				.filter((message: StoredMessage): boolean => startIndex >= 0 || message.createdAt >= fallbackBoundary)
 				.map((message: StoredMessage): string | undefined => message.requestId)
 				.filter((value: string | undefined): value is string => value !== undefined && value.length > 0)
-			]
-		);
-		const rewindBoundaryCreatedAt: string = findRewindBoundaryCreatedAt(stored.events, removedRequestIds)
-			?? (startIndex >= 0 ? stored.messages[startIndex]?.createdAt : eventBoundaryCreatedAt)
+		]);
+		const boundary: string = findRewindBoundaryCreatedAt(stored.events, removedRequestIds)
+			?? (startIndex >= 0 ? stored.messages[startIndex]?.createdAt : eventBoundary)
 			?? "";
-		const keptEvents: StoredSessionEvent[] = stored.events.filter((event: StoredSessionEvent): boolean => shouldKeepEventAfterRewind(event, removedRequestIds, rewindBoundaryCreatedAt));
-		const updatedMetadata: SessionMetadata = {
-			...stored.metadata,
-			updatedAt: new Date().toISOString()
-		};
-
-		await writeFile(metaPath(sessionId), JSON.stringify(updatedMetadata, null, 2), "utf8");
-		await writeFile(
-			messagesPath(sessionId),
-			keptMessages.map((message: StoredMessage): string => JSON.stringify(message) + "\n").join(""),
-			"utf8"
-		);
-		await writeFile(
-			eventsPath(sessionId),
-			keptEvents.map((event: StoredSessionEvent): string => JSON.stringify(event) + "\n").join(""),
-			"utf8"
-		);
-		try {
-			const rawApprovalEvents: string = await readFile(approvalEventsPath(sessionId), "utf8");
-			const keptApprovalEvents: StoredApprovalEvent[] = parseJsonLines<StoredApprovalEvent>(rawApprovalEvents)
-				.filter((event: StoredApprovalEvent): boolean => shouldKeepEventAfterRewind(event, removedRequestIds, rewindBoundaryCreatedAt));
-			await writeFile(
-				approvalEventsPath(sessionId),
-				keptApprovalEvents.map((event: StoredApprovalEvent): string => JSON.stringify(event) + "\n").join(""),
-				"utf8"
-			);
-		} catch {
-			// Older sessions may not have approval persistence yet.
-		}
-		try {
-			const rawWorkflowEvents: string = await readFile(workflowEventsPath(sessionId), "utf8");
-			const keptWorkflowEvents: StoredWorkflowEvent[] = parseJsonLines<StoredWorkflowEvent>(rawWorkflowEvents)
-				.filter((event: StoredWorkflowEvent): boolean => shouldKeepEventAfterRewind(event, removedRequestIds, rewindBoundaryCreatedAt));
-			await writeFile(
-				workflowEventsPath(sessionId),
-				keptWorkflowEvents.map((event: StoredWorkflowEvent): string => JSON.stringify(event) + "\n").join(""),
-				"utf8"
-			);
-		} catch {
-			// Older sessions may not have workflow persistence yet.
-		}
-		try {
-			const rawAgentEvents: string = await readFile(agentEventsPath(sessionId), "utf8");
-			const keptAgentEvents: StoredAgentEvent[] = parseJsonLines<StoredAgentEvent>(rawAgentEvents)
-				.filter((event: StoredAgentEvent): boolean => shouldKeepEventAfterRewind(event, removedRequestIds, rewindBoundaryCreatedAt));
-			await writeFile(
-				agentEventsPath(sessionId),
-				keptAgentEvents.map((event: StoredAgentEvent): string => JSON.stringify(event) + "\n").join(""),
-				"utf8"
-			);
-		} catch {
-			// Older sessions may not have agent persistence yet.
-		}
-
+		const db: DatabaseSync = await getSessionDatabase();
+		runSessionTransaction(db, (): void => {
+			replaceMessages(db, sessionId, keptMessages);
+			const ids: string[] = [...removedRequestIds];
+			if (ids.length > 0) {
+				const placeholders: string = ids.map((): string => "?").join(",");
+				db.prepare(`
+					DELETE FROM session_events
+					WHERE session_id = ? AND (request_id IN (${placeholders}) OR (? <> '' AND created_at >= ?))
+				`).run(sessionId, ...ids, boundary, boundary);
+				db.prepare(`DELETE FROM plans WHERE session_id = ? AND request_id IN (${placeholders})`)
+					.run(sessionId, ...ids);
+			}
+			const updated: SessionMetadata = { ...stored.metadata, updatedAt: new Date().toISOString() };
+			writeMetadataRow(db, updated);
+		});
 		invalidateTimelineCache(sessionId);
 		return keptMessages;
 	});
 }
 
-function findRewindBoundaryCreatedAt(events: RewindableEvent[], removedRequestIds: Set<string>): string | null {
-	let boundaryCreatedAt: string | null = null;
-	for (const event of events) {
-		if (!removedRequestIds.has(event.requestId)) {
-			continue;
-		}
-		if (boundaryCreatedAt === null || event.createdAt < boundaryCreatedAt) {
-			boundaryCreatedAt = event.createdAt;
-		}
-	}
-
-	return boundaryCreatedAt;
-}
-
-function shouldKeepEventAfterRewind(event: RewindableEvent, removedRequestIds: Set<string>, rewindBoundaryCreatedAt: string): boolean {
-	if (removedRequestIds.has(event.requestId)) {
-		return false;
-	}
-	if (rewindBoundaryCreatedAt.length === 0 || event.createdAt.length === 0) {
-		return true;
-	}
-
-	return event.createdAt < rewindBoundaryCreatedAt;
-}
-
 export async function appendMessage(sessionId: string, message: ChatMessage): Promise<void> {
 	await enqueueTranscriptWrite(sessionId, async (): Promise<void> => {
-		await ensureSessionsDir();
-		const msgFile: string = messagesPath(sessionId);
-		const line: string = JSON.stringify({ ...message, createdAt: message.createdAt ?? new Date().toISOString() }) + "\n";
-		await writeFile(msgFile, line, { encoding: "utf8", flag: "a" });
+		const db: DatabaseSync = await getSessionDatabase();
+		const row = db.prepare("SELECT COALESCE(MAX(sequence), 0) + 1 AS value FROM messages WHERE session_id = ?").get(sessionId) as Record<string, unknown>;
+		const stored: StoredMessage = { ...message, createdAt: message.createdAt ?? new Date().toISOString() };
+		db.prepare(`
+			INSERT INTO messages(session_id, sequence, request_id, role, payload_json, created_at)
+			VALUES (?, ?, ?, ?, ?, ?)
+		`).run(sessionId, Number(row.value), toSqlValue(message.requestId), message.role, sqlJson(stored), stored.createdAt);
 		invalidateTimelineCache(sessionId);
 	});
 }
 
-export async function appendSessionEvent(sessionId: string, requestId: string, event: string, data: unknown): Promise<void> {
-	await ensureSessionsDir();
-	const eventFile: string = eventsPath(sessionId);
-	const timestamp: string = new Date().toISOString();
-	const record: StoredSessionEvent = {
-		id: `event-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-		requestId,
-		event,
-		data,
-		createdAt: timestamp
-	};
-	const line: string = JSON.stringify(record) + "\n";
-	await writeFile(eventFile, line, { encoding: "utf8", flag: "a" });
-	invalidateTimelineCache(sessionId);
-}
-
-export async function appendApprovalEvent(sessionId: string, approvalId: string, requestId: string, event: string, data: unknown): Promise<void> {
-	await ensureSessionsDir();
-	const eventFile: string = approvalEventsPath(sessionId);
-	const timestamp: string = new Date().toISOString();
-	const record: StoredApprovalEvent = {
-		id: `approval-event-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-		schemaVersion: 1,
-		approvalId,
-		requestId,
-		event,
-		data,
-		createdAt: timestamp
-	};
-	const line: string = JSON.stringify(record) + "\n";
-	await writeFile(eventFile, line, { encoding: "utf8", flag: "a" });
-	invalidateTimelineCache(sessionId);
-}
-
-export async function appendWorkflowEvent(sessionId: string, workflowId: string, requestId: string, event: string, data: unknown): Promise<void> {
-	await ensureSessionsDir();
-	const eventFile: string = workflowEventsPath(sessionId);
-	const timestamp: string = new Date().toISOString();
-	const record: StoredWorkflowEvent = {
-		id: `workflow-event-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-		schemaVersion: 1,
-		workflowId,
-		requestId,
-		event,
-		data,
-		createdAt: timestamp
-	};
-	const line: string = JSON.stringify(record) + "\n";
-	await writeFile(eventFile, line, { encoding: "utf8", flag: "a" });
-	invalidateTimelineCache(sessionId);
-}
-
-export async function appendAgentEvent(sessionId: string, runId: string, requestId: string, event: string, data: unknown): Promise<void> {
-	await ensureSessionsDir();
-	const eventFile: string = agentEventsPath(sessionId);
-	const timestamp: string = new Date().toISOString();
-	const record: StoredAgentEvent = {
-		id: `agent-event-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-		schemaVersion: 1,
-		runId,
-		requestId,
-		event,
-		data,
-		createdAt: timestamp
-	};
-	const line: string = JSON.stringify(record) + "\n";
-	await writeFile(eventFile, line, { encoding: "utf8", flag: "a" });
-	invalidateTimelineCache(sessionId);
-}
-
-export async function readApprovalEvents(sessionId: string): Promise<StoredApprovalEvent[]> {
-	await ensureSessionsDir();
-	try {
-		const rawLines: string = await readFile(approvalEventsPath(sessionId), "utf8");
-		return parseJsonLines<StoredApprovalEvent>(rawLines);
-	} catch {
-		return [];
-	}
-}
-
-function getRecordSessionId(value: unknown): string | null {
-	if (typeof value !== "object" || value === null || Array.isArray(value)) {
-		return null;
-	}
-
-	const record = value as Record<string, unknown>;
-	if (typeof record.sessionId === "string") {
-		return record.sessionId;
-	}
-
-	const data: unknown = record.data;
+function dataString(data: unknown, key: string): string | null {
 	if (typeof data !== "object" || data === null || Array.isArray(data)) {
 		return null;
 	}
-
-	const dataRecord = data as Record<string, unknown>;
-	return typeof dataRecord.sessionId === "string" ? dataRecord.sessionId : null;
+	const value: unknown = (data as Record<string, unknown>)[key];
+	return typeof value === "string" && value.length > 0 ? value : null;
 }
 
-function getRecordRequestId(value: unknown): string | undefined {
-	if (typeof value !== "object" || value === null || Array.isArray(value)) {
-		return undefined;
-	}
-
-	const requestId: unknown = (value as Record<string, unknown>).requestId;
-	return typeof requestId === "string" ? requestId : undefined;
+async function appendEventRecord(params: {
+	sessionId: string;
+	requestId: string;
+	event: string;
+	data: unknown;
+	channel: "timeline" | "approval" | "audit";
+	idPrefix: string;
+	approvalId?: string | undefined;
+	workflowId?: string | undefined;
+	runId?: string | undefined;
+}): Promise<void> {
+	const db: DatabaseSync = await getSessionDatabase();
+	const row = db.prepare(`
+		SELECT COALESCE(MAX(sequence), 0) + 1 AS value FROM session_events
+		WHERE session_id = ? AND channel = ?
+	`).get(params.sessionId, params.channel) as Record<string, unknown>;
+	const eventId: string = `${params.idPrefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+	db.prepare(`
+		INSERT INTO session_events(
+			event_id, session_id, sequence, channel, request_id, event_name, data_json,
+			approval_id, workflow_id, run_id, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`).run(
+		eventId,
+		params.sessionId,
+		Number(row.value),
+		params.channel,
+		params.requestId,
+		params.event,
+		sqlJson(params.data),
+		params.approvalId ?? dataString(params.data, "approvalId"),
+		params.workflowId ?? dataString(params.data, "workflowId"),
+		params.runId ?? dataString(params.data, "runId"),
+		new Date().toISOString()
+	);
+	invalidateTimelineCache(params.sessionId);
 }
 
-function getRecordEventName(value: unknown): string | undefined {
-	if (typeof value !== "object" || value === null || Array.isArray(value)) {
-		return undefined;
-	}
-
-	const eventName: unknown = (value as Record<string, unknown>).event;
-	return typeof eventName === "string" ? eventName : undefined;
+export async function appendSessionEvent(sessionId: string, requestId: string, event: string, data: unknown): Promise<void> {
+	await appendEventRecord({ sessionId, requestId, event, data, channel: "timeline", idPrefix: "event" });
 }
 
-async function collectSessionIntegrityIssues(sessionId: string, file: StoredEventFileKind, filePath: string): Promise<SessionIntegrityIssue[]> {
-	const issues: SessionIntegrityIssue[] = [];
-	let rawLines: string;
-	try {
-		rawLines = await readFile(filePath, "utf8");
-	} catch {
-		return issues;
-	}
+export async function appendApprovalEvent(sessionId: string, approvalId: string, requestId: string, event: string, data: unknown): Promise<void> {
+	await appendEventRecord({ sessionId, approvalId, requestId, event, data, channel: "approval", idPrefix: "approval-event" });
+}
 
-	const lines: string[] = rawLines.split("\n");
-	for (let index: number = 0; index < lines.length; index += 1) {
-		const line: string = lines[index]!.trim();
-		if (line.length === 0) {
-			continue;
-		}
+// Compatibility wrappers no longer duplicate payloads. Canonical events already index workflowId/runId.
+export async function appendWorkflowEvent(
+	_sessionId: string,
+	_workflowId: string,
+	_requestId: string,
+	_event: string,
+	_data: unknown
+): Promise<void> {}
+export async function appendAgentEvent(
+	_sessionId: string,
+	_runId: string,
+	_requestId: string,
+	_event: string,
+	_data: unknown
+): Promise<void> {}
 
-		let record: unknown;
-		try {
-			record = JSON.parse(line);
-		} catch {
-			continue;
-		}
-
-		const actualSessionId: string | null = getRecordSessionId(record);
-		if (actualSessionId === null || actualSessionId === sessionId) {
-			continue;
-		}
-
-		issues.push({
-			file,
-			line: index + 1,
-			expectedSessionId: sessionId,
-			actualSessionId,
-			requestId: getRecordRequestId(record),
-			event: getRecordEventName(record)
-		});
-	}
-
-	return issues;
+export async function readApprovalEvents(sessionId: string): Promise<StoredApprovalEvent[]> {
+	const safeSessionId: string = assertSafeSessionId(sessionId);
+	const db: DatabaseSync = await getSessionDatabase();
+	const rows = db.prepare(`
+		SELECT event_id, approval_id, request_id, event_name, data_json, created_at
+		FROM session_events WHERE session_id = ? AND channel = 'approval' ORDER BY sequence
+	`).all(safeSessionId) as Record<string, unknown>[];
+	return rows.map((row: Record<string, unknown>): StoredApprovalEvent => ({
+		id: String(row.event_id),
+		schemaVersion: 1,
+		approvalId: String(row.approval_id ?? ""),
+		requestId: String(row.request_id),
+		event: String(row.event_name),
+		data: parseSqlJson<unknown>(row.data_json),
+		createdAt: String(row.created_at)
+	}));
 }
 
 export async function checkSessionIntegrity(sessionId: string): Promise<SessionIntegrityCheckResult> {
 	const safeSessionId: string = assertSafeSessionId(sessionId);
-	await openSession(safeSessionId);
-	const files: Array<{ kind: StoredEventFileKind; path: string }> = [
-		{ kind: "messages", path: messagesPath(safeSessionId) },
-		{ kind: "events", path: eventsPath(safeSessionId) },
-		{ kind: "approval-events", path: approvalEventsPath(safeSessionId) },
-		{ kind: "workflow-events", path: workflowEventsPath(safeSessionId) },
-		{ kind: "agent-events", path: agentEventsPath(safeSessionId) }
-	];
+	await readSessionMetadata(safeSessionId);
+	const db: DatabaseSync = await getSessionDatabase();
+	const integrity = db.prepare("PRAGMA integrity_check").get() as Record<string, unknown>;
+	const foreignKeys = db.prepare("PRAGMA foreign_key_check").all();
 	const issues: SessionIntegrityIssue[] = [];
-	for (const file of files) {
-		issues.push(...await collectSessionIntegrityIssues(safeSessionId, file.kind, file.path));
+	const rows = db.prepare(`
+		SELECT row_id, request_id, event_name, data_json FROM session_events WHERE session_id = ?
+	`).all(safeSessionId) as Record<string, unknown>[];
+	for (const row of rows) {
+		const data: unknown = parseSqlJson<unknown>(row.data_json);
+		const actual: string | null = dataString(data, "sessionId");
+		if (actual !== null && actual !== safeSessionId) {
+			issues.push({
+				file: "events",
+				line: Number(row.row_id),
+				expectedSessionId: safeSessionId,
+				actualSessionId: actual,
+				requestId: String(row.request_id),
+				event: String(row.event_name)
+			});
+		}
 	}
-
 	return {
 		sessionId: safeSessionId,
-		ok: issues.length === 0,
+		ok: String(integrity.integrity_check) === "ok" && foreignKeys.length === 0 && issues.length === 0,
 		issues,
-		checkedFiles: files.map((file): StoredEventFileKind => file.kind)
+		checkedFiles: ["messages", "events", "approval-events", "workflow-events", "agent-events"],
+		storage: "sqlite",
+		integrityCheck: String(integrity.integrity_check),
+		foreignKeyIssueCount: foreignKeys.length
 	};
 }
 
 export async function clearSessionEvents(sessionId: string): Promise<void> {
-	await ensureSessionsDir();
-	await writeFile(eventsPath(sessionId), "", "utf8");
-	await writeFile(agentEventsPath(sessionId), "", "utf8").catch((): void => {});
-	await writeFile(workflowEventsPath(sessionId), "", "utf8").catch((): void => {});
-	await writeFile(approvalEventsPath(sessionId), "", "utf8").catch((): void => {});
-	invalidateTimelineCache(sessionId);
+	const safeSessionId: string = assertSafeSessionId(sessionId);
+	(await getSessionDatabase()).prepare("DELETE FROM session_events WHERE session_id = ?").run(safeSessionId);
+	invalidateTimelineCache(safeSessionId);
+}
+
+function listMetadataRows(rows: Record<string, unknown>[]): SessionMetadata[] {
+	return rows.map((row: Record<string, unknown>): SessionMetadata => parseSqlJson<SessionMetadata>(row.metadata_json));
 }
 
 export async function listSessions(): Promise<SessionMetadata[]> {
-	await ensureSessionsDir();
-	return listSessionMetadataFromDir(SESSIONS_DIR);
+	const db: DatabaseSync = await getSessionDatabase();
+	return listMetadataRows(db.prepare(`
+		SELECT metadata_json FROM sessions WHERE archived_at IS NULL ORDER BY updated_at DESC
+	`).all() as Record<string, unknown>[]);
 }
 
 export async function listArchivedSessions(): Promise<SessionMetadata[]> {
-	await ensureArchivedSessionsDir();
-	return listSessionMetadataFromDir(ARCHIVED_SESSIONS_DIR);
+	const db: DatabaseSync = await getSessionDatabase();
+	return listMetadataRows(db.prepare(`
+		SELECT metadata_json FROM sessions WHERE archived_at IS NOT NULL ORDER BY updated_at DESC
+	`).all() as Record<string, unknown>[]);
+}
+
+async function moveSessionAssetDir(source: string, target: string): Promise<boolean> {
+	if (!await pathExists(source)) {
+		return false;
+	}
+	if (await pathExists(target)) {
+		throw new Error(`Session asset directory already exists: ${target}`);
+	}
+	await mkdir(join(target, ".."), { recursive: true });
+	await rename(source, target);
+	return true;
 }
 
 export async function archiveSession(sessionId: string): Promise<SessionMetadata> {
 	const safeSessionId: string = assertSafeSessionId(sessionId);
-	await ensureSessionsDir();
-	await ensureArchivedSessionsDir();
-
-	const sourceDir: string = getSessionDir(safeSessionId);
-	const targetDir: string = getArchivedSessionDir(safeSessionId);
-	if (await pathExists(targetDir)) {
-		throw new Error(`Archived session already exists: ${safeSessionId}`);
-	}
-
-	const existingMetadata: SessionMetadata = await readSessionMetadata(safeSessionId);
+	const metadata: SessionMetadata = await readSessionMetadata(safeSessionId, false);
 	const archivedAt: string = new Date().toISOString();
-	const metadata: SessionMetadata = {
-		...existingMetadata,
-		archivedAt,
-		updatedAt: archivedAt
-	};
-	await rename(sourceDir, targetDir);
-	await writeJsonFileAtomic(join(targetDir, "metadata.json"), metadata);
-	return metadata;
+	const updated: SessionMetadata = { ...metadata, archivedAt, updatedAt: archivedAt };
+	const source: string = getSessionDir(safeSessionId);
+	const target: string = getArchivedSessionDir(safeSessionId);
+	const movedAssets: boolean = await moveSessionAssetDir(source, target);
+	try {
+		writeMetadataRow(await getSessionDatabase(), updated);
+	} catch (error: unknown) {
+		if (movedAssets) {
+			await rename(target, source).catch((): void => {});
+		}
+		throw error;
+	}
+	invalidateTimelineCache(safeSessionId);
+	return updated;
 }
 
 export async function restoreArchivedSession(sessionId: string): Promise<SessionMetadata> {
 	const safeSessionId: string = assertSafeSessionId(sessionId);
-	await ensureSessionsDir();
-	await ensureArchivedSessionsDir();
-
-	const sourceDir: string = getArchivedSessionDir(safeSessionId);
-	const targetDir: string = getSessionDir(safeSessionId);
-	if (await pathExists(targetDir)) {
-		throw new Error(`Session already exists: ${safeSessionId}`);
+	const metadata: SessionMetadata = await readSessionMetadata(safeSessionId, true);
+	const updated: SessionMetadata = { ...metadata, archivedAt: undefined, updatedAt: new Date().toISOString() };
+	const source: string = getArchivedSessionDir(safeSessionId);
+	const target: string = getSessionDir(safeSessionId);
+	const movedAssets: boolean = await moveSessionAssetDir(source, target);
+	try {
+		writeMetadataRow(await getSessionDatabase(), updated);
+	} catch (error: unknown) {
+		if (movedAssets) {
+			await rename(target, source).catch((): void => {});
+		}
+		throw error;
 	}
+	invalidateTimelineCache(safeSessionId);
+	return updated;
+}
 
-	const archivedMetadata: SessionMetadata = await readArchivedSessionMetadata(safeSessionId);
-	const metadata: SessionMetadata = {
-		...archivedMetadata,
-		archivedAt: undefined,
-		updatedAt: new Date().toISOString()
-	};
-	await rename(sourceDir, targetDir);
-	await writeJsonFileAtomic(join(targetDir, "metadata.json"), metadata);
-	return metadata;
+async function deleteSessionRecord(sessionId: string, archived: boolean): Promise<void> {
+	const safeSessionId: string = assertSafeSessionId(sessionId);
+	await readSessionMetadata(safeSessionId, archived);
+	const dir: string = archived ? getArchivedSessionDir(safeSessionId) : getSessionDir(safeSessionId);
+	const staging: string = `${dir}.deleting-${Date.now().toString(36)}`;
+	const hadDir: boolean = await pathExists(dir);
+	if (hadDir) {
+		await rename(dir, staging);
+	}
+	try {
+		(await getSessionDatabase()).prepare("DELETE FROM sessions WHERE session_id = ?").run(safeSessionId);
+	} catch (error: unknown) {
+		if (hadDir) {
+			await rename(staging, dir).catch((): void => {});
+		}
+		throw error;
+	}
+	if (hadDir) {
+		await rm(staging, { recursive: true, force: true });
+	}
+	invalidateTimelineCache(safeSessionId);
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {
-	const safeSessionId: string = assertSafeSessionId(sessionId);
-	await ensureSessionsDir();
-	const dir: string = getSessionDir(safeSessionId);
-	if (!await pathExists(dir)) {
-		throw new Error(`Session not found: ${safeSessionId}`);
-	}
-
-	await rm(dir, { recursive: true });
+	await deleteSessionRecord(sessionId, false);
 }
 
 export async function deleteArchivedSession(sessionId: string): Promise<void> {
-	const safeSessionId: string = assertSafeSessionId(sessionId);
-	await ensureArchivedSessionsDir();
-	const dir: string = getArchivedSessionDir(safeSessionId);
-	if (!await pathExists(dir)) {
-		throw new Error(`Archived session not found: ${safeSessionId}`);
-	}
-
-	await rm(dir, { recursive: true });
+	await deleteSessionRecord(sessionId, true);
 }
 
 export async function deleteSessionsByWorkspace(workspaceId: string): Promise<{ deletedSessionIds: string[]; deletedArchivedSessionIds: string[] }> {
 	const sessions: SessionMetadata[] = await listSessions();
-	const archivedSessions: SessionMetadata[] = await listArchivedSessions();
-	const deletedSessionIds: string[] = sessions
-		.filter((metadata: SessionMetadata): boolean => metadata.workspaceId === workspaceId)
-		.map((metadata: SessionMetadata): string => metadata.id);
-	const deletedArchivedSessionIds: string[] = archivedSessions
-		.filter((metadata: SessionMetadata): boolean => metadata.workspaceId === workspaceId)
-		.map((metadata: SessionMetadata): string => metadata.id);
-
-	for (const sessionId of deletedSessionIds) {
-		await deleteSession(sessionId);
+	const archived: SessionMetadata[] = await listArchivedSessions();
+	const deletedSessionIds: string[] = sessions.filter((item) => item.workspaceId === workspaceId).map((item) => item.id);
+	const deletedArchivedSessionIds: string[] = archived.filter((item) => item.workspaceId === workspaceId).map((item) => item.id);
+	for (const id of deletedSessionIds) {
+		await deleteSession(id);
 	}
-	for (const sessionId of deletedArchivedSessionIds) {
-		await deleteArchivedSession(sessionId);
+	for (const id of deletedArchivedSessionIds) {
+		await deleteArchivedSession(id);
 	}
-
 	return { deletedSessionIds, deletedArchivedSessionIds };
 }
 
 export async function renameSession(sessionId: string, newTitle: string): Promise<SessionMetadata> {
-	const stored: StoredSession = await openSession(sessionId);
-	const updated: SessionMetadata = {
-		...stored.metadata,
-		title: newTitle,
-		updatedAt: new Date().toISOString()
-	};
-
-	const metaFile: string = metaPath(sessionId);
-	await writeJsonFileAtomic(metaFile, updated);
-
-	return updated;
+	return updateSessionMetadata(sessionId, { title: newTitle });
 }
 
 export async function sessionExists(sessionId: string): Promise<boolean> {
-	await ensureSessionsDir();
-	try {
-		await access(getSessionDir(sessionId));
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-function summaryPath(sessionId: string): string {
-	return join(getSessionDir(sessionId), "summary.md");
-}
-
-function parseSummaryFrontmatter(raw: string): SessionSummary {
-	if (!raw.startsWith("---\n")) {
-		return {
-			content: raw.trim(),
-			messageCount: 0,
-			tokenEstimate: 0,
-			generatedAt: ""
-		};
-	}
-
-	const endIndex: number = raw.indexOf("\n---\n", 4);
-	if (endIndex === -1) {
-		return {
-			content: raw.trim(),
-			messageCount: 0,
-			tokenEstimate: 0,
-			generatedAt: ""
-		};
-	}
-
-	const header: string = raw.slice(4, endIndex);
-	const content: string = raw.slice(endIndex + 5).trim();
-	const metadata: Record<string, string> = {};
-
-	for (const line of header.split("\n")) {
-		const colonIndex: number = line.indexOf(":");
-		if (colonIndex === -1) {
-			continue;
-		}
-
-		const key: string = line.slice(0, colonIndex).trim();
-		const value: string = line.slice(colonIndex + 1).trim();
-		metadata[key] = value;
-	}
-
-	return {
-		content,
-		messageCount: Number.parseInt(metadata.messageCount ?? "0", 10),
-		tokenEstimate: Number.parseInt(metadata.tokenEstimate ?? "0", 10),
-		generatedAt: metadata.generatedAt ?? ""
-	};
-}
-
-function formatSummaryMarkdown(summary: SessionSummary): string {
-	return [
-		"---",
-		`messageCount: ${summary.messageCount}`,
-		`tokenEstimate: ${summary.tokenEstimate}`,
-		`generatedAt: ${summary.generatedAt}`,
-		"---",
-		"",
-		summary.content.trim(),
-		""
-	].join("\n");
+	const safeSessionId: string = assertSafeSessionId(sessionId);
+	const db: DatabaseSync = await getSessionDatabase();
+	return db.prepare("SELECT 1 FROM sessions WHERE session_id = ? AND archived_at IS NULL").get(safeSessionId) !== undefined;
 }
 
 export async function readSummary(sessionId: string): Promise<SessionSummary | null> {
-	try {
-		const filePath: string = summaryPath(sessionId);
-		const raw: string = await readFile(filePath, "utf8");
-		return parseSummaryFrontmatter(raw);
-	} catch {
-		return null;
-	}
+	const safeSessionId: string = assertSafeSessionId(sessionId);
+	const row = (await getSessionDatabase()).prepare(`
+		SELECT content, message_count, token_estimate, generated_at FROM summaries WHERE session_id = ?
+	`).get(safeSessionId) as Record<string, unknown> | undefined;
+	return row === undefined ? null : {
+		content: String(row.content),
+		messageCount: Number(row.message_count),
+		tokenEstimate: Number(row.token_estimate),
+		generatedAt: String(row.generated_at)
+	};
 }
 
 export async function writeSummary(sessionId: string, summary: SessionSummary): Promise<void> {
-	await ensureSessionsDir();
-	const filePath: string = summaryPath(sessionId);
-	await writeFile(filePath, formatSummaryMarkdown(summary), "utf8");
+	const safeSessionId: string = assertSafeSessionId(sessionId);
+	(await getSessionDatabase()).prepare(`
+		INSERT INTO summaries(session_id, content, message_count, token_estimate, generated_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(session_id) DO UPDATE SET
+			content = excluded.content,
+			message_count = excluded.message_count,
+			token_estimate = excluded.token_estimate,
+			generated_at = excluded.generated_at
+	`).run(safeSessionId, summary.content, summary.messageCount, summary.tokenEstimate, summary.generatedAt);
 }
 
 export async function deleteSummary(sessionId: string): Promise<void> {
-	try {
-		const filePath: string = summaryPath(sessionId);
-		await rm(filePath, { force: true });
-	} catch {
-		// Already gone
-	}
+	(await getSessionDatabase()).prepare("DELETE FROM summaries WHERE session_id = ?").run(assertSafeSessionId(sessionId));
 }

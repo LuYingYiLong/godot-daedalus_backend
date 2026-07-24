@@ -801,3 +801,86 @@ test("deterministic verification gate passes when required GDScript checks ran",
 
 	assert.equal(gatedOutcome.status, "completed");
 });
+
+test("write completion contract rejects unrelated successful mutations", (): void => {
+	const phase: WorkflowPhase = {
+		...createPhase("create-main-scene", "write"),
+		completionContract: {
+			targets: [{ kind: "artifact", path: "scenes/Main.tscn" }],
+			requireAll: true
+		}
+	};
+	const observations: WorkflowToolObservation[] = applyEvents([
+		{
+			type: "tool.call",
+			step: 0,
+			toolCallId: "set-unrelated",
+			toolName: "mcp_godot_set_project_setting",
+			args: { key: "display/window/size/viewport_width", value: "1280" },
+			serverId: "godot",
+			serverName: "Godot",
+			category: "write",
+			title: "Set project setting",
+			summary: "display/window/size/viewport_width",
+			target: { kind: "unknown", label: "project setting" }
+		},
+		{
+			type: "tool.result",
+			step: 0,
+			toolCallId: "set-unrelated",
+			toolName: "mcp_godot_set_project_setting",
+			resultChars: 40,
+			truncated: false,
+			ok: true,
+			validationStatus: "passed",
+			summary: "Project setting updated.",
+			artifactRefs: ["project.godot"]
+		}
+	]);
+
+	const outcome = createWorkflowPhaseOutcome(phase, "phase-run-main", "", observations);
+	assert.equal(outcome.status, "needs_fix");
+	assert.equal(outcome.failedChecks[0]?.code, "target_artifact_missing");
+	assert.equal(outcome.failedChecks[0]?.artifact, "scenes/Main.tscn");
+});
+
+test("write completion contract accepts the actual target artifact", (): void => {
+	const phase: WorkflowPhase = {
+		...createPhase("create-main-scene", "write"),
+		completionContract: {
+			targets: [{ kind: "artifact", path: "scenes/Main.tscn" }],
+			requireAll: true
+		}
+	};
+	const observations: WorkflowToolObservation[] = applyEvents([
+		{
+			type: "tool.call",
+			step: 0,
+			toolCallId: "create-main",
+			toolName: "mcp_godot_create_scene",
+			args: { scenePath: "res://scenes/Main.tscn", rootType: "Node", rootName: "Main" },
+			serverId: "godot",
+			serverName: "Godot",
+			category: "scene",
+			title: "Create scene",
+			summary: "scenes/Main.tscn",
+			target: { kind: "file", path: "scenes/Main.tscn", label: "Main.tscn" }
+		},
+		{
+			type: "tool.result",
+			step: 0,
+			toolCallId: "create-main",
+			toolName: "mcp_godot_create_scene",
+			resultChars: 40,
+			truncated: false,
+			ok: true,
+			validationStatus: "passed",
+			summary: "Scene created.",
+			artifactRefs: ["res://scenes/Main.tscn"]
+		}
+	]);
+
+	const outcome = createWorkflowPhaseOutcome(phase, "phase-run-main", "", observations);
+	assert.equal(outcome.status, "completed");
+	assert.deepEqual(outcome.failedChecks, []);
+});

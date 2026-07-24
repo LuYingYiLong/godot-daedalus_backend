@@ -32,6 +32,21 @@ export type WorkflowToolObservation = {
 	artifactRefs?: string[] | undefined;
 };
 
+export type WorkflowCompletionTarget =
+	| {
+		kind: "artifact";
+		path: string;
+	}
+	| {
+		kind: "project_setting";
+		key: string;
+	};
+
+export type WorkflowCompletionContract = {
+	targets: WorkflowCompletionTarget[];
+	requireAll: boolean;
+};
+
 export type WorkflowPhase = {
 	id: WorkflowPhaseId;
 	title: string;
@@ -42,6 +57,7 @@ export type WorkflowPhase = {
 	allowedTools: string[];
 	instruction: string;
 	acceptanceCriteria?: string[] | undefined;
+	completionContract?: WorkflowCompletionContract | undefined;
 	requireToolCallOnFirstStep?: boolean | undefined;
 	repairOf?: string | undefined;
 	repairRound?: number | undefined;

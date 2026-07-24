@@ -6,6 +6,7 @@ import { createReadOnlyFactWorkflowPlan, isCurrentProjectFactRequest, planWorkfl
 import {
 	classifyGodotTask,
 	createGodotTemplateWorkflowPlan,
+	createWorkflowCompletionContract,
 	getAllowedToolsForLlmPlannedStep,
 	narrowLlmPlannedWriteTools
 } from "../../../src/workflow/godot-template-planner.js";
@@ -432,6 +433,82 @@ test("LLM planned write tools are narrowed by phase semantics", (): void => {
 	);
 	assert.equal(mainSceneTools.includes("mcp_godot_set_project_setting"), true);
 	assert.equal(mainSceneTools.includes("mcp_godot_apply_scene_patch"), false);
+});
+
+test("main scene workflow intent keeps scene creation and project settings distinct", (): void => {
+	const createTools = getAllowedToolsForLlmPlannedStep(
+		"write",
+		"Create main scene",
+		"Create scenes/Main.tscn with a Node root."
+	);
+	assert.equal(createTools.includes("mcp_godot_create_scene"), true);
+	assert.equal(createTools.includes("mcp_godot_set_project_setting"), false);
+
+	const settingTools = getAllowedToolsForLlmPlannedStep(
+		"write",
+		"Set main scene",
+		"Set application/run/main_scene to res://scenes/Main.tscn."
+	);
+	assert.equal(settingTools.includes("mcp_godot_create_scene"), false);
+	assert.equal(settingTools.includes("mcp_godot_set_project_setting"), true);
+
+	const mixedTools = getAllowedToolsForLlmPlannedStep(
+		"write",
+		"Create and configure main scene",
+		"Create scenes/Main.tscn, then set application/run/main_scene to res://scenes/Main.tscn."
+	);
+	assert.equal(mixedTools.includes("mcp_godot_create_scene"), true);
+	assert.equal(mixedTools.includes("mcp_godot_set_project_setting"), true);
+
+	assert.deepEqual(
+		createWorkflowCompletionContract(
+			"write",
+			"Set main scene",
+			"Set application/run/main_scene to res://scenes/Main.tscn."
+		)?.targets,
+		[{ kind: "project_setting", key: "application/run/main_scene" }]
+	);
+	assert.deepEqual(
+		createWorkflowCompletionContract(
+			"write",
+			"Create and configure main scene",
+			"Create scenes/Main.tscn, then set application/run/main_scene to res://scenes/Main.tscn."
+		)?.targets,
+		[
+			{ kind: "artifact", path: "scenes/Main.tscn" },
+			{ kind: "project_setting", key: "application/run/main_scene" }
+		]
+	);
+});
+
+test("Godot template distinguishes setting an existing main scene from creating and setting one", (): void => {
+	assert.equal(
+		classifyGodotTask("Set application/run/main_scene to res://scenes/Main.tscn", { isGodotProject: true }).type,
+		"project_setting_change"
+	);
+	const mixedClassification = classifyGodotTask(
+		"Create scene res://scenes/Main.tscn and set it as the main scene.",
+		{ isGodotProject: true }
+	);
+	assert.equal(mixedClassification.type, "scene_create");
+	assert.equal(mixedClassification.setAsMain, true);
+
+	const plan = createGodotTemplateWorkflowPlan({
+		message: "Create scene res://scenes/Main.tscn and set it as the main scene.",
+		mode: "agent"
+	}, { isGodotProject: true });
+	assert.deepEqual(
+		plan?.phases.filter((phase: WorkflowPhase): boolean => phase.toolGroup === "write").map((phase: WorkflowPhase): string => phase.id),
+		["create-scene", "set-main-scene"]
+	);
+	assert.deepEqual(
+		plan?.phases.find((phase: WorkflowPhase): boolean => phase.id === "create-scene")?.completionContract?.targets,
+		[{ kind: "artifact", path: "scenes/Main.tscn" }]
+	);
+	assert.deepEqual(
+		plan?.phases.find((phase: WorkflowPhase): boolean => phase.id === "set-main-scene")?.completionContract?.targets,
+		[{ kind: "project_setting", key: "application/run/main_scene" }]
+	);
 });
 
 test("workflow events map to agent event compatibility surface", (): void => {

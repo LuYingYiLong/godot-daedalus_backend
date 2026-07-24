@@ -1,8 +1,6 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import path from "node:path";
-import { getSessionDir } from "../session/session-store.js";
 import type { FileEditBatchDraft, FileEditSnapshot } from "../tools/file-edit-snapshots.js";
 import { logger } from "../logger.js";
+import { getSessionDatabase, parseSqlJson, sqlJson } from "../session/session-database.js";
 
 export type FileEditSummaryItem = {
 	path: string;
@@ -53,14 +51,6 @@ function getBatchCacheKey(sessionId: string, batchId: string): string {
 	return `${sessionId}\n${batchId}`;
 }
 
-function getBatchPath(sessionId: string, batchId: string): string {
-	if (!BATCH_ID_PATTERN.test(batchId)) {
-		throw new Error(`Invalid file edit batch id: ${batchId}`);
-	}
-
-	return path.join(getSessionDir(sessionId), "file-edits", `${batchId}.json`);
-}
-
 function summarizeBatch(batch: PersistedFileEditBatch): FileEditBatchSummary {
 	const editedFiles: FileEditSummaryItem[] = batch.edits.map((edit: FileEditSnapshot): FileEditSummaryItem => ({
 		path: edit.path,
@@ -90,13 +80,35 @@ function summarizeBatch(batch: PersistedFileEditBatch): FileEditBatchSummary {
 
 function enqueueBatchWrite(sessionId: string, batch: PersistedFileEditBatch): void {
 	batchWriteQueue = batchWriteQueue.then(async (): Promise<void> => {
-		const batchPath: string = getBatchPath(sessionId, batch.batchId);
-		await mkdir(path.dirname(batchPath), { recursive: true });
-		await writeFile(batchPath, JSON.stringify(batch, null, 2), "utf8");
+		const db = await getSessionDatabase();
+		db.prepare(`
+			INSERT OR REPLACE INTO file_edit_batches(
+				batch_id, session_id, request_id, tool_call_id, tool_name, payload_json, created_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?)
+		`).run(
+			batch.batchId,
+			sessionId,
+			batch.requestId,
+			batch.toolCallId,
+			batch.toolName,
+			sqlJson(batch),
+			batch.createdAt
+		);
 	}, async (): Promise<void> => {
-		const batchPath: string = getBatchPath(sessionId, batch.batchId);
-		await mkdir(path.dirname(batchPath), { recursive: true });
-		await writeFile(batchPath, JSON.stringify(batch, null, 2), "utf8");
+		const db = await getSessionDatabase();
+		db.prepare(`
+			INSERT OR REPLACE INTO file_edit_batches(
+				batch_id, session_id, request_id, tool_call_id, tool_name, payload_json, created_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?)
+		`).run(
+			batch.batchId,
+			sessionId,
+			batch.requestId,
+			batch.toolCallId,
+			batch.toolName,
+			sqlJson(batch),
+			batch.createdAt
+		);
 	});
 
 	batchWriteQueue.catch((error: unknown): void => {
@@ -164,8 +176,13 @@ export async function readFileEditBatch(sessionId: string, batchId: string): Pro
 		return cached;
 	}
 
-	const raw: string = await readFile(getBatchPath(sessionId, batchId), "utf8");
-	const parsed: unknown = JSON.parse(raw);
+	const row = (await getSessionDatabase()).prepare(`
+		SELECT payload_json FROM file_edit_batches WHERE session_id = ? AND batch_id = ?
+	`).get(sessionId, batchId) as Record<string, unknown> | undefined;
+	if (row === undefined) {
+		throw new Error(`File edit batch not found: ${batchId}`);
+	}
+	const parsed: unknown = parseSqlJson<unknown>(row.payload_json);
 	if (!isPersistedFileEditBatch(parsed) || parsed.batchId !== batchId) {
 		throw new Error(`Invalid file edit batch: ${batchId}`);
 	}

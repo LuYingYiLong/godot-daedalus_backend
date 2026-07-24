@@ -120,7 +120,12 @@ test("scheduler inserts workspace write retry phases for write guard failures", 
 test("scheduler blocks a repairable outcome after the repair budget is exhausted", (): void => {
 	const phase = createPhase("verify", "verify");
 	const state = createState([phase]);
-	state.plan.phases = [{ ...phase, id: "auto-repair-1", repairRound: 1 }, { ...phase, id: "auto-verify-1", repairRound: 1 }];
+	state.plan.phases = [
+		{ ...phase, id: "auto-repair-1", repairRound: 1 },
+		{ ...phase, id: "auto-verify-1", repairRound: 1 },
+		{ ...phase, id: "auto-repair-2", repairRound: 2 },
+		{ ...phase, id: "auto-verify-2", repairRound: 2 }
+	];
 	state.plan.todos = state.plan.phases.map((item: WorkflowPhase) => ({ id: item.id, phaseId: item.id, text: item.title, status: "pending" }));
 
 	const command = scheduleWorkflowPhaseOutcome(state, phase, createOutcome(phase, "needs_fix"), 2);

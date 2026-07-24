@@ -73,6 +73,8 @@ test("generated images can be proposed, created, and replaced inside their activ
 		assert.equal((await readFile(join(workspaceRoot, "assets", "icon.png"), "utf8")), "first-image");
 		workspaceRegistry.deleteWorkspace(workspaceId);
 	} finally {
+		const { resetSessionDatabaseForTests } = await import("../../../src/session/session-database.js");
+		await resetSessionDatabaseForTests();
 		if (previousUserProfile === undefined) {
 			delete process.env.USERPROFILE;
 		} else {
@@ -121,7 +123,7 @@ test("image workspace import enforces session, extension, traversal, and symlink
 
 		await assert.rejects(
 			() => imageImport.executeImageWorkspaceImport({ ...base, sessionId: other.id, relativePath: "assets/texture.webp" }),
-			/ENOENT|no such file/u
+			/Attachment not found/u
 		);
 		await assert.rejects(
 			() => imageImport.executeImageWorkspaceImport({ ...base, relativePath: "assets/texture.png" }),
@@ -151,6 +153,8 @@ test("image workspace import enforces session, extension, traversal, and symlink
 		}
 		workspaceRegistry.deleteWorkspace(workspaceId);
 	} finally {
+		const { resetSessionDatabaseForTests } = await import("../../../src/session/session-database.js");
+		await resetSessionDatabaseForTests();
 		if (previousUserProfile === undefined) {
 			delete process.env.USERPROFILE;
 		} else {

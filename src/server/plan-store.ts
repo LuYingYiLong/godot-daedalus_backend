@@ -1,7 +1,7 @@
-import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { randomBytes } from "node:crypto";
 import { getSessionDir } from "../session/session-store.js";
+import { getSessionDatabase, parseSqlJson, sqlJson } from "../session/session-database.js";
 
 const PLAN_ID_PATTERN: RegExp = /^plan-[a-zA-Z0-9_-]+$/;
 
@@ -53,14 +53,6 @@ export function getPlanDir(sessionId: string, planId: string): string {
 	return path.join(getSessionDir(sessionId), "plans", assertSafePlanId(planId));
 }
 
-function getPlanMetadataPath(sessionId: string, planId: string): string {
-	return path.join(getPlanDir(sessionId, planId), "metadata.json");
-}
-
-function getPlanMarkdownPath(sessionId: string, planId: string): string {
-	return path.join(getPlanDir(sessionId, planId), "PLAN.md");
-}
-
 export function createPlanMetadata(params: {
 	sessionId: string;
 	requestId: string;
@@ -96,10 +88,26 @@ export function createPlanMetadata(params: {
 }
 
 export async function writeStoredPlan(metadata: StoredPlanMetadata, markdown: string): Promise<StoredPlan> {
-	const planDir: string = getPlanDir(metadata.sessionId, metadata.planId);
-	await fs.mkdir(planDir, { recursive: true });
-	await fs.writeFile(getPlanMarkdownPath(metadata.sessionId, metadata.planId), markdown, "utf8");
-	await fs.writeFile(getPlanMetadataPath(metadata.sessionId, metadata.planId), JSON.stringify(metadata, null, 2), "utf8");
+	const db = await getSessionDatabase();
+	db.prepare(`
+		INSERT INTO plans(plan_id, session_id, request_id, status, metadata_json, markdown, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(plan_id) DO UPDATE SET
+			request_id = excluded.request_id,
+			status = excluded.status,
+			metadata_json = excluded.metadata_json,
+			markdown = excluded.markdown,
+			updated_at = excluded.updated_at
+	`).run(
+		metadata.planId,
+		metadata.sessionId,
+		metadata.requestId,
+		metadata.status,
+		sqlJson(metadata),
+		markdown,
+		metadata.createdAt,
+		metadata.updatedAt
+	);
 	return {
 		metadata,
 		markdown
@@ -107,15 +115,20 @@ export async function writeStoredPlan(metadata: StoredPlanMetadata, markdown: st
 }
 
 export async function readStoredPlan(sessionId: string, planId: string): Promise<StoredPlan> {
-	const metadataRaw: string = await fs.readFile(getPlanMetadataPath(sessionId, planId), "utf8");
-	const metadata: StoredPlanMetadata = JSON.parse(metadataRaw) as StoredPlanMetadata;
+	assertSafePlanId(planId);
+	const row = (await getSessionDatabase()).prepare(`
+		SELECT metadata_json, markdown FROM plans WHERE session_id = ? AND plan_id = ?
+	`).get(sessionId, planId) as Record<string, unknown> | undefined;
+	if (row === undefined) {
+		throw new Error(`Plan not found: ${planId}`);
+	}
+	const metadata: StoredPlanMetadata = parseSqlJson<StoredPlanMetadata>(row.metadata_json);
 	if (metadata.sessionId !== sessionId || metadata.planId !== planId) {
 		throw new Error("Plan metadata does not match requested session or plan id.");
 	}
-	const markdown: string = await fs.readFile(getPlanMarkdownPath(sessionId, planId), "utf8");
 	return {
 		metadata,
-		markdown
+		markdown: String(row.markdown)
 	};
 }
 

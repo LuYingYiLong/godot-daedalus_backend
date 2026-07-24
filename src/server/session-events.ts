@@ -10,7 +10,7 @@ import { broadcastSessionEvent } from "./client-connections.js";
 import { logger } from "../logger.js";
 import { withProviderUsageContext } from "../usage/provider-recorder.js";
 
-const THINKING_EVENT_FLUSH_CHARS = 800;
+const PERSISTED_DELTA_FLUSH_CHARS = 8192;
 const MAX_TERMINAL_EVENT_FINGERPRINTS = 512;
 
 function withSessionId(data: unknown, sessionId: string | undefined): unknown {
@@ -100,6 +100,23 @@ export function getThinkingEventBufferKey(sessionId: string, requestId: string):
 	return `${sessionId}\n${requestId}`;
 }
 
+function getPersistedDeltaBufferKey(sessionId: string, requestId: string, eventName: string, data: unknown): string {
+	return [
+		getThinkingEventBufferKey(sessionId, requestId),
+		eventName,
+		getRecordString(data, "runId"),
+		getRecordString(data, "stepRunId")
+	].join("\n");
+}
+
+function getEventDataWithoutText(data: unknown): Record<string, unknown> {
+	if (typeof data !== "object" || data === null || Array.isArray(data)) {
+		return {};
+	}
+	const { text: _text, ...rest } = data as Record<string, unknown>;
+	return rest;
+}
+
 export function getThinkingDeltaText(data: unknown): string {
 	if (typeof data !== "object" || data === null || !("text" in data)) {
 		return "";
@@ -144,8 +161,9 @@ export function flushThinkingEventBuffer(session: ClientSession, key: string): v
 	const text: string = buffer.text;
 	buffer.text = "";
 	enqueueSessionEventWrite(session, async (): Promise<void> => {
-		await appendSessionEvent(buffer.sessionId, buffer.requestId, "ai.thinking.delta", {
-			type: "ai.thinking.delta",
+		await appendSessionEvent(buffer.sessionId, buffer.requestId, buffer.eventName, {
+			...buffer.data,
+			type: buffer.eventName,
 			text
 		});
 	});
@@ -166,8 +184,9 @@ export function flushAiDeltaEventBuffer(session: ClientSession, key: string): vo
 	const text: string = buffer.text;
 	buffer.text = "";
 	enqueueSessionEventWrite(session, async (): Promise<void> => {
-		await appendSessionEvent(buffer.sessionId, buffer.requestId, "ai.delta", {
-			type: "ai.delta",
+		await appendSessionEvent(buffer.sessionId, buffer.requestId, buffer.eventName, {
+			...buffer.data,
+			type: buffer.eventName,
 			text
 		});
 	});
@@ -197,57 +216,62 @@ export function persistSessionEvent(
 		return;
 	}
 
-	if (eventName === "ai.delta") {
+	if (eventName === "ai.delta" || eventName === "agent.message.delta") {
+		flushAllThinkingEventBuffers(session);
 		const text: string = getThinkingDeltaText(data);
 		if (text.length === 0) {
 			return;
 		}
 
-		const key: string = getThinkingEventBufferKey(sessionId, persistRequestId);
+		const key: string = getPersistedDeltaBufferKey(sessionId, persistRequestId, eventName, data);
 		const existingBuffer: ThinkingEventBuffer | undefined = session.aiDeltaEventBuffers.get(key);
 		const buffer: ThinkingEventBuffer = existingBuffer ?? {
 			sessionId,
 			requestId: persistRequestId,
+			eventName,
+			data: getEventDataWithoutText(data),
 			text: ""
 		};
 		buffer.text += text;
 		session.aiDeltaEventBuffers.set(key, buffer);
 
-		if (buffer.text.length >= THINKING_EVENT_FLUSH_CHARS) {
+		if (buffer.text.length >= PERSISTED_DELTA_FLUSH_CHARS) {
 			flushAiDeltaEventBuffer(session, key);
 		}
 		return;
 	}
 
-	const aiDeltaKey: string = getThinkingEventBufferKey(sessionId, persistRequestId);
-	flushAiDeltaEventBuffer(session, aiDeltaKey);
+	flushAllAiDeltaEventBuffers(session);
 
-	if (eventName === "ai.thinking.delta") {
+	if (eventName === "ai.thinking.delta" || eventName === "agent.thinking.delta") {
 		const text: string = getThinkingDeltaText(data);
 		if (text.length === 0) {
 			return;
 		}
 
-		const key: string = getThinkingEventBufferKey(sessionId, persistRequestId);
+		const key: string = getPersistedDeltaBufferKey(sessionId, persistRequestId, eventName, data);
 		const existingBuffer: ThinkingEventBuffer | undefined = session.thinkingEventBuffers.get(key);
 		const buffer: ThinkingEventBuffer = existingBuffer ?? {
 			sessionId,
 			requestId: persistRequestId,
+			eventName,
+			data: getEventDataWithoutText(data),
 			text: ""
 		};
 		buffer.text += text;
 		session.thinkingEventBuffers.set(key, buffer);
 
-		if (buffer.text.length >= THINKING_EVENT_FLUSH_CHARS) {
+		if (buffer.text.length >= PERSISTED_DELTA_FLUSH_CHARS) {
 			flushThinkingEventBuffer(session, key);
 		}
 		return;
 	}
 
-	if (eventName === "ai.thinking.done") {
-		const key: string = getThinkingEventBufferKey(sessionId, persistRequestId);
-		flushThinkingEventBuffer(session, key);
-		session.thinkingEventBuffers.delete(key);
+	if (eventName === "ai.thinking.done" || eventName === "agent.thinking.done") {
+		flushAllThinkingEventBuffers(session);
+		session.thinkingEventBuffers.clear();
+	} else {
+		flushAllThinkingEventBuffers(session);
 	}
 
 	enqueueSessionEventWrite(session, async (): Promise<void> => {

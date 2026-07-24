@@ -6,7 +6,7 @@ import type { AiChatParams, ChatMessage, PromptId } from "../protocol/types.js";
 import { isSkillId, type SkillId } from "../skills/registry.js";
 import type { ToolBudgetLevel } from "../tools/llm-tool-budget.js";
 import { createWorkflowId, createWorkflowTitle, READ_TOOLS, VERIFY_TOOLS, WRITE_TOOLS } from "./planner.js";
-import { getAllowedToolsForLlmPlannedStep } from "./godot-template-planner.js";
+import { createWorkflowCompletionContract, getAllowedToolsForLlmPlannedStep } from "./godot-template-planner.js";
 import type {
 	WorkflowPhase,
 	WorkflowPhaseOutput,
@@ -262,6 +262,7 @@ function createPhaseFromStep(step: LlmPlanStep, index: number, usedIds: Set<stri
 		allowedTools: getAllowedToolsForLlmPlannedStep(toolGroup, step.title, step.instruction),
 		instruction: clipText(step.instruction, MAX_PHASE_INSTRUCTION_CHARS),
 		acceptanceCriteria: normalizeAcceptanceCriteria(step.acceptanceCriteria, toolGroup),
+		completionContract: createWorkflowCompletionContract(toolGroup, step.title, step.instruction, step.acceptanceCriteria),
 		requireToolCallOnFirstStep: toolGroup === "write" || toolGroup === "verify" ? true : undefined
 	};
 }
@@ -278,7 +279,13 @@ function mergeRevisedPendingSteps(plan: WorkflowPlan, firstPendingIndex: number,
 		? createPhasesFromStepsWithReservedIds(usableSteps, completedPhaseIds)
 		: previousPendingPhases.map((phase: WorkflowPhase): WorkflowPhase => ({
 			...phase,
-			allowedTools: [...phase.allowedTools]
+			allowedTools: [...phase.allowedTools],
+			completionContract: phase.completionContract === undefined
+				? undefined
+				: {
+					requireAll: phase.completionContract.requireAll,
+					targets: phase.completionContract.targets.map((target) => ({ ...target }))
+				}
 		}));
 	const phases: WorkflowPhase[] = [...completedPhases, ...revisedPendingPhases];
 	const completedTodos: WorkflowTodoItem[] = plan.todos.filter((todo: WorkflowTodoItem): boolean => completedPhaseIds.has(todo.phaseId));
