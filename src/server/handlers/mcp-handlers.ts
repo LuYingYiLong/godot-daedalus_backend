@@ -12,6 +12,7 @@ import {
 	type CustomMcpServerSummary
 } from "../../mcp/custom-mcp-config-store.js";
 import { createProviderStatusEvent } from "../../providers/provider-error.js";
+import { SecretStoreUnavailableError } from "../../secrets/secret-store.js";
 import { logger } from "../../logger.js";
 
 function canCallMcpToolDirectly(toolName: string): boolean {
@@ -244,7 +245,7 @@ export async function handleMcpRequest(socket: WebSocket, request: ClientRequest
 				id: request.id,
 				ok: false,
 				error: {
-					code: "mcp_config_error",
+					code: error instanceof SecretStoreUnavailableError ? error.code : "mcp_config_error",
 					message: error instanceof Error ? error.message : "Failed to add custom MCP server"
 				}
 			});
@@ -273,7 +274,7 @@ export async function handleMcpRequest(socket: WebSocket, request: ClientRequest
 				id: request.id,
 				ok: false,
 				error: {
-					code: "mcp_config_error",
+					code: error instanceof SecretStoreUnavailableError ? error.code : "mcp_config_error",
 					message: error instanceof Error ? error.message : "Failed to update custom MCP server"
 				}
 			});

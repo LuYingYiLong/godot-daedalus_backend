@@ -1,4 +1,4 @@
-import WebSocket, { WebSocketServer } from "ws";
+import WebSocket, { type VerifyClientCallbackSync, WebSocketServer } from "ws";
 import { clientRequestEnvelopeSchema } from "../protocol/schema.js";
 import type { ClientRequest } from "../protocol/types.js";
 import type { McpHost } from "../mcp/mcp-host.js";
@@ -20,6 +20,12 @@ import { createRuntimeSessionUiMetadata } from "./session-ui-metadata.js";
 import { getClientConnection, getConnectionSession, hasOtherConnectionsForSession, registerClientConnection, unregisterClientConnection } from "./client-connections.js";
 import { withMcpRequestContext } from "../mcp/request-context.js";
 import { logger } from "../logger.js";
+import { timingSafeEqual } from "node:crypto";
+
+export type WebSocketServerRuntimeOptions = {
+	host?: string | undefined;
+	authToken?: string | undefined;
+};
 
 function sendProtocolError(socket: WebSocket, code: string, message: string, requestId: string = ""): void {
 	sendJson(socket, {
@@ -157,10 +163,12 @@ function handleServerHeaders(headers: string[]): void {
 	headers.push("X-Godot-Daedalus: websocket");
 }
 
-function handleServerListening(port: number): void {
+function handleServerListening(port: number, host: string): void {
 	logger.info("websocket", "listening", {
-		port
-	}, `WebSocket server listening on ws://localhost:${port}`);
+		port,
+		host,
+		authenticationRequired: (process.env.DAEDALUS_BACKEND_AUTH_TOKEN?.length ?? 0) > 0
+	}, `WebSocket server listening on ws://${host}:${port}`);
 }
 
 function handleServerError(error: Error): void {
@@ -260,15 +268,63 @@ function handleConnection(socket: WebSocket, request: Parameters<WebSocketServer
 	attachSocketHandlers(socket, session, mcpHost, remoteAddress);
 }
 
-export function createServer(port: number, mcpHost: McpHost): WebSocketServer {
-	const server: WebSocketServer = new WebSocketServer({ port });
+export const WEBSOCKET_AUTH_PROTOCOL_PREFIX: string = "daedalus-auth.";
+
+function tokensMatch(actualToken: string, expectedToken: string): boolean {
+	const expected: Buffer = Buffer.from(expectedToken, "utf8");
+	const actual: Buffer = Buffer.from(actualToken, "utf8");
+	return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
+
+function readProtocolAuthToken(headerValue: string | string[] | undefined): string | null {
+	const protocols: string[] = (Array.isArray(headerValue) ? headerValue : [headerValue ?? ""])
+		.flatMap((value: string): string[] => value.split(","))
+		.map((value: string): string => value.trim());
+	const authProtocol: string | undefined = protocols.find(
+		(value: string): boolean => value.startsWith(WEBSOCKET_AUTH_PROTOCOL_PREFIX)
+	);
+	return authProtocol?.slice(WEBSOCKET_AUTH_PROTOCOL_PREFIX.length) ?? null;
+}
+
+export function matchesWebSocketAuth(
+	authorizationHeader: string | undefined,
+	protocolHeader: string | string[] | undefined,
+	expectedToken: string | undefined
+): boolean {
+	if (expectedToken === undefined || expectedToken.length === 0) {
+		return true;
+	}
+	if (authorizationHeader !== undefined && authorizationHeader.startsWith("Bearer ")) {
+		return tokensMatch(authorizationHeader.slice("Bearer ".length), expectedToken);
+	}
+	const protocolToken: string | null = readProtocolAuthToken(protocolHeader);
+	return protocolToken !== null && tokensMatch(protocolToken, expectedToken);
+}
+
+export function createServer(
+	port: number,
+	mcpHost: McpHost,
+	options: WebSocketServerRuntimeOptions = {}
+): WebSocketServer {
+	const host: string = options.host ?? "127.0.0.1";
+	const verifyClient: VerifyClientCallbackSync = ({ req }): boolean =>
+		matchesWebSocketAuth(
+			req.headers.authorization,
+			req.headers["sec-websocket-protocol"],
+			options.authToken
+		);
+	const server: WebSocketServer = new WebSocketServer({
+		port,
+		host,
+		verifyClient
+	});
 
 	server.on("headers", handleServerHeaders);
 	server.on("connection", (socket: WebSocket, request): void => {
 		handleConnection(socket, request, mcpHost);
 	});
 	server.on("listening", (): void => {
-		handleServerListening(port);
+		handleServerListening(port, host);
 	});
 	server.on("error", handleServerError);
 

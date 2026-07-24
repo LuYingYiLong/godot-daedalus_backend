@@ -36,9 +36,10 @@ export type ExternalMcpConfig = {
 	backendUrl: string;
 	clientName: string;
 	requestTimeoutMs: number;
+	authToken?: string | undefined;
 };
 
-const DEFAULT_BACKEND_URL = "ws://localhost:38180";
+const DEFAULT_BACKEND_URL = "ws://127.0.0.1:38180";
 const DEFAULT_CLIENT_NAME = "godot-daedalus-mcp";
 const DEFAULT_REQUEST_TIMEOUT_MS = 120000;
 
@@ -103,7 +104,8 @@ export function createExternalMcpConfig(
 		requestTimeoutMs: parsePositiveInt(
 			readArgValue(argv, "request-timeout-ms") ?? env.DAEDALUS_MCP_REQUEST_TIMEOUT_MS,
 			DEFAULT_REQUEST_TIMEOUT_MS
-		)
+		),
+		authToken: env.DAEDALUS_BACKEND_AUTH_TOKEN
 	};
 }
 

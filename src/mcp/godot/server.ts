@@ -3,7 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { assertProjectExists, projectRoot } from "./context.js";
 import { registerGodotToolsAndResources } from "./registration.js";
 
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
 	await assertProjectExists();
 
 	const server: McpServer = new McpServer({
@@ -18,8 +18,3 @@ async function main(): Promise<void> {
 
 	console.error(`Godot MCP Server started, project: ${projectRoot}`);
 }
-
-main().catch((error: unknown): void => {
-	console.error("MCP server fatal error:", error);
-	process.exit(1);
-});

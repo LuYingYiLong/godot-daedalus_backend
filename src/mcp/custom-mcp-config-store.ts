@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import keytar from "keytar";
 import { getMcpServersConfigPath } from "../app-paths.js";
 import { writeJsonFileAtomic } from "../json-file-store.js";
+import { deleteSecret, readSecret, writeSecret } from "../secrets/secret-store.js";
 import type { WorkspaceConfig } from "../workspace/types.js";
 import type { McpServerConfig } from "./types.js";
 
@@ -234,7 +234,7 @@ async function writeStoredConfigs(configs: StoredCustomMcpServerConfig[]): Promi
 async function saveSecrets(serverId: string, kind: "env" | "header", values: Record<string, string>): Promise<string[]> {
 	const names: string[] = [];
 	for (const [name, secretValue] of Object.entries(values)) {
-		await keytar.setPassword(KEYTAR_SERVICE, secretAccount(serverId, kind, name), secretValue);
+		await writeSecret(KEYTAR_SERVICE, secretAccount(serverId, kind, name), secretValue);
 		names.push(name);
 	}
 	return names.sort();
@@ -243,7 +243,7 @@ async function saveSecrets(serverId: string, kind: "env" | "header", values: Rec
 async function loadSecrets(serverId: string, kind: "env" | "header", names: readonly string[] | undefined): Promise<Record<string, string>> {
 	const values: Record<string, string> = {};
 	for (const name of names ?? []) {
-		const value: string | null = await keytar.getPassword(KEYTAR_SERVICE, secretAccount(serverId, kind, name));
+		const value: string | null = await readSecret(KEYTAR_SERVICE, secretAccount(serverId, kind, name));
 		if (value !== null) {
 			values[name] = value;
 		}
@@ -253,7 +253,7 @@ async function loadSecrets(serverId: string, kind: "env" | "header", names: read
 
 async function deleteSecrets(serverId: string, kind: "env" | "header", names: readonly string[] | undefined): Promise<void> {
 	for (const name of names ?? []) {
-		await keytar.deletePassword(KEYTAR_SERVICE, secretAccount(serverId, kind, name));
+		await deleteSecret(KEYTAR_SERVICE, secretAccount(serverId, kind, name));
 	}
 }
 
@@ -277,7 +277,7 @@ async function updateSecrets(
 
 	for (const previousName of previousNameSet) {
 		if (!nextNameSet.has(previousName)) {
-			await keytar.deletePassword(KEYTAR_SERVICE, secretAccount(serverId, kind, previousName));
+			await deleteSecret(KEYTAR_SERVICE, secretAccount(serverId, kind, previousName));
 		}
 	}
 
@@ -287,7 +287,7 @@ async function updateSecrets(
 			continue;
 		}
 
-		await keytar.setPassword(KEYTAR_SERVICE, secretAccount(serverId, kind, name), secretValue);
+		await writeSecret(KEYTAR_SERVICE, secretAccount(serverId, kind, name), secretValue);
 	}
 
 	return nextNames;
@@ -296,7 +296,7 @@ async function updateSecrets(
 async function createMaskedSecrets(serverId: string, kind: "env" | "header", names: readonly string[] | undefined): Promise<Record<string, string>> {
 	const result: Record<string, string> = {};
 	for (const name of names ?? []) {
-		const value: string | null = await keytar.getPassword(KEYTAR_SERVICE, secretAccount(serverId, kind, name));
+		const value: string | null = await readSecret(KEYTAR_SERVICE, secretAccount(serverId, kind, name));
 		result[name] = maskSecret(value);
 	}
 	return result;

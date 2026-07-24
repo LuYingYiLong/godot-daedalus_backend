@@ -10,12 +10,21 @@ import { listSkillSummaries } from "../../skills/catalog.js";
 import { getSkillContent, installSkillFromPath, removePersonalSkill, setWorkspaceSkillEnabled, updateSkillContent } from "../../skills/management.js";
 import type { SkillWorkspace } from "../../skills/types.js";
 import { sendGlobalEvent } from "../session-events.js";
-import { checkBackendUpdate, installBackendUpdate } from "../backend-update.js";
 import { getUserPromptConfig, setUserPromptConfig } from "../../user-prompt-store.js";
 import { getGeneralSettings, updateGeneralSettings } from "../../general-settings-store.js";
 import { getWebSearchSettingsStatus, updateWebSearchSettings } from "../../web-search-settings-store.js";
 import { getDaedalusDir } from "../../app-paths.js";
 import { getUsageMetricsSummary, getUsageMetricsTrends, listUsageMetricsLogs } from "../../usage/metrics-store.js";
+import { requestBackendShutdown } from "../../runtime/shutdown.js";
+
+declare const __DAEDALUS_SEA_BUILD__: boolean | undefined;
+
+type BackendUpdateModule = typeof import("../backend-update.js");
+
+async function loadSourceBackendUpdateModule(): Promise<BackendUpdateModule> {
+	const modulePath: string = "../backend-update.js";
+	return await import(modulePath) as BackendUpdateModule;
+}
 
 function getActiveSkillWorkspace(session: ClientSession): SkillWorkspace | undefined {
 	if (session.activeWorkspace !== undefined) {
@@ -63,7 +72,30 @@ export async function handleCoreRequest(socket: WebSocket, request: ClientReques
 		});
 		break;
 
-	case "backend.update.check":
+	case "backend.shutdown": {
+		if ((process.env.DAEDALUS_BACKEND_AUTH_TOKEN?.length ?? 0) === 0) {
+			throw new Error("Authenticated managed runtime is required for backend shutdown.");
+		}
+		sendJson(socket, {
+			type: "response",
+			id: request.id,
+			ok: true,
+			result: { accepted: true }
+		});
+		const shutdownTimer = setTimeout((): void => {
+			if (!requestBackendShutdown("authenticated_rpc")) {
+				process.exitCode = 1;
+			}
+		}, 25);
+		shutdownTimer.unref();
+		break;
+	}
+
+	case "backend.update.check": {
+		if (typeof __DAEDALUS_SEA_BUILD__ !== "undefined" && __DAEDALUS_SEA_BUILD__) {
+			throw new Error("Backend updates are managed by Daedalus Studio for this distribution.");
+		}
+		const { checkBackendUpdate } = await loadSourceBackendUpdateModule();
 		sendJson(socket, {
 			type: "response",
 			id: request.id,
@@ -71,8 +103,13 @@ export async function handleCoreRequest(socket: WebSocket, request: ClientReques
 			result: await checkBackendUpdate()
 		});
 		break;
+	}
 
-	case "backend.update.install":
+	case "backend.update.install": {
+		if (typeof __DAEDALUS_SEA_BUILD__ !== "undefined" && __DAEDALUS_SEA_BUILD__) {
+			throw new Error("Backend updates are managed by Daedalus Studio for this distribution.");
+		}
+		const { installBackendUpdate } = await loadSourceBackendUpdateModule();
 		sendJson(socket, {
 			type: "response",
 			id: request.id,
@@ -80,6 +117,7 @@ export async function handleCoreRequest(socket: WebSocket, request: ClientReques
 			result: await installBackendUpdate(request.params)
 		});
 		break;
+	}
 
 	case "usage.metrics.summary.get":
 		sendJson(socket, {

@@ -1,6 +1,6 @@
 {
   "name": "daedalus-backend",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "TypeScript backend for the Godot Daedalus editor assistant plugin.",
   "main": "./src/main.ts",
   "bin": {
@@ -20,16 +20,20 @@
     "README.md"
   ],
   "scripts": {
-    "start": "tsx src/main.ts",
-    "dev": "tsx src/main.ts",
+    "start": "tsx src/cli.ts serve",
+    "dev": "tsx src/cli.ts serve",
     "ping": "tsx src/ping-client.ts",
-    "mcp": "tsx src/mcp/external/server.ts",
-    "terminal:mcp": "tsx src/mcp/terminal/server.ts",
+    "mcp": "tsx src/cli.ts mcp external",
+    "terminal:mcp": "tsx src/cli.ts mcp terminal",
     "automation:mcp": "tsx src/mcp/automation/server.ts",
     "typecheck": "tsc --noEmit",
     "test": "npm run typecheck && node --import tsx --test \"tests/**/*.test.ts\"",
     "check": "npm test && npm run pack:check",
     "pack:check": "npm pack --dry-run",
+    "self-test": "tsx src/cli.ts self-test --json",
+    "build:native:win": "npm rebuild keytar --build-from-source",
+    "build:sea:win": "tsx scripts/build-windows-sea.ts",
+    "release:sea:win": "npm run typecheck && npm run build:sea:win",
     "smoke:beta": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/beta-smoke.ps1",
     "smoke:llm": "tsx scripts/llm-inline-diff-smoke.ts",
     "smoke:automation": "tsx scripts/automation-smoke-matrix.ts",
@@ -54,19 +58,27 @@
   "type": "module",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "keytar": "^7.9.0",
     "openai": "^6.45.0",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3",
     "ws": "^8.21.0",
     "zod": "^4.4.3"
   },
+  "optionalDependencies": {
+    "keytar": "^7.9.0"
+  },
   "devDependencies": {
     "@commitlint/cli": "^21.2.0",
     "@commitlint/config-conventional": "^21.2.0",
     "@types/node": "^26.0.1",
     "@types/ws": "^8.18.1",
-    "husky": "^9.1.7"
+    "esbuild": "^0.28.1",
+    "husky": "^9.1.7",
+    "postject": "^1.0.0-alpha.6"
+  },
+  "daedalusBinary": {
+    "minStudioVersion": "1.0.1",
+    "protocolVersion": 2
   },
   "allowScripts": {
     "esbuild@0.28.1": true,

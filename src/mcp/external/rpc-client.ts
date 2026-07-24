@@ -130,7 +130,11 @@ export class ExternalMcpRpcClient {
 		}
 
 		await new Promise<void>((resolve, reject): void => {
-			const socket = new WebSocket(this.config.backendUrl);
+			const socket = new WebSocket(this.config.backendUrl, {
+				headers: this.config.authToken === undefined
+					? undefined
+					: { Authorization: `Bearer ${this.config.authToken}` }
+			});
 			this.socket = socket;
 
 			const rejectConnect = (error: Error): void => {

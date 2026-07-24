@@ -192,3 +192,16 @@ export async function resetSessionDatabaseForTests(databasePath?: string): Promi
 	await Promise.all(closeOperations);
 	testDatabasePath = databasePath ?? null;
 }
+
+export async function closeSessionDatabases(): Promise<void> {
+	const closeOperations: Array<Promise<void>> = [];
+	for (const promise of statePromisesByPath.values()) {
+		closeOperations.push(promise.then((state: SessionDatabaseState): void => {
+			if (state.available) {
+				state.db.close();
+			}
+		}));
+	}
+	statePromisesByPath.clear();
+	await Promise.all(closeOperations);
+}

@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test, { mock } from "node:test";
-import keytar from "keytar";
+import test from "node:test";
+import { installReadOnlySecretStore, resetSecretStoreDriver } from "../../helpers/secret-store.js";
 
 async function withTempAppData(run: () => Promise<void>): Promise<void> {
 	const previousUserProfile: string | undefined = process.env.USERPROFILE;
@@ -17,14 +17,14 @@ async function withTempAppData(run: () => Promise<void>): Promise<void> {
 		} else {
 			process.env.USERPROFILE = previousUserProfile;
 		}
-		mock.restoreAll();
+		resetSecretStoreDriver();
 		await rm(appDataDir, { recursive: true, force: true });
 	}
 }
 
 test("web search settings expose supported catalog models", async (): Promise<void> => {
 	await withTempAppData(async (): Promise<void> => {
-		mock.method(keytar, "getPassword", async (): Promise<string | null> => null);
+		installReadOnlySecretStore(async (): Promise<string | null> => null);
 		const store = await import(`../../../src/web-search-settings-store.js?case=${Date.now()}-${Math.random()}`);
 
 		const status = await store.getWebSearchSettingsStatus();
@@ -43,7 +43,7 @@ test("web search settings expose supported catalog models", async (): Promise<vo
 
 test("web search settings persist search model and report configured availability", async (): Promise<void> => {
 	await withTempAppData(async (): Promise<void> => {
-		mock.method(keytar, "getPassword", async (_service: string, account: string): Promise<string | null> => {
+		installReadOnlySecretStore(async (_service: string, account: string): Promise<string | null> => {
 			return account === "provider:zhipu:api_key" ? "zhipu-test-key" : null;
 		});
 		const store = await import(`../../../src/web-search-settings-store.js?case=${Date.now()}-${Math.random()}`);
@@ -71,7 +71,7 @@ test("web search settings persist search model and report configured availabilit
 
 test("web search settings disable runtime config until globally enabled", async (): Promise<void> => {
 	await withTempAppData(async (): Promise<void> => {
-		mock.method(keytar, "getPassword", async (_service: string, account: string): Promise<string | null> => {
+		installReadOnlySecretStore(async (_service: string, account: string): Promise<string | null> => {
 			return account === "provider:zhipu:api_key" ? "zhipu-test-key" : null;
 		});
 		const store = await import(`../../../src/web-search-settings-store.js?case=${Date.now()}-${Math.random()}`);
@@ -88,7 +88,7 @@ test("web search settings disable runtime config until globally enabled", async 
 
 test("web search settings clamp persisted search result count", async (): Promise<void> => {
 	await withTempAppData(async (): Promise<void> => {
-		mock.method(keytar, "getPassword", async (): Promise<string | null> => null);
+		installReadOnlySecretStore(async (): Promise<string | null> => null);
 		const store = await import(`../../../src/web-search-settings-store.js?case=${Date.now()}-${Math.random()}`);
 
 		assert.equal((await store.updateWebSearchSettings({ maxResults: -1 })).maxResults, 0);
@@ -99,7 +99,7 @@ test("web search settings clamp persisted search result count", async (): Promis
 
 test("web search settings reject unsupported providers and models", async (): Promise<void> => {
 	await withTempAppData(async (): Promise<void> => {
-		mock.method(keytar, "getPassword", async (): Promise<string | null> => null);
+		installReadOnlySecretStore(async (): Promise<string | null> => null);
 		const store = await import(`../../../src/web-search-settings-store.js?case=${Date.now()}-${Math.random()}`);
 
 		await assert.rejects(

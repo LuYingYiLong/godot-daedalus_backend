@@ -27,9 +27,10 @@ export type AutomationConfig = {
 	requestTimeoutMs: number;
 	allowedTools: readonly string[];
 	allowedPathPrefixes: readonly string[];
+	authToken?: string | undefined;
 };
 
-const DEFAULT_BACKEND_URL = "ws://localhost:38180";
+const DEFAULT_BACKEND_URL = "ws://127.0.0.1:38180";
 const DEFAULT_CLIENT_NAME = "daedalus-automation-mcp";
 const DEFAULT_REQUEST_TIMEOUT_MS = 120000;
 
@@ -106,6 +107,7 @@ export function createAutomationConfig(
 			DEFAULT_REQUEST_TIMEOUT_MS
 		),
 		allowedTools: parseCsv(env.DAEDALUS_AUTOMATION_ALLOWED_TOOLS, DEFAULT_ALLOWED_TOOLS),
-		allowedPathPrefixes: parseCsv(env.DAEDALUS_AUTOMATION_ALLOWED_PATH_PREFIXES, DEFAULT_ALLOWED_PATH_PREFIXES)
+		allowedPathPrefixes: parseCsv(env.DAEDALUS_AUTOMATION_ALLOWED_PATH_PREFIXES, DEFAULT_ALLOWED_PATH_PREFIXES),
+		authToken: env.DAEDALUS_BACKEND_AUTH_TOKEN
 	};
 }

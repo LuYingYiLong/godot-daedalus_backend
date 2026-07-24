@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test, { mock } from "node:test";
-import keytar from "keytar";
+import test from "node:test";
+import { installMemorySecretStore, resetSecretStoreDriver } from "../../helpers/secret-store.js";
 import { getMcpServersConfigPath } from "../../../src/app-paths.js";
 import {
 	addCustomMcpServerConfig,
@@ -17,18 +17,8 @@ import type { WorkspaceConfig } from "../../../src/workspace/types.js";
 async function withTempAppData(run: (secrets: Map<string, string>) => Promise<void>): Promise<void> {
 	const previousUserProfile: string | undefined = process.env.USERPROFILE;
 	const appDataDir: string = await mkdtemp(join(tmpdir(), "daedalus-custom-mcp-"));
-	const secrets: Map<string, string> = new Map();
+	const secrets: Map<string, string> = installMemorySecretStore();
 	process.env.USERPROFILE = appDataDir;
-	mock.method(keytar, "setPassword", async (_service: string, account: string, password: string): Promise<void> => {
-		secrets.set(account, password);
-	});
-	mock.method(keytar, "getPassword", async (_service: string, account: string): Promise<string | null> => {
-		return secrets.get(account) ?? null;
-	});
-	mock.method(keytar, "deletePassword", async (_service: string, account: string): Promise<boolean> => {
-		secrets.delete(account);
-		return true;
-	});
 
 	try {
 		await run(secrets);
@@ -38,7 +28,7 @@ async function withTempAppData(run: (secrets: Map<string, string>) => Promise<vo
 		} else {
 			process.env.USERPROFILE = previousUserProfile;
 		}
-		mock.restoreAll();
+		resetSecretStoreDriver();
 		await rm(appDataDir, { recursive: true, force: true });
 	}
 }

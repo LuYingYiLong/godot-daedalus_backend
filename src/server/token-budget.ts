@@ -1,5 +1,3 @@
-import * as fs from "node:fs/promises";
-import * as path from "node:path";
 import type { AdditionalContextItem, AiChatParams, ChatMessage, ModelProfile } from "../protocol/types.js";
 import { type TokenCounter } from "../tokens/token-counter.js";
 import { createTokenCounter } from "../tokens/token-counter-factory.js";
@@ -17,6 +15,7 @@ import type { ProviderChatOptions } from "../providers/deepseek-client.js";
 import type { ClientSession } from "./client-session.js";
 import { cloneAdditionalContextItems } from "./additional-context.js";
 import { logger } from "../logger.js";
+import { readRuntimeAssetText } from "../runtime/runtime-assets.js";
 import { filterLlmContextMessages, isLlmContextMessage } from "./transcript-history.js";
 
 export { appendFailedChatTurnToSession, filterLlmContextMessages, isLlmContextMessage } from "./transcript-history.js";
@@ -33,8 +32,7 @@ export async function loadSessionCompressorPrompt(): Promise<string> {
 		return sessionCompressorPromptCache;
 	}
 
-	const promptPath: string = path.resolve(process.cwd(), "src/prompts/templates/internal/session-compressor.md");
-	const content: string = await fs.readFile(promptPath, "utf8");
+	const content: string = await readRuntimeAssetText("prompt.internal.sessionCompressor");
 	const trimmedContent: string = content.trim();
 	sessionCompressorPromptCache = trimmedContent;
 	return trimmedContent;

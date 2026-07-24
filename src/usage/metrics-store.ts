@@ -592,3 +592,15 @@ export function resetUsageMetricsStoreForTests(dbPath: string | null = null): vo
 		}
 	});
 }
+
+export async function closeUsageMetricsStore(): Promise<void> {
+	const statePromise: Promise<StoreState> | null = storeStatePromise;
+	storeStatePromise = null;
+	if (statePromise === null) {
+		return;
+	}
+	const state: StoreState = await statePromise;
+	if (state.available) {
+		state.db.close();
+	}
+}

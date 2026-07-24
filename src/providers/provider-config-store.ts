@@ -1,8 +1,8 @@
 import { readFile, rm } from "node:fs/promises";
-import keytar from "keytar";
 import { getProviderConfigPath } from "../app-paths.js";
 import { writeJsonFileAtomic } from "../json-file-store.js";
 import type { ProviderId } from "../protocol/types.js";
+import { deleteSecret, readSecret, writeSecret } from "../secrets/secret-store.js";
 import {
 	DEFAULT_PROVIDER_ID,
 	getProviderDefaultBaseUrl,
@@ -165,12 +165,7 @@ function maskApiKey(apiKey: string | null): string | null {
 }
 
 async function readKeytarPassword(provider: ProviderId): Promise<string | null> {
-	try {
-		return await keytar.getPassword(KEYTAR_SERVICE, getKeytarAccount(provider));
-	} catch {
-		// 只读路径不能因为系统密钥服务不可用而让状态查询、上下文估算失败。
-		return null;
-	}
+	return readSecret(KEYTAR_SERVICE, getKeytarAccount(provider));
 }
 
 function getModelDisplayName(models: readonly ProviderModelInfo[], modelId: string): string {
@@ -442,10 +437,10 @@ export async function saveProviderConfig(input: ProviderConfigInput): Promise<Pr
 
 	const apiKey: string | undefined = input.apiKey === null ? undefined : normalizeOptionalString(input.apiKey);
 	if (input.apiKey === null) {
-		await keytar.deletePassword(KEYTAR_SERVICE, getKeytarAccount(input.provider));
+		await deleteSecret(KEYTAR_SERVICE, getKeytarAccount(input.provider));
 	}
 	if (apiKey !== undefined) {
-		await keytar.setPassword(KEYTAR_SERVICE, getKeytarAccount(input.provider), apiKey);
+		await writeSecret(KEYTAR_SERVICE, getKeytarAccount(input.provider), apiKey);
 	}
 
 	const stored: StoredProviderConfig = await readStoredProviderConfig();
@@ -600,7 +595,7 @@ export async function clearProviderConfig(provider?: ProviderId | undefined): Pr
 		throw new Error(`Unknown provider: ${providerToClear}`);
 	}
 
-	await keytar.deletePassword(KEYTAR_SERVICE, getKeytarAccount(providerToClear));
+	await deleteSecret(KEYTAR_SERVICE, getKeytarAccount(providerToClear));
 	delete stored.providers[providerToClear];
 
 	if (Object.keys(stored.providers).length === 0) {

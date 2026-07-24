@@ -1,7 +1,5 @@
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { ProviderId } from "../protocol/types.js";
+import { readRuntimeAssetTextSync } from "../runtime/runtime-assets.js";
 import { normalizeProviderModelCapabilities } from "./provider-types.js";
 import type {
 	AdapterFamily,
@@ -68,12 +66,8 @@ type ProviderCatalog = {
 const DEFAULT_MODELS_PATH: string = "/models";
 export const DEFAULT_PROVIDER_ID: ProviderId = "deepseek";
 
-const CATALOG_DIR: string = join(dirname(fileURLToPath(import.meta.url)), "catalog");
-const PROVIDERS_CATALOG_PATH: string = join(CATALOG_DIR, "providers.json");
-const MODELS_CATALOG_PATH: string = join(CATALOG_DIR, "models.json");
-
-function readJsonFile(path: string): unknown {
-	return JSON.parse(readFileSync(path, "utf8")) as unknown;
+function readJsonAsset(assetKey: "provider.providers" | "provider.models"): unknown {
+	return JSON.parse(readRuntimeAssetTextSync(assetKey)) as unknown;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -246,8 +240,8 @@ function parseModels(value: unknown): RawModelCatalogEntry[] {
 }
 
 function buildCatalog(): ProviderCatalog {
-	const rawProviders: RawProviderCatalogEntry[] = parseProviders(readJsonFile(PROVIDERS_CATALOG_PATH));
-	const rawModels: RawModelCatalogEntry[] = parseModels(readJsonFile(MODELS_CATALOG_PATH));
+	const rawProviders: RawProviderCatalogEntry[] = parseProviders(readJsonAsset("provider.providers"));
+	const rawModels: RawModelCatalogEntry[] = parseModels(readJsonAsset("provider.models"));
 	const providerIds: Set<string> = new Set();
 	const modelKeys: Set<string> = new Set();
 	const modelsByProvider: Map<string, ProviderModelInfo[]> = new Map();

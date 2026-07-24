@@ -245,3 +245,15 @@ export function installProcessLogHandlers(): void {
 		logger.error("process", "unhandled_rejection", reason);
 	});
 }
+
+export async function closeLogger(): Promise<void> {
+	const currentStream: WriteStream | null | undefined = stream;
+	stream = undefined;
+	streamPath = undefined;
+	if (currentStream === null || currentStream === undefined) {
+		return;
+	}
+	await new Promise<void>((resolve): void => {
+		currentStream.end(resolve);
+	});
+}

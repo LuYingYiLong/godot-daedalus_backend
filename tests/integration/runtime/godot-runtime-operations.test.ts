@@ -55,7 +55,7 @@ test("Godot runtime and headless operation tools keep commands scoped and shell-
 			runtimeTools.toRuntimeResPath("../outside.tscn");
 		}, /outside Godot project|traversal/u);
 
-		const invocation = headlessTools.buildGodotHeadlessOperationInvocation({
+		const invocation = await headlessTools.buildGodotHeadlessOperationInvocation({
 			operation: "get_uid",
 			resource_path: "res://scenes/main.tscn"
 		});

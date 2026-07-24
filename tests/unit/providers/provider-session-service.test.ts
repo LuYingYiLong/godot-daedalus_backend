@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test, { mock } from "node:test";
-import keytar from "keytar";
+import test from "node:test";
+import { installReadOnlySecretStore, resetSecretStoreDriver } from "../../helpers/secret-store.js";
 import { applyProviderConfigToRuntime, ensureProviderConfigured, type ProviderSessionRuntime } from "../../../src/application/provider-session-service.js";
 import { saveProviderConfig } from "../../../src/providers/provider-config-store.js";
 import { getDefaultModelProfile } from "../../../src/tokens/model-profiles.js";
@@ -38,8 +38,7 @@ test("ensuring provider credentials preserves the session selected model", async
 	const previousUserProfile: string | undefined = process.env.USERPROFILE;
 	const appDataDir: string = await mkdtemp(join(tmpdir(), "daedalus-provider-session-"));
 	process.env.USERPROFILE = appDataDir;
-	mock.method(keytar, "setPassword", async (): Promise<void> => {});
-	mock.method(keytar, "getPassword", async (): Promise<string | null> => "moonshot-key");
+	installReadOnlySecretStore(async (): Promise<string | null> => "moonshot-key");
 
 	try {
 		await saveProviderConfig({
@@ -62,7 +61,7 @@ test("ensuring provider credentials preserves the session selected model", async
 		assert.equal(runtime.modelProfile.model, "kimi-k3");
 		assert.equal(runtime.providerBaseUrl, "https://api.moonshot.cn/v1");
 	} finally {
-		mock.restoreAll();
+		resetSecretStoreDriver();
 		if (previousUserProfile === undefined) {
 			delete process.env.USERPROFILE;
 		} else {

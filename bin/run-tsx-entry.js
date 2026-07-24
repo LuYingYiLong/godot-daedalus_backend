@@ -2,10 +2,10 @@ import { spawn } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export function runTsxEntry(entryRelativePath) {
+export function runTsxEntry(entryRelativePath, prefixArgs = []) {
 	const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 	const entryPath = resolve(packageRoot, entryRelativePath);
-	const child = spawn(process.execPath, ["--import", "tsx", entryPath, ...process.argv.slice(2)], {
+	const child = spawn(process.execPath, ["--import", "tsx", entryPath, ...prefixArgs, ...process.argv.slice(2)], {
 		cwd: packageRoot,
 		env: process.env,
 		stdio: "inherit"

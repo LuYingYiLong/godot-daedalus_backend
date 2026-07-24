@@ -10,6 +10,7 @@ import { clearProviderConfig, getProviderConfigStatus, getProviderModelSelection
 import { listProviderModels } from "../../providers/provider-models.js";
 import { normalizeConfiguredProviderBaseUrl } from "../../providers/provider-base-url.js";
 import { applyProviderConfigToRuntime, ensureProviderConfigured, resetProviderRuntime } from "../../application/provider-session-service.js";
+import { SecretStoreUnavailableError } from "../../secrets/secret-store.js";
 import { logger } from "../../logger.js";
 
 export { ensureProviderConfigured } from "../../application/provider-session-service.js";
@@ -127,7 +128,7 @@ export async function handleProviderRequest(socket: WebSocket, request: ClientRe
 				id: request.id,
 				ok: false,
 				error: {
-					code: "provider_config_error",
+					code: error instanceof SecretStoreUnavailableError ? error.code : "provider_config_error",
 					message: error instanceof Error ? error.message : "Failed to save provider config"
 				}
 			});

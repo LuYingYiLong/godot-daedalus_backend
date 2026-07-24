@@ -1,7 +1,6 @@
 import { execFile } from "node:child_process";
 import { access } from "node:fs/promises";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
@@ -12,6 +11,7 @@ import {
 	projectRoot,
 	resolveGodotResourceProjectPath
 } from "../context.js";
+import { materializeRuntimeAsset } from "../../../runtime/runtime-assets.js";
 
 const execFileAsync = promisify(execFile);
 const HEADLESS_OPERATION_TIMEOUT_MS: number = 120_000;
@@ -26,24 +26,21 @@ type HeadlessOperationResult = {
 	parsed: unknown;
 };
 
-function getOperationsScriptPath(): string {
-	return fileURLToPath(new URL("../scripts/godot_operations.gd", import.meta.url));
-}
-
-export function buildGodotHeadlessOperationInvocation(operation: Record<string, unknown>): {
+export async function buildGodotHeadlessOperationInvocation(operation: Record<string, unknown>): Promise<{
 	executable: string;
 	args: string[];
 	cwd: string;
 	operationJson: string;
-} {
+}> {
 	const operationJson: string = JSON.stringify(operation);
+	const operationsScript = await materializeRuntimeAsset("godot.operationsScript");
 	return {
 		executable: GODOT_EXECUTABLE,
 		args: [
 			"--headless",
 			"--disable-crash-handler",
 			"--path", projectRoot,
-			"--script", getOperationsScriptPath(),
+			"--script", operationsScript.path,
 			"--", operationJson
 		],
 		cwd: projectRoot,
@@ -107,7 +104,7 @@ export async function runGodotHeadlessOperation(operation: Record<string, unknow
 		throw new Error("Missing required operation name");
 	}
 
-	const invocation = buildGodotHeadlessOperationInvocation(operation);
+	const invocation = await buildGodotHeadlessOperationInvocation(operation);
 
 	try {
 		const result = await execFileAsync(invocation.executable, invocation.args, {

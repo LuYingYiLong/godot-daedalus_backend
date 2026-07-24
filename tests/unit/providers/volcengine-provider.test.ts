@@ -4,8 +4,8 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test, { mock } from "node:test";
-import keytar from "keytar";
+import test from "node:test";
+import { installReadOnlySecretStore, resetSecretStoreDriver } from "../../helpers/secret-store.js";
 import { chatWithOpenAICompatible } from "../../../src/providers/provider-chat-completions-client.js";
 import { listProviderModels } from "../../../src/providers/provider-models.js";
 import { modelSupportsImageInput } from "../../../src/providers/provider-image-content.js";
@@ -102,7 +102,7 @@ async function withTempAppData(run: () => Promise<void>): Promise<void> {
 		} else {
 			process.env.USERPROFILE = previousUserProfile;
 		}
-		mock.restoreAll();
+		resetSecretStoreDriver();
 	}
 }
 
@@ -163,8 +163,7 @@ test("Volcengine Ark OpenAI-compatible requests preserve image input and model l
 test("Volcengine Ark image generation uses Seedream and saves a session artifact", async (): Promise<void> => {
 	await withTempAppData(async (): Promise<void> => {
 		await withVolcengineMockServer(async (baseUrl: string, requests: RecordedRequest[]): Promise<void> => {
-			mock.method(keytar, "setPassword", async (): Promise<void> => undefined);
-			mock.method(keytar, "getPassword", async (_service: string, account: string): Promise<string | null> => {
+			installReadOnlySecretStore(async (_service: string, account: string): Promise<string | null> => {
 				return account === "provider:volcengine:api_key" ? "volcengine-test-key" : null;
 			});
 

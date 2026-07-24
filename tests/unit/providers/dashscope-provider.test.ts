@@ -4,8 +4,8 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test, { mock } from "node:test";
-import keytar from "keytar";
+import test from "node:test";
+import { installReadOnlySecretStore, resetSecretStoreDriver } from "../../helpers/secret-store.js";
 import { listProviderModels } from "../../../src/providers/provider-models.js";
 import { saveProviderConfig } from "../../../src/providers/provider-config-store.js";
 
@@ -88,7 +88,7 @@ async function withTempAppData(run: () => Promise<void>): Promise<void> {
 		} else {
 			process.env.USERPROFILE = previousUserProfile;
 		}
-		mock.restoreAll();
+		resetSecretStoreDriver();
 	}
 }
 
@@ -122,8 +122,7 @@ test("DashScope provider model list keeps the recommended catalog when API retur
 test("DashScope image edit sends source images and saves a session artifact", async (): Promise<void> => {
 	await withTempAppData(async (): Promise<void> => {
 		await withDashScopeMockServer(async (baseUrl: string, requests: RecordedRequest[]): Promise<void> => {
-			mock.method(keytar, "setPassword", async (): Promise<void> => undefined);
-			mock.method(keytar, "getPassword", async (_service: string, account: string): Promise<string | null> => {
+			installReadOnlySecretStore(async (_service: string, account: string): Promise<string | null> => {
 				return account === "provider:dashscope:api_key" ? "dashscope-test-key" : null;
 			});
 
@@ -192,8 +191,7 @@ test("DashScope image edit sends source images and saves a session artifact", as
 test("DashScope edit-only model requires a source image and omits unsupported optional parameters", async (): Promise<void> => {
 	await withTempAppData(async (): Promise<void> => {
 		await withDashScopeMockServer(async (baseUrl: string, requests: RecordedRequest[]): Promise<void> => {
-			mock.method(keytar, "setPassword", async (): Promise<void> => undefined);
-			mock.method(keytar, "getPassword", async (_service: string, account: string): Promise<string | null> => {
+			installReadOnlySecretStore(async (_service: string, account: string): Promise<string | null> => {
 				return account === "provider:dashscope:api_key" ? "dashscope-test-key" : null;
 			});
 
@@ -251,8 +249,7 @@ test("DashScope edit-only model requires a source image and omits unsupported op
 test("DashScope image-only models cap output count at one", async (): Promise<void> => {
 	await withTempAppData(async (): Promise<void> => {
 		await withDashScopeMockServer(async (baseUrl: string, requests: RecordedRequest[]): Promise<void> => {
-			mock.method(keytar, "setPassword", async (): Promise<void> => undefined);
-			mock.method(keytar, "getPassword", async (_service: string, account: string): Promise<string | null> => {
+			installReadOnlySecretStore(async (_service: string, account: string): Promise<string | null> => {
 				return account === "provider:dashscope:api_key" ? "dashscope-test-key" : null;
 			});
 

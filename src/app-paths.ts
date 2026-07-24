@@ -16,6 +16,9 @@ export type DaedalusPathKey =
 	| "sessions.archivedRoot"
 	| "sessions.database"
 	| "logs.root"
+	| "backend.connection"
+	| "backend.nativeRoot"
+	| "backend.runtimeAssetsRoot"
 	| "terminalJobs.root"
 	| "toolExecution.ledger"
 	| "metrics.usageDb";
@@ -48,6 +51,9 @@ function buildDaedalusPathRegistry(): DaedalusPathRegistry {
 		"sessions.archivedRoot": join(root, "archived_sessions"),
 		"sessions.database": join(root, "sessions.sqlite"),
 		"logs.root": join(root, "logs"),
+		"backend.connection": join(root, "backend", "connection.json"),
+		"backend.nativeRoot": join(root, "backend", "native"),
+		"backend.runtimeAssetsRoot": join(root, "backend", "runtime-assets"),
 		"terminalJobs.root": join(root, "terminal-jobs"),
 		"toolExecution.ledger": join(root, "tool-executions.jsonl"),
 		"metrics.usageDb": join(root, "metrics", "usage.sqlite")
@@ -108,6 +114,18 @@ export function getSessionsDatabasePath(): string {
 
 export function getLogsDir(): string {
 	return getDaedalusPath("logs.root");
+}
+
+export function getBackendNativeRoot(): string {
+	return getDaedalusPath("backend.nativeRoot");
+}
+
+export function getBackendConnectionPath(): string {
+	return getDaedalusPath("backend.connection");
+}
+
+export function getBackendRuntimeAssetsRoot(): string {
+	return getDaedalusPath("backend.runtimeAssetsRoot");
 }
 
 export function getTerminalJobsDir(): string {

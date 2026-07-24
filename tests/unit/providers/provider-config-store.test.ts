@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import test, { mock } from "node:test";
-import keytar from "keytar";
+import test from "node:test";
+import { installMemorySecretStore, installReadOnlySecretStore, installUnavailableSecretStore, resetSecretStoreDriver } from "../../helpers/secret-store.js";
 import { getProviderConfigStatus, getProviderModelSelectionStatus, loadProviderConfigWithSecret, saveProviderConfig, saveProviderModelsCache } from "../../../src/providers/provider-config-store.js";
 import { resolveProviderTaskModelOptions } from "../../../src/providers/task-model-routing.js";
 
@@ -19,7 +19,7 @@ async function withTempAppData(run: () => Promise<void>): Promise<void> {
 		} else {
 			process.env.USERPROFILE = previousUserProfile;
 		}
-		mock.restoreAll();
+		resetSecretStoreDriver();
 	}
 }
 
@@ -36,7 +36,7 @@ test("provider config ignores legacy single-provider file and legacy keytar acco
 		}), "utf8");
 
 		const requestedAccounts: string[] = [];
-		mock.method(keytar, "getPassword", async (_service: string, account: string): Promise<string | null> => {
+		installReadOnlySecretStore(async (_service: string, account: string): Promise<string | null> => {
 			requestedAccounts.push(account);
 			return account === "deepseek_api_key" ? "legacy-key" : null;
 		});
@@ -77,11 +77,7 @@ test("provider config ignores legacy single-provider file and legacy keytar acco
 
 test("provider config saves keys under provider-scoped keytar accounts", async (): Promise<void> => {
 	await withTempAppData(async (): Promise<void> => {
-		const savedAccounts: string[] = [];
-		mock.method(keytar, "setPassword", async (_service: string, account: string, _password: string): Promise<void> => {
-			savedAccounts.push(account);
-		});
-		mock.method(keytar, "getPassword", async (): Promise<string | null> => null);
+		const secrets: Map<string, string> = installMemorySecretStore();
 
 		await saveProviderConfig({
 			provider: "deepseek",
@@ -94,7 +90,7 @@ test("provider config saves keys under provider-scoped keytar accounts", async (
 			model: "glm-5.2"
 		});
 
-		assert.deepEqual(savedAccounts, ["provider:deepseek:api_key", "provider:zhipu:api_key"]);
+		assert.deepEqual([...secrets.keys()], ["provider:deepseek:api_key", "provider:zhipu:api_key"]);
 		const configDir: string = join(process.env.USERPROFILE!, ".daedalus", "config");
 		const rawConfig: string = await readFile(join(configDir, "provider.json"), "utf8");
 		assert.equal(rawConfig.endsWith("\n"), true);
@@ -106,12 +102,11 @@ test("provider config saves keys under provider-scoped keytar accounts", async (
 test("provider config clears only the provider api key when apiKey is null", async (): Promise<void> => {
 	await withTempAppData(async (): Promise<void> => {
 		const deletedAccounts: string[] = [];
-		mock.method(keytar, "setPassword", async (): Promise<void> => undefined);
-		mock.method(keytar, "deletePassword", async (_service: string, account: string): Promise<boolean> => {
-			deletedAccounts.push(account);
-			return true;
+		installMemorySecretStore({}, {
+			onDelete(account: string): void {
+				deletedAccounts.push(account);
+			}
 		});
-		mock.method(keytar, "getPassword", async (): Promise<string | null> => null);
 
 		await saveProviderConfig({
 			provider: "deepseek",
@@ -170,7 +165,7 @@ test("provider config migrates v2 provider config to schema v3", async (): Promi
 			}
 		}), "utf8");
 
-		mock.method(keytar, "getPassword", async (_service: string, account: string): Promise<string | null> => {
+		installReadOnlySecretStore(async (_service: string, account: string): Promise<string | null> => {
 			return account === "provider:moonshot:api_key" ? "moonshot-key" : null;
 		});
 
@@ -231,7 +226,7 @@ test("provider config read paths treat keytar read failures as missing secrets",
 			}
 		}), "utf8");
 
-		mock.method(keytar, "getPassword", async (): Promise<string | null> => {
+		installReadOnlySecretStore(async (): Promise<string | null> => {
 			throw new Error("The name org.freedesktop.secrets was not provided by any .service files");
 		});
 
@@ -251,10 +246,32 @@ test("provider config read paths treat keytar read failures as missing secrets",
 	});
 });
 
+test("provider config can read status without an installed keytar module", async (): Promise<void> => {
+	await withTempAppData(async (): Promise<void> => {
+		installUnavailableSecretStore();
+
+		const status = await getProviderConfigStatus();
+		assert.equal(status.configured, false);
+		assert.equal(status.apiKeyMasked, null);
+
+		await assert.rejects(
+			saveProviderConfig({
+				provider: "deepseek",
+				apiKey: "deepseek-key",
+				model: "deepseek-v4-flash"
+			}),
+			(error: unknown): boolean => {
+				assert.equal(error instanceof Error, true);
+				assert.equal((error as Error).name, "SecretStoreUnavailableError");
+				return true;
+			}
+		);
+	});
+});
+
 test("provider config persists cross-provider task model routing", async (): Promise<void> => {
 	await withTempAppData(async (): Promise<void> => {
-		mock.method(keytar, "setPassword", async (): Promise<void> => undefined);
-		mock.method(keytar, "getPassword", async (_service: string, account: string): Promise<string | null> => {
+		installReadOnlySecretStore(async (_service: string, account: string): Promise<string | null> => {
 			return account === "provider:moonshot:api_key" ? "moonshot-key" : "deepseek-key";
 		});
 
@@ -287,8 +304,7 @@ test("provider config persists cross-provider task model routing", async (): Pro
 test("image generation model routing is explicit and rejects unsupported models", async (): Promise<void> => {
 	await withTempAppData(async (): Promise<void> => {
 		const { generateImage, ImageGenerationError } = await import("../../../src/providers/image-generation.js");
-		mock.method(keytar, "setPassword", async (): Promise<void> => undefined);
-		mock.method(keytar, "getPassword", async (): Promise<string | null> => "deepseek-key");
+		installReadOnlySecretStore(async (): Promise<string | null> => "deepseek-key");
 
 		await assert.rejects(
 			(): Promise<unknown> => generateImage({
@@ -327,8 +343,7 @@ test("image generation model routing is explicit and rejects unsupported models"
 
 test("provider config saves and clears custom request base url", async (): Promise<void> => {
 	await withTempAppData(async (): Promise<void> => {
-		mock.method(keytar, "setPassword", async (): Promise<void> => undefined);
-		mock.method(keytar, "getPassword", async (): Promise<string | null> => "deepseek-key");
+		installReadOnlySecretStore(async (): Promise<string | null> => "deepseek-key");
 
 		await saveProviderConfig({
 			provider: "deepseek",
@@ -354,8 +369,7 @@ test("provider config saves and clears custom request base url", async (): Promi
 
 test("provider model selection exposes current main model and provider model lists", async (): Promise<void> => {
 	await withTempAppData(async (): Promise<void> => {
-		mock.method(keytar, "setPassword", async (): Promise<void> => undefined);
-		mock.method(keytar, "getPassword", async (_service: string, account: string): Promise<string | null> => {
+		installReadOnlySecretStore(async (_service: string, account: string): Promise<string | null> => {
 			return account === "provider:zhipu:api_key" ? "zhipu-key" : null;
 		});
 
@@ -388,7 +402,7 @@ test("provider model selection exposes current main model and provider model lis
 
 test("provider model selection augments cached models with catalog image generation models", async (): Promise<void> => {
 	await withTempAppData(async (): Promise<void> => {
-		mock.method(keytar, "getPassword", async (_service: string, account: string): Promise<string | null> => {
+		installReadOnlySecretStore(async (_service: string, account: string): Promise<string | null> => {
 			return account === "provider:zhipu:api_key" ? "zhipu-key" : null;
 		});
 		await saveProviderModelsCache("zhipu", [{
@@ -413,8 +427,7 @@ test("provider model selection augments cached models with catalog image generat
 
 test("task model resolver falls back to current model or resolves configured provider secrets", async (): Promise<void> => {
 	await withTempAppData(async (): Promise<void> => {
-		mock.method(keytar, "setPassword", async (): Promise<void> => undefined);
-		mock.method(keytar, "getPassword", async (_service: string, account: string): Promise<string | null> => {
+		installReadOnlySecretStore(async (_service: string, account: string): Promise<string | null> => {
 			if (account === "provider:moonshot:api_key") {
 				return "moonshot-key";
 			}

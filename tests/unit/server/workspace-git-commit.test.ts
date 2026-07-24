@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
-import { commitOrPushWorkspaceGit } from "../../../src/server/workspace-git-commit.js";
+import { commitOrPushWorkspaceGit, createCommitMessageDiffContext, type CandidateDiff } from "../../../src/server/workspace-git-commit.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -32,6 +32,70 @@ async function commitFile(repoPath: string, relativePath: string, content: strin
 	await git(repoPath, ["add", relativePath]);
 	await git(repoPath, ["commit", "-m", `Add ${relativePath}`]);
 }
+
+function createCandidateDiff(patch: string, overrides: Partial<CandidateDiff> = {}): CandidateDiff {
+	return {
+		patch,
+		additions: 0,
+		deletions: 0,
+		changedFiles: 1,
+		truncated: false,
+		branch: "main",
+		...overrides
+	};
+}
+
+test("workspace git commit message context omits blank-only changed lines", (): void => {
+	const context = createCommitMessageDiffContext(createCandidateDiff([
+		"diff --git a/src/app.ts b/src/app.ts",
+		"--- a/src/app.ts",
+		"+++ b/src/app.ts",
+		"@@ -1,5 +1,6 @@",
+		"-",
+		"+   ",
+		"-const name = \"old\";",
+		"+const name = \"new\";",
+		"+",
+		""
+	].join("\n")));
+
+	assert.equal(context.omittedWhitespaceLines, 3);
+	assert.match(context.text, /\+const name = "new";/u);
+	assert.doesNotMatch(context.text, /^\+\s*$/mu);
+});
+
+test("workspace git commit message context summarizes lockfiles", (): void => {
+	const context = createCommitMessageDiffContext(createCandidateDiff([
+		"diff --git a/package-lock.json b/package-lock.json",
+		"--- a/package-lock.json",
+		"+++ b/package-lock.json",
+		"@@ -1,3 +1,3 @@",
+		"-  \"version\": \"1.0.0\"",
+		"+  \"version\": \"1.0.1\"",
+		""
+	].join("\n")));
+
+	assert.equal(context.suppressedLargeFiles, 1);
+	assert.match(context.text, /changed lines omitted/u);
+	assert.doesNotMatch(context.text, /1\.0\.1/u);
+});
+
+test("workspace git commit message context caps oversized hunks", (): void => {
+	const changedLines: string[] = Array.from({ length: 40 }, (_: unknown, index: number): string => `+const value${index} = ${index};`);
+	const context = createCommitMessageDiffContext(createCandidateDiff([
+		"diff --git a/src/values.ts b/src/values.ts",
+		"--- a/src/values.ts",
+		"+++ b/src/values.ts",
+		"@@ -1,1 +1,40 @@",
+		...changedLines,
+		""
+	].join("\n")));
+
+	assert.equal(context.truncated, true);
+	assert.equal(context.omittedChangedLines, 16);
+	assert.match(context.text, /\+const value23 = 23;/u);
+	assert.doesNotMatch(context.text, /\+const value24 = 24;/u);
+});
 
 test("workspace git commit rejects non repositories", async (): Promise<void> => {
 	const repoPath: string = await createTempDir("daedalus-git-commit-nonrepo-");

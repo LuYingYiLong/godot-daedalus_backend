@@ -96,6 +96,7 @@ const handleWorkspaceRequest: RequestHandler = createLazyHandler(async (): Promi
 export const REQUEST_HANDLER_METHODS: readonly ClientRequest["method"][] = [
 	"ping",
 	"backend.health",
+	"backend.shutdown",
 	"backend.update.check",
 	"backend.update.install",
 	"usage.metrics.summary.get",
@@ -210,6 +211,7 @@ export const REQUEST_HANDLER_METHODS: readonly ClientRequest["method"][] = [
 export const REQUEST_HANDLERS: ReadonlyMap<ClientRequest["method"], RequestHandler> = new Map([
 	["ping", handleCoreRequest],
 	["backend.health", handleCoreRequest],
+	["backend.shutdown", handleCoreRequest],
 	["backend.update.check", handleCoreRequest],
 	["backend.update.install", handleCoreRequest],
 	["usage.metrics.summary.get", handleCoreRequest],

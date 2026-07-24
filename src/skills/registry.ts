@@ -1,7 +1,6 @@
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
 import type { PromptId } from "../protocol/types.js";
 import { CUSTOM_MCP_TOOLS_SENTINEL } from "../tools/tool-sentinels.js";
+import { getRuntimeAssetKeyForSourcePath, readRuntimeAssetText } from "../runtime/runtime-assets.js";
 import { parseSkillDocument } from "./frontmatter.js";
 
 export const skillIds = [
@@ -204,7 +203,7 @@ export async function loadSkillPrompt(skillId: SkillId): Promise<string> {
 	}
 
 	const skill: Skill = getSkill(skillId);
-	const content: string = await readFile(resolve(process.cwd(), skill.promptPath), "utf8");
+	const content: string = await readRuntimeAssetText(getRuntimeAssetKeyForSourcePath(skill.promptPath));
 	const trimmedContent: string = parseSkillDocument(content).body;
 	skillPromptCache.set(skillId, trimmedContent);
 	return trimmedContent;

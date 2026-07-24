@@ -4,8 +4,8 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test, { mock } from "node:test";
-import keytar from "keytar";
+import test from "node:test";
+import { installReadOnlySecretStore, resetSecretStoreDriver } from "../../helpers/secret-store.js";
 import { chatWithOpenAICompatible } from "../../../src/providers/provider-chat-completions-client.js";
 import { listProviderModels } from "../../../src/providers/provider-models.js";
 import { modelSupportsImageInput } from "../../../src/providers/provider-image-content.js";
@@ -113,7 +113,7 @@ async function withTempAppData(run: () => Promise<void>): Promise<void> {
 		} else {
 			process.env.USERPROFILE = previousUserProfile;
 		}
-		mock.restoreAll();
+		resetSecretStoreDriver();
 	}
 }
 
@@ -175,8 +175,7 @@ test("MiniMax OpenAI-compatible requests preserve image input and recommended mo
 test("MiniMax image generation uses image_generation API and saves base64 artifacts", async (): Promise<void> => {
 	await withTempAppData(async (): Promise<void> => {
 		await withMiniMaxMockServer(async (baseUrl: string, requests: RecordedRequest[]): Promise<void> => {
-			mock.method(keytar, "setPassword", async (): Promise<void> => undefined);
-			mock.method(keytar, "getPassword", async (_service: string, account: string): Promise<string | null> => {
+			installReadOnlySecretStore(async (_service: string, account: string): Promise<string | null> => {
 				return account === "provider:minimax:api_key" ? "minimax-test-key" : null;
 			});
 
@@ -223,8 +222,7 @@ test("MiniMax image generation uses image_generation API and saves base64 artifa
 test("MiniMax image generation downloads image_urls when returned by the API", async (): Promise<void> => {
 	await withTempAppData(async (): Promise<void> => {
 		await withMiniMaxMockServer(async (baseUrl: string): Promise<void> => {
-			mock.method(keytar, "setPassword", async (): Promise<void> => undefined);
-			mock.method(keytar, "getPassword", async (_service: string, account: string): Promise<string | null> => {
+			installReadOnlySecretStore(async (_service: string, account: string): Promise<string | null> => {
 				return account === "provider:minimax:api_key" ? "minimax-test-key" : null;
 			});
 

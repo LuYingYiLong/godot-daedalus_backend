@@ -56,7 +56,7 @@ export type WorkspaceGitCommitOrPushResult = {
 	stderr: string;
 };
 
-type CandidateDiff = {
+export type CandidateDiff = {
 	patch: string;
 	additions: number;
 	deletions: number;
@@ -65,12 +65,27 @@ type CandidateDiff = {
 	branch: string | null;
 };
 
+export type CommitMessageDiffContext = {
+	text: string;
+	truncated: boolean;
+	omittedFiles: number;
+	omittedHunks: number;
+	omittedChangedLines: number;
+	omittedWhitespaceLines: number;
+	suppressedLargeFiles: number;
+};
+
 const COMMIT_MESSAGE_SCHEMA = z.object({
 	subject: z.string().min(1).max(120),
 	body: z.string().max(4000).optional()
 }).strict();
 
 const DEFAULT_STAGED_PATCH_LIMIT_CHARS: number = 1024 * 1024;
+const COMMIT_MESSAGE_CONTEXT_LIMIT_CHARS: number = 48 * 1024;
+const COMMIT_MESSAGE_MAX_FILES: number = 80;
+const COMMIT_MESSAGE_MAX_HUNKS_PER_FILE: number = 8;
+const COMMIT_MESSAGE_MAX_CHANGED_LINES_PER_HUNK: number = 24;
+const COMMIT_MESSAGE_MAX_LINE_CHARS: number = 220;
 const GIT_COMMIT_TIMEOUT_MS: number = 20_000;
 const GIT_PUSH_TIMEOUT_MS: number = 120_000;
 const MAX_PUBLIC_GIT_OUTPUT_CHARS: number = 4000;
@@ -95,6 +110,193 @@ function countChangedLines(patch: string): { additions: number; deletions: numbe
 		}
 	}
 	return { additions, deletions };
+}
+
+function extractDiffPath(line: string): string | null {
+	const value: string = line.replace(/^(?:---|\+\+\+)\s+/u, "").trim();
+	if (value === "/dev/null") {
+		return null;
+	}
+	return value.replace(/^[ab]\//u, "");
+}
+
+function isLargeGeneratedOrLockPath(filePath: string): boolean {
+	const normalized: string = filePath.replaceAll("\\", "/").toLowerCase();
+	return normalized.endsWith("package-lock.json")
+		|| normalized.endsWith("pnpm-lock.yaml")
+		|| normalized.endsWith("yarn.lock")
+		|| normalized.endsWith("bun.lockb")
+		|| normalized.endsWith(".min.js")
+		|| normalized.endsWith(".map")
+		|| normalized.includes("/dist/")
+		|| normalized.includes("/build/")
+		|| normalized.includes("/release/");
+}
+
+function clipDiffLine(line: string): string {
+	const chars: string[] = Array.from(line);
+	if (chars.length <= COMMIT_MESSAGE_MAX_LINE_CHARS) {
+		return line;
+	}
+	return `${chars.slice(0, COMMIT_MESSAGE_MAX_LINE_CHARS).join("")} ...`;
+}
+
+function createContextAppender(limitChars: number): {
+	append: (line?: string | undefined) => boolean;
+	lines: string[];
+	truncated: () => boolean;
+} {
+	const lines: string[] = [];
+	let usedChars: number = 0;
+	let truncated: boolean = false;
+	return {
+		append(line: string = ""): boolean {
+			if (truncated) {
+				return false;
+			}
+			const nextChars: number = usedChars + line.length + 1;
+			if (nextChars > limitChars) {
+				lines.push("[context truncated: commit message input budget reached]");
+				truncated = true;
+				return false;
+			}
+			lines.push(line);
+			usedChars = nextChars;
+			return true;
+		},
+		lines,
+		truncated: (): boolean => truncated
+	};
+}
+
+export function createCommitMessageDiffContext(diff: CandidateDiff): CommitMessageDiffContext {
+	const appender = createContextAppender(COMMIT_MESSAGE_CONTEXT_LIMIT_CHARS);
+	let currentDiffHeader: string | null = null;
+	let currentOldPath: string | null = null;
+	let currentNewPath: string | null = null;
+	let fileCount: number = 0;
+	let hunksInCurrentFile: number = 0;
+	let changedLinesInCurrentHunk: number = 0;
+	let currentFileSuppressed: boolean = false;
+	let currentHunkIncluded: boolean = false;
+	let omittedFiles: number = 0;
+	let omittedHunks: number = 0;
+	let omittedChangedLines: number = 0;
+	let omittedWhitespaceLines: number = 0;
+	let suppressedLargeFiles: number = 0;
+
+	function displayPath(): string {
+		return currentNewPath ?? currentOldPath ?? currentDiffHeader ?? "unknown";
+	}
+
+	function beginFile(header: string): void {
+		currentDiffHeader = header;
+		currentOldPath = null;
+		currentNewPath = null;
+		hunksInCurrentFile = 0;
+		changedLinesInCurrentHunk = 0;
+		currentFileSuppressed = false;
+		currentHunkIncluded = false;
+		fileCount += 1;
+		if (fileCount > COMMIT_MESSAGE_MAX_FILES) {
+			omittedFiles += 1;
+			return;
+		}
+		appender.append();
+		appender.append(header);
+	}
+
+	function appendFilePathLine(line: string): void {
+		if (line.startsWith("--- ")) {
+			currentOldPath = extractDiffPath(line);
+		} else {
+			currentNewPath = extractDiffPath(line);
+		}
+		if (fileCount <= COMMIT_MESSAGE_MAX_FILES) {
+			appender.append(line);
+		}
+		if (!currentFileSuppressed && isLargeGeneratedOrLockPath(displayPath())) {
+			currentFileSuppressed = true;
+			suppressedLargeFiles += 1;
+			if (fileCount <= COMMIT_MESSAGE_MAX_FILES) {
+				appender.append("[changed lines omitted: generated, build output, or lockfile]");
+			}
+		}
+	}
+
+	for (const rawLine of diff.patch.replace(/\r\n?/gu, "\n").split("\n")) {
+		if (rawLine.startsWith("diff --git ")) {
+			beginFile(rawLine);
+			continue;
+		}
+		if (currentDiffHeader === null) {
+			beginFile("diff --git <unknown>");
+		}
+		if (fileCount > COMMIT_MESSAGE_MAX_FILES) {
+			continue;
+		}
+		if (rawLine.startsWith("Binary files ") || rawLine.startsWith("GIT binary patch")) {
+			appender.append(rawLine);
+			currentFileSuppressed = true;
+			continue;
+		}
+		if (rawLine.startsWith("--- ") || rawLine.startsWith("+++ ")) {
+			appendFilePathLine(rawLine);
+			continue;
+		}
+		if (rawLine.startsWith("@@")) {
+			hunksInCurrentFile += 1;
+			changedLinesInCurrentHunk = 0;
+			currentHunkIncluded = false;
+			if (currentFileSuppressed) {
+				continue;
+			}
+			if (hunksInCurrentFile > COMMIT_MESSAGE_MAX_HUNKS_PER_FILE) {
+				omittedHunks += 1;
+				continue;
+			}
+			currentHunkIncluded = appender.append(clipDiffLine(rawLine));
+			continue;
+		}
+		if (currentFileSuppressed || !currentHunkIncluded) {
+			continue;
+		}
+		if ((rawLine.startsWith("+") && !rawLine.startsWith("+++")) || (rawLine.startsWith("-") && !rawLine.startsWith("---"))) {
+			if (rawLine.slice(1).trim().length === 0) {
+				omittedWhitespaceLines += 1;
+				continue;
+			}
+			if (changedLinesInCurrentHunk >= COMMIT_MESSAGE_MAX_CHANGED_LINES_PER_HUNK) {
+				omittedChangedLines += 1;
+				continue;
+			}
+			if (appender.append(clipDiffLine(rawLine))) {
+				changedLinesInCurrentHunk += 1;
+			} else {
+				omittedChangedLines += 1;
+			}
+		}
+	}
+
+	const text: string = appender.lines.join("\n").trim();
+	const hasSemanticLines: boolean = text.split(/\r?\n/u).some((line: string): boolean => /^[+-].*\S/u.test(line.trim()));
+	const fallbackText: string = hasSemanticLines
+		? text
+		: [
+			text,
+			"",
+			"[diff note: no non-empty changed lines remained after blank-line suppression; this may be whitespace-only, binary-only, or metadata-only]"
+		].join("\n").trim();
+
+	return {
+		text: fallbackText,
+		truncated: diff.truncated || appender.truncated() || omittedFiles > 0 || omittedHunks > 0 || omittedChangedLines > 0,
+		omittedFiles,
+		omittedHunks,
+		omittedChangedLines,
+		omittedWhitespaceLines,
+		suppressedLargeFiles
+	};
 }
 
 function sanitizeGitOutput(workspaceRoot: string, text: string): string {
@@ -308,19 +510,28 @@ async function createConfiguredProviderOptions(
 }
 
 function createCommitMessageUserPrompt(diff: CandidateDiff): string {
+	const context: CommitMessageDiffContext = createCommitMessageDiffContext(diff);
 	return [
-		"请为以下 Git diff 生成提交信息。",
+		"Generate a concise Git commit message for the following workspace changes.",
+		"Focus on intent and user-visible behavior. Do not mention every file unless it matters.",
+		"The diff context below is compressed: blank-line-only changes, generated files, lockfiles, and oversized hunks may be summarized.",
 		"",
-		"## Git 状态",
+		"## Git state",
 		`- branch: ${diff.branch ?? "detached"}`,
 		`- changedFiles: ${diff.changedFiles}`,
 		`- additions: ${diff.additions}`,
 		`- deletions: ${diff.deletions}`,
-		`- truncated: ${diff.truncated ? "true" : "false"}`,
+		`- originalDiffTruncated: ${diff.truncated ? "true" : "false"}`,
+		`- contextTruncated: ${context.truncated ? "true" : "false"}`,
+		`- omittedFiles: ${context.omittedFiles}`,
+		`- omittedHunks: ${context.omittedHunks}`,
+		`- omittedChangedLines: ${context.omittedChangedLines}`,
+		`- omittedWhitespaceLines: ${context.omittedWhitespaceLines}`,
+		`- suppressedGeneratedOrLockFiles: ${context.suppressedLargeFiles}`,
 		"",
-		"## Unified diff",
+		"## Compact diff context",
 		"```diff",
-		diff.patch,
+		context.text,
 		"```"
 	].join("\n");
 }
@@ -436,7 +647,7 @@ export async function generateWorkspaceGitCommitMessage(params: WorkspaceGitComm
 		additions: diff.additions,
 		deletions: diff.deletions,
 		changedFiles: diff.changedFiles,
-		truncated: diff.truncated
+		truncated: createCommitMessageDiffContext(diff).truncated
 	};
 }
 

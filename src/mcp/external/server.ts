@@ -3,7 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { createExternalMcpConfig } from "./config.js";
 import { registerExternalMcpTools } from "./registration.js";
 
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
 	const config = createExternalMcpConfig();
 	const server: McpServer = new McpServer({
 		name: "godot-daedalus-mcp",
@@ -14,8 +14,3 @@ async function main(): Promise<void> {
 	await server.connect(new StdioServerTransport());
 	console.error(`Daedalus external MCP started, mode: ${config.mode}, backend: ${config.backendUrl}`);
 }
-
-main().catch((error: unknown): void => {
-	console.error("Daedalus external MCP failed to start:", error);
-	process.exit(1);
-});

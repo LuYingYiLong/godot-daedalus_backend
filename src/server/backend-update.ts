@@ -1,6 +1,7 @@
 import { getBackendPackageVersion } from "./backend-health.js";
 import { getCurrentBackend, getInstalledBackendVersion, getLatestBackendVersion, installBackend } from "../manager/backend.js";
 import { isVersionNewer } from "../manager/semver.js";
+import { getBackendBuildMetadata } from "../runtime/build-metadata.js";
 
 export type BackendUpdateCheckResult = {
 	currentVersion: string;
@@ -80,6 +81,9 @@ export async function checkBackendUpdate(): Promise<BackendUpdateCheckResult> {
 }
 
 export async function installBackendUpdate(params: BackendUpdateInstallParams = {}): Promise<BackendUpdateInstallResult> {
+	if (getBackendBuildMetadata().distribution === "sea") {
+		throw new Error("Binary backend updates are managed by Daedalus Studio.");
+	}
 	const current = await getCurrentBackend();
 	const versionSpec: string = typeof params.version === "string" && params.version.trim().length > 0
 		? params.version.trim()

@@ -1,7 +1,10 @@
 import WebSocket from "ws";
 
-const url: string = process.env.WS_URL ?? "ws://localhost:38180";
-const socket: WebSocket = new WebSocket(url);
+const url: string = process.env.WS_URL ?? "ws://127.0.0.1:38180";
+const authToken: string | undefined = process.env.DAEDALUS_BACKEND_AUTH_TOKEN;
+const socket: WebSocket = new WebSocket(url, {
+	headers: authToken === undefined ? undefined : { Authorization: `Bearer ${authToken}` }
+});
 
 socket.on("open", (): void => {
 	socket.send(JSON.stringify({

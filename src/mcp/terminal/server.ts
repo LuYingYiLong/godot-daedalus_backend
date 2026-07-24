@@ -15,8 +15,3 @@ export async function main(): Promise<void> {
 
 	console.error("Terminal MCP Server started");
 }
-
-main().catch((error: unknown): void => {
-	console.error("Terminal MCP server fatal error:", error);
-	process.exit(1);
-});

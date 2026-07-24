@@ -113,7 +113,7 @@ export async function startBackend(port: number = DEFAULT_BACKEND_PORT): Promise
 			return lockedExistingPid;
 		}
 
-		const url: string = `ws://localhost:${port}`;
+		const url: string = `ws://127.0.0.1:${port}`;
 		const existingHealth = await healthBackend(url);
 		if (existingHealth.ok) {
 			return {
@@ -158,7 +158,7 @@ export async function startBackend(port: number = DEFAULT_BACKEND_PORT): Promise
 			pid: child.pid ?? 0,
 			version: current.version,
 			port,
-			url: `ws://localhost:${port}`,
+			url: `ws://127.0.0.1:${port}`,
 			logPath,
 			startedAt: new Date().toISOString()
 		};
@@ -303,7 +303,7 @@ export async function rollbackBackend(): Promise<BackendCurrentFile> {
 	return rollbackFile;
 }
 
-export async function healthBackend(url: string = `ws://localhost:${DEFAULT_BACKEND_PORT}`): Promise<{ ok: boolean; url: string; error: string | null; result?: unknown }> {
+export async function healthBackend(url: string = `ws://127.0.0.1:${DEFAULT_BACKEND_PORT}`): Promise<{ ok: boolean; url: string; error: string | null; result?: unknown }> {
 	try {
 		const parsedUrl: URL = new URL(url);
 		const port: number = parsedUrl.port === "" ? 80 : Number.parseInt(parsedUrl.port, 10);
@@ -335,6 +335,9 @@ export async function healthBackend(url: string = `ws://localhost:${DEFAULT_BACK
 					"Connection: Upgrade",
 					`Sec-WebSocket-Key: ${key}`,
 					"Sec-WebSocket-Version: 13",
+					...(process.env.DAEDALUS_BACKEND_AUTH_TOKEN === undefined
+						? []
+						: [`Authorization: Bearer ${process.env.DAEDALUS_BACKEND_AUTH_TOKEN}`]),
 					"",
 					""
 				].join("\r\n"));

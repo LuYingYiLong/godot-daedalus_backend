@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { registerSkillTools } from "./registration.js";
 
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
 	const workspaceId: string = process.env.DAEDALUS_WORKSPACE_ID?.trim() ?? "";
 	const rootPath: string = process.env.GODOT_PROJECT_PATH?.trim() ?? "";
 	if (workspaceId.length === 0 || rootPath.length === 0) {
@@ -12,8 +12,3 @@ async function main(): Promise<void> {
 	registerSkillTools(server, { id: workspaceId, rootPath });
 	await server.connect(new StdioServerTransport());
 }
-
-main().catch((error: unknown): void => {
-	console.error("Skills MCP fatal error:", error);
-	process.exit(1);
-});

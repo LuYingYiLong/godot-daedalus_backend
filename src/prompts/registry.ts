@@ -1,6 +1,5 @@
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
 import type { PromptId } from "../protocol/types.js";
+import { getRuntimeAssetKeyForSourcePath, readRuntimeAssetText } from "../runtime/runtime-assets.js";
 
 export type PromptTemplate = {
 	id: PromptId;
@@ -89,8 +88,7 @@ export async function loadPromptTemplate(promptId: PromptId): Promise<string> {
 	}
 
 	const template: PromptTemplate = promptTemplates[promptId];
-	const templatePath: string = resolve(process.cwd(), template.path);
-	const content: string = await readFile(templatePath, "utf8");
+	const content: string = await readRuntimeAssetText(getRuntimeAssetKeyForSourcePath(template.path));
 	const trimmedContent: string = content.trim();
 	promptContentCache.set(promptId, trimmedContent);
 	return trimmedContent;
@@ -102,7 +100,7 @@ async function loadExtraPromptTemplate(templatePath: string): Promise<string> {
 		return cachedContent;
 	}
 
-	const content: string = await readFile(resolve(process.cwd(), templatePath), "utf8");
+	const content: string = await readRuntimeAssetText(getRuntimeAssetKeyForSourcePath(templatePath));
 	const trimmedContent: string = content.trim();
 	extraPromptContentCache.set(templatePath, trimmedContent);
 	return trimmedContent;

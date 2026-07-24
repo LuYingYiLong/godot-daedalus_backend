@@ -5,6 +5,7 @@ import {
 	getDaedalusPath,
 	getDaedalusDir,
 	getApprovalConfigPath,
+	getBackendConnectionPath,
 	getDefaultArchivedSessionsDir,
 	getDefaultWorkspaceConfigPath,
 	getDefaultSessionsDir,
@@ -44,6 +45,7 @@ test("Daedalus state uses USERPROFILE without legacy appdata or v2 paths", (): v
 		assert.equal(getDefaultSessionsDir(), join(root, "sessions"));
 		assert.equal(getDefaultArchivedSessionsDir(), join(root, "archived_sessions"));
 		assert.equal(getLogsDir(), join(root, "logs"));
+		assert.equal(getBackendConnectionPath(), join(root, "backend", "connection.json"));
 		assert.equal(getTerminalJobsDir(), join(root, "terminal-jobs"));
 		assert.equal(getToolExecutionLedgerPath(), join(root, "tool-executions.jsonl"));
 		assert.equal(getUsageMetricsDbPath(), join(root, "metrics", "usage.sqlite"));
@@ -60,6 +62,7 @@ test("Daedalus state uses USERPROFILE without legacy appdata or v2 paths", (): v
 		assert.equal(getDaedalusPath("sessions.activeRoot"), getDefaultSessionsDir());
 		assert.equal(getDaedalusPath("sessions.archivedRoot"), getDefaultArchivedSessionsDir());
 		assert.equal(getDaedalusPath("logs.root"), getLogsDir());
+		assert.equal(getDaedalusPath("backend.connection"), getBackendConnectionPath());
 		assert.equal(getDaedalusPath("terminalJobs.root"), getTerminalJobsDir());
 		assert.equal(getDaedalusPath("toolExecution.ledger"), getToolExecutionLedgerPath());
 		assert.equal(getDaedalusPath("metrics.usageDb"), getUsageMetricsDbPath());

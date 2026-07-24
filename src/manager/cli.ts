@@ -53,7 +53,7 @@ async function handleCommand(args: ParsedArgs): Promise<ManagerResult> {
 			return { ok: true, backend: await stopBackend() };
 		}
 		if (second === "health") {
-			return { ok: true, health: await healthBackend(getStringOption(args, "url") ?? `ws://localhost:${DEFAULT_BACKEND_PORT}`) };
+			return { ok: true, health: await healthBackend(getStringOption(args, "url") ?? `ws://127.0.0.1:${DEFAULT_BACKEND_PORT}`) };
 		}
 		if (second === "rollback") {
 			return { ok: true, backend: await rollbackBackend() };
